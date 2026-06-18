@@ -1,0 +1,65 @@
+{
+  "id": "2990e8ca-0d85-43d0-b02f-58a3f4e9c698",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.availability_master": {
+      "name": "availability_master",
+      "schema": "",
+      "columns": {
+        "availability_status_id": {
+          "name": "availability_status_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "availability_status_code": {
+          "name": "availability_status_code",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "availability_status_description": {
+          "name": "availability_status_description",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "availability_master_availability_status_code_unique": {
+          "name": "availability_master_availability_status_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "availability_status_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
