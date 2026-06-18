@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 export default defineConfig({
-  schema: "./src/db/schema.ts",
+  schema: "./src/app/db/schema.ts",
 
   out: "./drizzle",
 
@@ -13,7 +13,4 @@ export default defineConfig({
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },
-
-  verbose: true,
-  strict: true,
 });
