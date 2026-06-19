@@ -1,6 +1,6 @@
 import {
   pgTable,
-  uuid,
+  serial,
   varchar,
   integer,
   timestamp,
@@ -9,10 +9,7 @@ import {
 import { availabilityMaster } from "./availabilityMaster";
 
 export const rooms = pgTable("rooms", {
-  roomId: uuid("room_id")
-    .defaultRandom()
-    .primaryKey(),
-
+  roomId: serial("room_id").primaryKey(),
   roomName: varchar("room_name", {
     length: 100,
   }).notNull(),
