@@ -12,10 +12,13 @@ import {
 /* =========================
    ROLES
 ========================= */
-export const roles = pgTable("Roles", {
+
+export const roles = pgTable("roles", {
   roleId: serial("role_id").primaryKey(),
 
-  roleName: varchar("role_name", { length: 50 })
+  roleName: varchar("role_name", {
+    length: 50,
+  })
     .notNull()
     .unique(),
 
@@ -23,9 +26,10 @@ export const roles = pgTable("Roles", {
 });
 
 /* =========================
-   EMPLOYEE
+   EMPLOYEES
 ========================= */
-export const employees = pgTable("Employee", {
+
+export const employees = pgTable("employees", {
   employeeId: uuid("employee_id")
     .defaultRandom()
     .primaryKey(),
@@ -34,10 +38,13 @@ export const employees = pgTable("Employee", {
     .notNull()
     .references(() => roles.roleId),
 
-  employeeName: varchar("employee_name", { length: 100 })
-    .notNull(),
+  employeeName: varchar("employee_name", {
+    length: 100,
+  }).notNull(),
 
-  email: varchar("email", { length: 150 })
+  email: varchar("email", {
+    length: 150,
+  })
     .notNull()
     .unique(),
 
@@ -47,22 +54,30 @@ export const employees = pgTable("Employee", {
 });
 
 /* =========================
-   ORGANIZER
+   ORGANIZERS
 ========================= */
-export const organizers = pgTable("Organizer", {
+
+export const organizers = pgTable("organizers", {
   organizerId: serial("organizer_id").primaryKey(),
 
-  employeeId: integer("employee_id"),
+  employeeId: uuid("employee_id").references(
+    () => employees.employeeId
+  ),
 
-  name: varchar("name", { length: 100 }).notNull(),
+  name: varchar("name", {
+    length: 100,
+  }).notNull(),
 
-  email: varchar("email", { length: 150 })
+  email: varchar("email", {
+    length: 150,
+  })
     .notNull()
     .unique(),
 
   imageUrl: text("image_url"),
 
   roleId: integer("role_id")
+    .notNull()
     .references(() => roles.roleId),
 
   createdAt: timestamp("created_at").defaultNow(),
@@ -73,14 +88,19 @@ export const organizers = pgTable("Organizer", {
 /* =========================
    ACCOUNTS
 ========================= */
-export const accounts = pgTable("Accounts", {
+
+export const accounts = pgTable("accounts", {
   accountId: serial("account_id").primaryKey(),
 
   organizerId: integer("organizer_id")
-    .references(() => organizers.organizerId),
+    .notNull()
+    .references(() => organizers.organizerId, {
+      onDelete: "cascade",
+    }),
 
-  provider: varchar("provider", { length: 50 })
-    .notNull(),
+  provider: varchar("provider", {
+    length: 50,
+  }).notNull(),
 
   providerAccountId: varchar("provider_account_id", {
     length: 255,
@@ -102,18 +122,21 @@ export const accounts = pgTable("Accounts", {
 /* =========================
    SESSIONS
 ========================= */
-export const sessions = pgTable("Sessions", {
+
+export const sessions = pgTable("sessions", {
   sessionId: serial("session_id").primaryKey(),
 
   organizerId: integer("organizer_id")
-    .references(() => organizers.organizerId),
+    .notNull()
+    .references(() => organizers.organizerId, {
+      onDelete: "cascade",
+    }),
 
   sessionToken: text("session_token")
     .notNull()
     .unique(),
 
-  expiresAt: timestamp("expires_at")
-    .notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
 
   createdAt: timestamp("created_at").defaultNow(),
 });
