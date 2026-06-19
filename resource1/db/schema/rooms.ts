@@ -20,17 +20,28 @@ export const rooms = pgTable("rooms", {
   roomCapacity: integer("room_capacity")
     .notNull(),
 
-  availabilityStatusId: integer("availability_status_id")
-    .references(() => availabilityMaster.availabilityStatusId)
-    .notNull(),
-
   roomLocation: varchar("room_location", {
     length: 100,
   }),
 
-  roomDescription: varchar("room_description", {
+  facilities: varchar("facilities", {
     length: 255,
   }),
+
+  availabilityStatusId: integer(
+    "availability_status_id"
+  )
+    .references(
+      () => availabilityMaster.availabilityStatusId
+    )
+    .notNull(),
+
+  roomDescription: varchar(
+    "room_description",
+    {
+      length: 255,
+    }
+  ),
 
   createdAt: timestamp("created_at")
     .defaultNow()
