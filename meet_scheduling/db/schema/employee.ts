@@ -1,6 +1,6 @@
 import {
   pgTable,
-  uuid,
+  serial,
   varchar,
   timestamp,
   integer,
@@ -8,8 +8,9 @@ import {
 
 import { roles } from "./roles";
 
+
 export const employee = pgTable("employee", {
-  employeeId: uuid("employee_id").primaryKey(),
+  employeeId: serial("employee_id").primaryKey(),
   roleId: integer("role_id")
     .notNull()
     .references(() => roles.roleId),

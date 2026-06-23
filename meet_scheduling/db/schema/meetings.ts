@@ -20,11 +20,11 @@ export const meetings = pgTable("meetings", {
 
   meetingDate: date("meeting_date").notNull(),
 
-  organizerEmployeeId: uuid("organizer_employee_id")
+  organizerEmployeeId: integer("organizer_employee_id")
     .notNull()
     .references(() => employee.employeeId),
 
-  roomId: uuid("room_id")
+  roomId: integer("room_id")
     .notNull()
     .references(() => room.roomId),
 

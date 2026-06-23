@@ -13,7 +13,7 @@ CREATE TABLE "availability_master" (
 );
 --> statement-breakpoint
 CREATE TABLE "employee" (
-	"employee_id" uuid PRIMARY KEY NOT NULL,
+	"employee_id" serial PRIMARY KEY NOT NULL,
 	"role_id" integer NOT NULL,
 	"employee_name" varchar(100) NOT NULL,
 	"email" varchar(150) NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE "employee" (
 );
 --> statement-breakpoint
 CREATE TABLE "room" (
-	"room_id" uuid PRIMARY KEY NOT NULL,
+	"room_id" serial PRIMARY KEY NOT NULL,
 	"room_name" varchar(100),
 	"room_capacity" integer,
 	"room_location" varchar(100),
@@ -50,8 +50,8 @@ CREATE TABLE "meetings" (
 	"meeting_id" serial PRIMARY KEY NOT NULL,
 	"title" varchar(200) NOT NULL,
 	"meeting_date" date NOT NULL,
-	"organizer_employee_id" uuid NOT NULL,
-	"room_id" uuid NOT NULL,
+	"organizer_employee_id" integer NOT NULL,
+	"room_id" integer NOT NULL,
 	"participant_count" integer NOT NULL,
 	"meeting_type_id" integer NOT NULL,
 	"meeting_status_id" integer NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE "meetings" (
 CREATE TABLE "meeting_attendees" (
 	"meeting_attendee_id" serial PRIMARY KEY NOT NULL,
 	"meeting_id" integer,
-	"employee_id" uuid,
+	"employee_id" integer,
 	"created_at" timestamp DEFAULT now()
 );
 --> statement-breakpoint

@@ -1,5 +1,5 @@
 {
-  "id": "088f5785-66e7-4ec7-8e24-c51ddffb902d",
+  "id": "13b75cf6-9e05-41f8-aa66-0da9d29b20f3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -89,7 +89,7 @@
       "columns": {
         "employee_id": {
           "name": "employee_id",
-          "type": "uuid",
+          "type": "serial",
           "primaryKey": true,
           "notNull": true
         },
@@ -162,7 +162,7 @@
       "columns": {
         "room_id": {
           "name": "room_id",
-          "type": "uuid",
+          "type": "serial",
           "primaryKey": true,
           "notNull": true
         },
@@ -327,13 +327,13 @@
         },
         "organizer_employee_id": {
           "name": "organizer_employee_id",
-          "type": "uuid",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
         "room_id": {
           "name": "room_id",
-          "type": "uuid",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
@@ -461,7 +461,7 @@
         },
         "employee_id": {
           "name": "employee_id",
-          "type": "uuid",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },

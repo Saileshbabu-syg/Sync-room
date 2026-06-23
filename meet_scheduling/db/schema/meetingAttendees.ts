@@ -1,7 +1,6 @@
 import {
   pgTable,
   serial,
-  uuid,
   integer,
   timestamp,
 } from "drizzle-orm/pg-core";
@@ -15,7 +14,7 @@ export const meetingAttendees = pgTable("meeting_attendees", {
   meetingId: integer("meeting_id")
     .references(() => meetings.meetingId),
 
-  employeeId: uuid("employee_id")
+  employeeId: integer("employee_id")
     .references(() => employee.employeeId),
 
   createdAt: timestamp("created_at").defaultNow(),
