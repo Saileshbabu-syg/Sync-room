@@ -4,6 +4,33 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { rooms } from "@/db/schema/rooms";
 
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ roomId: string }> }
+) {
+  try {
+    const { roomId } = await params;
+
+    const roomData = await db
+      .select()
+      .from(rooms)
+      .where(eq(rooms.roomId, Number(roomId)));
+
+    return NextResponse.json(roomData[0]);
+  } catch (error) {
+    console.error(error);
+
+    return NextResponse.json(
+      {
+        message: "Failed to fetch room",
+      },
+      {
+        status: 500,
+      }
+    );
+  }
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ roomId: string }> }
