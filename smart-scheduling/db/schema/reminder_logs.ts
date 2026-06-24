@@ -15,7 +15,7 @@ export const reminder_logs = pgTable(
 
     meeting_id: integer("meeting_id").references(() => meeting.meeting_id).notNull(),
 
-    reminder_time: timestamp("reminder_time").notNull(),
+    reminder_time: timestamp("reminder_time", {withTimezone:true,}).notNull(),
 
     status: varchar("status", {
       length: 20,

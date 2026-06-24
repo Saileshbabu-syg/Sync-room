@@ -16,7 +16,7 @@ export const recurring_meetings = pgTable(
 
     meeting_id: integer("meeting_id").references(() => meeting.meeting_id).notNull(),
 
-    frequency_id: integer("frequency_id").notNull(),
+    frequency_id: integer("frequency_id").references(() => recurrence_frequency_master.frequency_id).notNull(),
 
     occurrence_count: integer("occurrence_count").notNull(),
 

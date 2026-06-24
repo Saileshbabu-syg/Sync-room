@@ -71,6 +71,34 @@
       "when": 1781866909098,
       "tag": "0009_fast_paladin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782125220915,
+      "tag": "0010_abandoned_champions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782197076199,
+      "tag": "0011_black_pet_avengers",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782212829110,
+      "tag": "0012_stormy_harpoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782284665651,
+      "tag": "0013_medical_wendigo",
+      "breakpoints": true
     }
   ]
 }

@@ -7,3 +7,4 @@ export * from "./notification_type_master";
 export * from "./reminder_logs";
 export * from "./recurrence_frequency_master";
 export * from "./recurring_meetings";
+export * from "./meeting_audit_logs";

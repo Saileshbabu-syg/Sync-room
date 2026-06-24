@@ -2,11 +2,13 @@ import { db } from "@/db";
 import { meeting } from "@/db/schema/meeting";
 import { and, eq } from "drizzle-orm";
 
-export async function getMeetingsByRoomAndDate(
+export async function checkMeetingConflict(
   roomId: number,
-  meetingDate: string
+  meetingDate: string,
+  startTime: string,
+  endTime: string
 ) {
-  return await db
+  const meetings = await db
     .select()
     .from(meeting)
     .where(
@@ -15,16 +17,13 @@ export async function getMeetingsByRoomAndDate(
         eq(meeting.meeting_date, meetingDate)
       )
     );
-}
 
-export function hasTimeConflict(
-  existingStart: string,
-  existingEnd: string,
-  newStart: string,
-  newEnd: string
-) {
-  return (
-    newStart < existingEnd &&
-    newEnd > existingStart
-  );
+  const conflict = meetings.some((m) => {
+    return (
+      startTime < m.end_time &&
+      endTime > m.start_time
+    );
+  });
+
+  return conflict;
 }

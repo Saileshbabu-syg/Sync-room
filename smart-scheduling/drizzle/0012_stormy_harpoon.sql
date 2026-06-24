@@ -1,0 +1,1 @@
+ALTER TABLE "reminder_logs" ALTER COLUMN "reminder_time" SET DATA TYPE timestamp with time zone;

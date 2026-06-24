@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getMeetingsByRoomAndDate,
-  hasTimeConflict,
-} from "@/lib/services/conflict-check.service";
+
+import { checkMeetingConflict } from "@/lib/services/conflict-check.service";
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,33 +13,16 @@ export async function POST(req: NextRequest) {
       end_time,
     } = body;
 
-    const meetings = await getMeetingsByRoomAndDate(
+    const conflict = await checkMeetingConflict(
       room_id,
-      meeting_date
+      meeting_date,
+      start_time,
+      end_time
     );
-
-    const conflictingMeeting = meetings.find((meeting) =>
-      hasTimeConflict(
-        meeting.start_time,
-        meeting.end_time,
-        start_time,
-        end_time
-      )
-    );
-
-    if (conflictingMeeting) {
-      return NextResponse.json({
-        success: false,
-        conflict: true,
-        message: "Meeting room already booked",
-        existingMeeting: conflictingMeeting,
-      });
-    }
 
     return NextResponse.json({
       success: true,
-      conflict: false,
-      message: "Room available",
+      conflict,
     });
   } catch (error) {
     console.error(error);
