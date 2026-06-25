@@ -5,7 +5,7 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
-export const employee = pgTable("employee", {
+export const employee = pgTable("Employee", {
   employee_id: serial("employee_id").primaryKey(),
 
   employee_name: varchar("employee_name", {

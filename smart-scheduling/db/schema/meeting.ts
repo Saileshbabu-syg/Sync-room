@@ -8,7 +8,7 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
-import { room } from "./room";
+import { room } from "./rooms";
 
 export const meeting = pgTable("meeting", {
   meeting_id: serial("meeting_id").primaryKey(),

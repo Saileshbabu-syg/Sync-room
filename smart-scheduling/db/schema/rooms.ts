@@ -6,7 +6,7 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
-export const room = pgTable("room", {
+export const room = pgTable("rooms", {
   room_id: serial("room_id").primaryKey(),
 
   room_name: varchar("room_name", { length: 100 }).notNull(),

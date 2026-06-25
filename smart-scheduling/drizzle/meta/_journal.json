@@ -99,6 +99,13 @@
       "when": 1782284665651,
       "tag": "0013_medical_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1782370151477,
+      "tag": "0014_previous_proteus",
+      "breakpoints": true
     }
   ]
 }

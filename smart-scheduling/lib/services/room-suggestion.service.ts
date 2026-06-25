@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { room } from "@/db/schema/room";
+import { room } from "@/db/schema/rooms";
 import { meeting } from "@/db/schema/meeting";
 
 import {
