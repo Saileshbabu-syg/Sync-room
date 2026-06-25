@@ -1,31 +1,42 @@
 import { auth } from "@/auth";
-import LogoutButton from "@/components/LogoutButton";
 import { redirect } from "next/navigation";
-
-import Link from "next/link";
+import UserMenu from "@/components/UserMenu";
 
 export default async function DashboardPage() {
   const session = await auth();
-  console.log("SESSION:", session);
-
 
   if (!session) {
     redirect("/login");
   }
 
   return (
-    <div>
-      <h1>Dashboard</h1>
+    <div className="min-h-screen bg-slate-100">
 
-      <p>Name: {session?.user?.name}</p>
+      {/* Header */}
+      <header className="flex items-center justify-between border-b bg-white px-6 py-4 shadow-sm">
 
-      <p>Email: {session?.user?.email}</p>
+        <h1 className="text-2xl font-bold text-blue-700">
+          MeetSched Dashboard
+        </h1>
 
-      <LogoutButton />
+        <UserMenu session={session} />
 
-      
+      </header>
 
-<Link href="/profile">View Profile</Link>
+      {/* Dashboard Content */}
+
+      <main className="p-8">
+
+        <h2 className="text-3xl font-bold">
+          Welcome 👋
+        </h2>
+
+        <p className="mt-2 text-gray-600">
+          Manage meetings and conference rooms from your dashboard.
+        </p>
+
+      </main>
+
     </div>
   );
 }

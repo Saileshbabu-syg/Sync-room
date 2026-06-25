@@ -6,37 +6,14 @@ import {
   timestamp,
   integer,
   bigint,
-  uuid,
 } from "drizzle-orm/pg-core";
 
 /* =========================
-   ROLES
+   EMPLOYEE
 ========================= */
 
-export const roles = pgTable("roles", {
-  roleId: serial("role_id").primaryKey(),
-
-  roleName: varchar("role_name", {
-    length: 50,
-  })
-    .notNull()
-    .unique(),
-
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-/* =========================
-   EMPLOYEES
-========================= */
-
-export const employees = pgTable("employees", {
-  employeeId: uuid("employee_id")
-    .defaultRandom()
-    .primaryKey(),
-
-  roleId: integer("role_id")
-    .notNull()
-    .references(() => roles.roleId),
+export const employees = pgTable("Employee", {
+  employeeId: serial("employee_id").primaryKey(),
 
   employeeName: varchar("employee_name", {
     length: 100,
@@ -48,19 +25,23 @@ export const employees = pgTable("employees", {
     .notNull()
     .unique(),
 
+  role: varchar("role", {
+    length: 50,
+  }).notNull(),
+
   createdAt: timestamp("created_at").defaultNow(),
 
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 /* =========================
-   ORGANIZERS
+   ORGANIZER
 ========================= */
 
-export const organizers = pgTable("organizers", {
+export const organizers = pgTable("Organizer", {
   organizerId: serial("organizer_id").primaryKey(),
 
-  employeeId: uuid("employee_id").references(
+  employeeId: integer("employee_id").references(
     () => employees.employeeId
   ),
 
@@ -76,9 +57,17 @@ export const organizers = pgTable("organizers", {
 
   imageUrl: text("image_url"),
 
-  roleId: integer("role_id")
-    .notNull()
-    .references(() => roles.roleId),
+  role: varchar("role", {
+    length: 50,
+  }).notNull(),
+
+  password: varchar("password", {
+    length: 255,
+  }),
+
+  provider: varchar("provider", {
+    length: 50,
+  }).default("google"),
 
   createdAt: timestamp("created_at").defaultNow(),
 
@@ -86,10 +75,10 @@ export const organizers = pgTable("organizers", {
 });
 
 /* =========================
-   ACCOUNTS
+   ACCOUNT
 ========================= */
 
-export const accounts = pgTable("accounts", {
+export const accounts = pgTable("Account", {
   accountId: serial("account_id").primaryKey(),
 
   organizerId: integer("organizer_id")
@@ -120,10 +109,10 @@ export const accounts = pgTable("accounts", {
 });
 
 /* =========================
-   SESSIONS
+   SESSION
 ========================= */
 
-export const sessions = pgTable("sessions", {
+export const sessions = pgTable("Session", {
   sessionId: serial("session_id").primaryKey(),
 
   organizerId: integer("organizer_id")
