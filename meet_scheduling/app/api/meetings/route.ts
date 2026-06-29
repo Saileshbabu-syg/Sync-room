@@ -141,7 +141,6 @@ const insertedMeeting = await db
 
   const meetingId = insertedMeeting[0].meetingId;
 
-  // const attendeeIds = validatedData.participantEmployeeIds ?? [];
 
 if (attendeeIds.length > 0) {
   await db.insert(meetingAttendees).values(
@@ -165,52 +164,3 @@ if (attendeeIds.length > 0) {
   }
 }
 
-// export async function GET() {
-//   try {
-//     const allMeetings = await db
-//   .select({
-//     meetingId: meetings.meetingId,
-//     title: meetings.title,
-//     meetingDate: meetings.meetingDate,
-//     startTime: meetings.startTime,
-//     endTime: meetings.endTime,
-
-//     organizerName: employee.employeeName,
-//     roomName: room.roomName,
-//     meetingType: meetingTypes.meetingTypeName,
-//     status: meetingStatuses.meetingStatusName,
-//   })
-//   .from(meetings)
-//   .innerJoin(
-//     employee,
-//     eq(meetings.organizerEmployeeId, employee.employeeId)
-//   )
-//   .innerJoin(
-//     room,
-//     eq(meetings.roomId, room.roomId)
-//   )
-//   .innerJoin(
-//     meetingTypes,
-//     eq(meetings.meetingTypeId, meetingTypes.meetingTypeId)
-//   )
-//   .innerJoin(
-//     meetingStatuses,
-//     eq(meetings.meetingStatusId, meetingStatuses.meetingStatusId)
-//   );
-//   } catch (error) {
-//     return NextResponse.json(
-//       {
-//         message: "Something went wrong",
-//       },
-//       {
-//         status: 500,
-//       }
-//     );
-//   }
-// }
-
-// export async function GET() {
-//   return Response.json({
-//     message: "GET works",
-//   });
-// }
