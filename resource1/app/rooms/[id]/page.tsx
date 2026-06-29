@@ -119,13 +119,14 @@ if (Array.isArray(data)) {
         </label>
 
         <input
-          type="date"
-          className="border p-2 w-full mt-2"
-          value={date}
-          onChange={(e) =>
-            setDate(e.target.value)
-          }
-        />
+  type="date"
+  className="border p-2 w-full mt-2"
+  min={new Date().toISOString().split("T")[0]}
+  value={date}
+  onChange={(e) =>
+    setDate(e.target.value)
+  }
+/>
 
       </div>
 

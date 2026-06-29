@@ -16,6 +16,8 @@ export default function SearchResultsPage() {
   const start = params.get("start");
   const end = params.get("end");
   const capacity = params.get("capacity");
+//   const meetingTypeId = params.get("meetingTypeId");
+// const title = params.get("title");
 
   // Load rooms from API
   async function loadRooms(facility = "") {
@@ -143,10 +145,10 @@ export default function SearchResultsPage() {
   className="mt-4 w-full"
   onClick={() =>
     router.push(
-      `/rooms/${room.roomId}/confirm?roomName=${encodeURIComponent(
-        room.roomName
-      )}&date=${date}&start=${start}&end=${end}`
-    )
+  `/rooms/${room.roomId}/confirm?roomName=${encodeURIComponent(
+    room.roomName
+  )}&date=${date}&start=${start}&end=${end}`
+)
   }
 >
   Book Room

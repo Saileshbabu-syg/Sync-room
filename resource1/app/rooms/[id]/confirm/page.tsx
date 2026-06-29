@@ -30,6 +30,18 @@ export default function ConfirmPage() {
           <strong>End Time:</strong> {params.get("end")}
         </p>
 
+        {/* <p className="mb-3">
+  <strong>Meeting Title:</strong> {params.get("title")}
+</p>
+
+<p className="mb-3">
+  <strong>Meeting Type:</strong> {params.get("meetingTypeId")}
+</p>
+
+<p className="mb-3">
+  <strong>Capacity:</strong> {params.get("capacity")}
+</p> */}
+
       </div>
 
       <p className="mt-6 text-gray-600">
