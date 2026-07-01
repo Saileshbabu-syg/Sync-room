@@ -12,7 +12,7 @@ import {
    EMPLOYEE
 ========================= */
 
-export const employees = pgTable("Employee", {
+export const employees = pgTable("employee", {
   employeeId: serial("employee_id").primaryKey(),
 
   employeeName: varchar("employee_name", {
