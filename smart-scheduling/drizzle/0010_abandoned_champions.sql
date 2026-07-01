@@ -1,3 +1,0 @@
-ALTER TABLE "meeting" ADD COLUMN "room_id" integer NOT NULL;--> statement-breakpoint
-ALTER TABLE "meeting" ADD CONSTRAINT "meeting_room_id_room_room_id_fk" FOREIGN KEY ("room_id") REFERENCES "public"."room"("room_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "recurring_meetings" ADD CONSTRAINT "recurring_meetings_frequency_id_recurrence_frequency_master_frequency_id_fk" FOREIGN KEY ("frequency_id") REFERENCES "public"."recurrence_frequency_master"("frequency_id") ON DELETE no action ON UPDATE no action;

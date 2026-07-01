@@ -1,1 +1,0 @@
-ALTER TABLE "notifications" ADD COLUMN "status" varchar(20) DEFAULT 'PENDING';
