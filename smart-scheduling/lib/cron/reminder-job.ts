@@ -10,7 +10,6 @@ import {
 
 import { sendMeetingEmail } from "@/lib/services/email.service";
 
-console.log("🔥 Reminder Cron Loaded");
 
 cron.schedule("* * * * *", async () => {
   try {
@@ -41,27 +40,15 @@ const reminderTime = new Date(
   )
 );
 
-      console.log(
-        "Current Time:",
-        now
-      );
-
-      console.log(
-        "Reminder Time:",
-        reminderTime
-      );
-
-      console.log("Current UTC:", new Date());
-
 console.log(
-  "Current IST:",
+  "Current Time:",
   new Date().toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
   })
 );
 
 console.log(
-  "Reminder IST:",
+  "Reminder Time:",
   reminderTime.toLocaleString("en-IN", {
     timeZone: "Asia/Kolkata",
   })
