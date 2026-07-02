@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 
 export async function GET() {
   try {
-    const organizerEmployeeId = 1; // Temporary until authentication
+    const organizerEmployeeId = 2; // Temporary until authentication
 
     const meetingList = await db.query.meeting.findMany({
       where: eq(
