@@ -1,4 +1,4 @@
-export * from "./Employee";
+export * from "./employee";
 export * from "./meeting";
 export * from "./rooms";
 export * from "./meeting_attendees";
@@ -8,3 +8,7 @@ export * from "./reminder_logs";
 export * from "./recurrence_frequency_master";
 export * from "./recurring_meetings";
 export * from "./meeting_audit_logs";
+export * from "./availabilityMaster";
+export * from "./meetingStatuses";
+export * from "./meetingTypes";
+export * from "./roles";

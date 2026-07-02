@@ -11,6 +11,14 @@ export const recurringMeetingSchema = z.object({
 
   end_time: z.string(),
 
+  organizerEmployeeId: z.number(),
+
+  participantCount: z.number(),
+
+  meetingTypeId: z.number(),
+
+  meetingStatusId: z.number(),
+
   frequency_id: z.number(),
 
   occurrence_count: z.number().min(1),

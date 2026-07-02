@@ -27,15 +27,19 @@ function getNextDate(
 }
 
 export async function createRecurringMeeting(
-  data: {
-    title: string;
-    room_id: number;
-    meeting_date: string;
-    start_time: string;
-    end_time: string;
-    frequency_id: number;
-    occurrence_count: number;
-  }
+data: {
+  title: string;
+  room_id: number;
+  meeting_date: string;
+  start_time: string;
+  end_time: string;
+  organizerEmployeeId: number;
+  participantCount: number;
+  meetingTypeId: number;
+  meetingStatusId: number;
+  frequency_id: number;
+  occurrence_count: number;
+}
 ) {
   const createdMeetings = [];
 
@@ -54,10 +58,15 @@ export async function createRecurringMeeting(
         .values({
           title: data.title,
           room_id: data.room_id,
-          meeting_date:
-            currentDate
-              .toISOString()
-              .split("T")[0],
+          meeting_date: currentDate
+            .toISOString()
+            .split("T")[0],
+
+          organizerEmployeeId: data.organizerEmployeeId,
+          participantCount: data.participantCount,
+          meetingTypeId: data.meetingTypeId,
+          meetingStatusId: data.meetingStatusId,
+
           start_time: data.start_time,
           end_time: data.end_time,
         })

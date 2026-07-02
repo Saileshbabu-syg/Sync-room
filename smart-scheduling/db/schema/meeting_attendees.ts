@@ -8,7 +8,7 @@ import {
 
 
 import { meeting } from "./meeting";
-import { employee } from "./Employee";
+import { employee } from "./employee";
 
 export const meeting_attendees = pgTable(
   "meeting_attendees",

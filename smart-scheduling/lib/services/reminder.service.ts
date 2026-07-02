@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { reminder_logs } from "@/db/schema/reminder_logs";
 import { notifications } from "@/db/schema/notifications";
 import { meeting_attendees } from "@/db/schema/meeting_attendees";
-import { employee } from "@/db/schema/Employee";
+import { employee } from "@/db/schema/employee";
 import { meeting } from "@/db/schema/meeting";
 
 import { and, eq, lte } from "drizzle-orm";
