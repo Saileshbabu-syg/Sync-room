@@ -12,7 +12,8 @@ import {
 export async function getAvailableRooms(
   meetingDate: string,
   startTime: string,
-  endTime: string
+  endTime: string,
+  participantCount: number
 ) {
   // Find all meetings that conflict with the requested slot
   const conflictingMeetings = await db
@@ -37,7 +38,9 @@ export async function getAvailableRooms(
     .from(room);
 
   // Return only available rooms
-  return allRooms.filter(
-    (r) => !conflictingRoomIds.includes(r.room_id)
-  );
+    return allRooms.filter(
+      (r) =>
+        !conflictingRoomIds.includes(r.room_id) &&
+        r.room_capacity >= participantCount
+    );
 }

@@ -62,7 +62,7 @@ useEffect(() => {
         JSON.stringify(data.user)
       );
 
-      window.location.href = "/dashboard";
+      window.location.href = "/home";
       return;
     }
 
@@ -132,7 +132,7 @@ useEffect(() => {
               className="h-11 w-full bg-[#155DFC] text-white hover:bg-[#0F4FCC] border-0"
               onClick={() =>
                 signIn("google", {
-                  callbackUrl: "/dashboard",
+                  callbackUrl: "/home",
                 })
               }
             >

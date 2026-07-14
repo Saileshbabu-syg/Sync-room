@@ -150,6 +150,16 @@ if (attendeeIds.length > 0) {
     }))
   );
 }
+
+await fetch(`${process.env.NEXTAUTH_URL}/api/notifications/email`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    meetingId,
+  }),
+});
     return NextResponse.json({
       message: "Validation successful",
       data: validatedData,

@@ -13,9 +13,9 @@ import { employee } from "./employee";
 export const organizers = pgTable("Organizer", {
   organizerId: serial("organizer_id").primaryKey(),
 
-  employeeId: integer("employee_id").references(
-    () => employee.employee_id
-  ),
+  employeeId: integer("employee_id")
+  .references(() => employee.employee_id)
+  .notNull(),
 
   name: varchar("name", {
     length: 100,

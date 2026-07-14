@@ -12,13 +12,15 @@ export async function POST(
       meeting_date,
       start_time,
       end_time,
+      participant_count,
     } = body;
 
     const availableRooms =
       await getAvailableRooms(
         meeting_date,
         start_time,
-        end_time
+        end_time,
+         participant_count,
       );
 
     return NextResponse.json({
