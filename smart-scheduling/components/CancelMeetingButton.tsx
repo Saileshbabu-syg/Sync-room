@@ -4,6 +4,20 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 
+import { toast } from "sonner";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
 type Props = {
   meetingId: number;
 };
@@ -11,18 +25,13 @@ type Props = {
 export default function CancelMeetingButton({
   meetingId,
 }: Props) {
+
   const router = useRouter();
 
   const handleCancel = async () => {
-    const confirmed = window.confirm(
-      "Are you sure you want to cancel this meeting?"
-    );
-
-    if (!confirmed) {
-      return;
-    }
 
     try {
+
       const response = await fetch(
         `/api/meetings/cancel/${meetingId}`,
         {
@@ -34,29 +43,87 @@ export default function CancelMeetingButton({
         await response.json();
 
       if (!response.ok) {
-        alert(result.message);
+
+        toast.error(
+          result.message ||
+            "Failed to cancel meeting."
+        );
+
         return;
+
       }
 
-      alert(result.message);
+      toast.success(
+        "Meeting cancelled successfully."
+      );
 
       router.refresh();
 
-    } catch (error) {
-      console.error(error);
+    } catch {
 
-      alert(
-        "Unable to cancel meeting."
+      toast.error(
+        "Something went wrong."
       );
+
     }
+
   };
 
   return (
-    <Button
-      variant="destructive"
-      onClick={handleCancel}
-    >
-      Cancel
-    </Button>
+
+    <AlertDialog>
+
+      <AlertDialogTrigger asChild>
+
+        <Button variant="destructive">
+
+          Cancel
+
+        </Button>
+
+      </AlertDialogTrigger>
+
+      <AlertDialogContent>
+
+        <AlertDialogHeader>
+
+          <AlertDialogTitle>
+
+            Cancel Meeting
+
+          </AlertDialogTitle>
+
+          <AlertDialogDescription>
+
+            Are you sure you want to cancel this meeting?
+            This action cannot be undone.
+
+          </AlertDialogDescription>
+
+        </AlertDialogHeader>
+
+        <AlertDialogFooter>
+
+          <AlertDialogCancel>
+
+            No
+
+          </AlertDialogCancel>
+
+          <AlertDialogAction
+            onClick={handleCancel}
+          >
+
+            Yes, Cancel
+
+          </AlertDialogAction>
+
+        </AlertDialogFooter>
+
+      </AlertDialogContent>
+
+    </AlertDialog>
+
   );
+
 }

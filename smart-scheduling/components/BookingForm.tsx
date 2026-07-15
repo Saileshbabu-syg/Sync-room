@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 import { CalendarSearch } from "lucide-react";
 
@@ -20,6 +21,14 @@ export default function BookingForm() {
     endTime: "",
     participantCount: "",
   });
+
+ useEffect(() => {
+  const saved = sessionStorage.getItem("bookMeetingForm");
+
+  if (saved) {
+    setFormData(JSON.parse(saved));
+  }
+}, []);
 
   // Today's date
 const today = new Date();
@@ -49,9 +58,18 @@ const maxDate = maxDateObject.toISOString().split("T")[0];
       !formData.endTime ||
       !formData.participantCount
     ) {
-      alert("Please fill all required fields.");
+      toast.warning(
+  "Please fill all required fields."
+);
       return;
     }
+
+    if (Number(formData.participantCount) <= 0) {
+  toast.warning(
+    "Participant count must be at least 1."
+  );
+  return;
+}
 
     // Validate meeting date
 const selectedDate = new Date(formData.meetingDate);
@@ -60,7 +78,7 @@ if (
   selectedDate < new Date(minDate) ||
   selectedDate > new Date(maxDate)
 ) {
-  alert(
+  toast.warning(
     "Meeting date must be between today and the next 3 months."
   );
   return;
@@ -82,16 +100,31 @@ if (formData.meetingDate === todayString) {
     now.getMinutes().toString().padStart(2, "0");
 
   if (formData.startTime < minimumTime) {
-    alert(
+    toast.warning(
       `Start time must be at least 15 minutes after the current time (${minimumTime}).`
     );
     return;
   }
 }
-    if (formData.startTime >= formData.endTime) {
-      alert("End time must be greater than Start time.");
-      return;
-    }
+    // Validate meeting duration
+
+const start = new Date(
+  `${formData.meetingDate}T${formData.startTime}`
+);
+
+const end = new Date(
+  `${formData.meetingDate}T${formData.endTime}`
+);
+
+const duration =
+  (end.getTime() - start.getTime()) / 60000;
+
+if (duration < 15) {
+  toast.warning(
+    "Meeting duration must be at least 15 minutes."
+  );
+  return;
+}
 
     setLoading(true);
 
@@ -111,29 +144,49 @@ if (formData.meetingDate === todayString) {
         }),
       });
 
-      const result = await response.json();
+     const result = await response.json();
 
-      if (!response.ok || !result.success) {
-        alert(result.message || "Unable to fetch rooms.");
-        setLoading(false);
-        return;
-      }
+if (!response.ok || !result.success) {
+  toast.error(
+    result.message || "Unable to fetch rooms."
+  );
+  return;
+}
 
-      // Navigate to Available Rooms page.
-      // The page will call the API again using these values.
-      const query = new URLSearchParams({
-        date: formData.meetingDate,
-        start: formData.startTime,
-        end: formData.endTime,
-        participants: formData.participantCount,
-      });
+// No rooms available
+if (
+  !result.data ||
+  result.data.length === 0
+) {
+  toast.warning(
+    `No meeting room can accommodate ${formData.participantCount} participants. The maximum room capacity is ${result.maxCapacity}.`
+  );
+  return;
+}
 
-      router.push(
-        `/booking/available-rooms?${query.toString()}`
-      );
+// Navigate only if rooms exist
+const query = new URLSearchParams({
+  date: formData.meetingDate,
+  start: formData.startTime,
+  end: formData.endTime,
+  participants: formData.participantCount,
+});
+
+// sessionStorage.removeItem(
+//   "bookMeetingForm"
+// );
+
+sessionStorage.setItem(
+  "bookMeetingForm",
+  JSON.stringify(formData)
+);
+
+router.push(
+  `/booking/available-rooms?${query.toString()}`
+);
     } catch (error) {
       console.error(error);
-      alert("Something went wrong.");
+      toast.error("Something went wrong.");
     } finally {
       setLoading(false);
     }
@@ -187,6 +240,7 @@ if (formData.meetingDate === todayString) {
           <Input
             type="number"
             min={1}
+            step={1}
             name="participantCount"
             placeholder="Enter participant count"
             value={formData.participantCount}

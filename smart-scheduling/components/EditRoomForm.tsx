@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Toaster } from "@/components/ui/sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 
 type Props = {
   room: {
@@ -85,7 +87,7 @@ export default function EditRoomForm({
       if (
         !formData.room_name.trim()
       ) {
-        alert(
+        toast.warning(
           "Room name is required."
         );
         return;
@@ -94,7 +96,7 @@ export default function EditRoomForm({
       if (
         formData.room_capacity <= 0
       ) {
-        alert(
+        toast.warning(
           "Capacity must be greater than zero."
         );
         return;
@@ -103,7 +105,7 @@ export default function EditRoomForm({
       if (
         !formData.roomLocation.trim()
       ) {
-        alert(
+        toast.warning(
           "Location is required."
         );
         return;
@@ -134,13 +136,13 @@ export default function EditRoomForm({
           await response.json();
 
         if (!response.ok) {
-          alert(
+          toast.error(
             result.message
           );
           return;
         }
 
-        alert(
+        toast.success(
           "Room updated successfully."
         );
 
@@ -152,7 +154,7 @@ export default function EditRoomForm({
 
       } catch {
 
-        alert(
+        toast.error(
           "Something went wrong."
         );
 

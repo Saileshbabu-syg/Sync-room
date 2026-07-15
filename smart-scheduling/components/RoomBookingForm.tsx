@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, } from "react";
 import { useRouter } from "next/navigation";
 
 import { CalendarSearch } from "lucide-react";
-
+import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 
 type Props = {
   room: {
@@ -37,6 +38,23 @@ export default function RoomBookingForm({
       endTime: "",
       participantCount: "",
     });
+
+    useEffect(() => {
+
+  const saved =
+    sessionStorage.getItem(
+      "roomBookingForm"
+    );
+
+  if (saved) {
+
+    setFormData(
+      JSON.parse(saved)
+    );
+
+  }
+
+}, []);
 
   const today = new Date()
     .toISOString()
@@ -117,11 +135,18 @@ export default function RoomBookingForm({
       !formData.endTime ||
       !formData.participantCount
     ) {
-      alert(
+      toast.warning(
         "Please fill all required fields."
       );
       return;
     }
+
+    if (Number(formData.participantCount) <= 0) {
+  toast.warning(
+    "Participant count must be at least 1."
+  );
+  return;
+}
 
     const todayDate = new Date();
 
@@ -148,7 +173,7 @@ export default function RoomBookingForm({
       selectedDate < todayDate ||
       selectedDate > maximumDate
     ) {
-      alert(
+      toast.warning(
         "Meeting date must be between today and the next 3 months."
       );
       return;
@@ -174,7 +199,7 @@ export default function RoomBookingForm({
       selectedStart <
         minimumStart
     ) {
-      alert(
+      toast.warning(
         "Start time must be at least 15 minutes from now."
       );
       return;
@@ -186,7 +211,7 @@ export default function RoomBookingForm({
       ) >
       room.room_capacity
     ) {
-      alert(
+      toast.warning(
         `Room capacity is only ${room.room_capacity}.`
       );
       return;
@@ -196,7 +221,7 @@ export default function RoomBookingForm({
       formData.startTime >=
       formData.endTime
     ) {
-      alert(
+      toast.warning(
         "End time must be after Start time."
       );
       return;
@@ -242,7 +267,7 @@ export default function RoomBookingForm({
         await response.json();
 
       if (!response.ok) {
-        alert(
+        toast.error(
           result.message
         );
         return;
@@ -269,6 +294,12 @@ export default function RoomBookingForm({
             formData.participantCount,
         });
 
+
+        sessionStorage.setItem(
+  "roomBookingForm",
+  JSON.stringify(formData)
+);
+
       router.push(
         `/booking/details?${query.toString()}`
       );
@@ -277,7 +308,7 @@ export default function RoomBookingForm({
 
       console.error(error);
 
-      alert(
+      toast.error(
         "Something went wrong."
       );
 
@@ -407,6 +438,7 @@ export default function RoomBookingForm({
           <Input
             type="number"
             min={1}
+            step={1}
             name="participantCount"
             value={formData.participantCount}
             onChange={handleChange}

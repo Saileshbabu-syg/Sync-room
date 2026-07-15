@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { db } from "@/db";
+
+import { room } from "@/db/schema/rooms";
+
 import {
   getAvailableRooms,
   isRoomAvailable,
 } from "@/lib/services/room-suggestion.service";
+
+import { desc } from "drizzle-orm";
 
 export async function POST(
   req: NextRequest
@@ -20,7 +26,50 @@ export async function POST(
       participant_count,
     } = body;
 
-    // Booking from Rooms module
+    if (
+  participant_count === undefined ||
+  participant_count < 1
+) {
+  return NextResponse.json(
+    {
+      success: false,
+      message:
+        "Participant count must be at least 1.",
+    },
+    {
+      status: 400,
+    }
+  );
+}
+
+const start = new Date(
+  `${meeting_date}T${start_time}`
+);
+
+const end = new Date(
+  `${meeting_date}T${end_time}`
+);
+
+const duration =
+  (end.getTime() - start.getTime()) / 60000;
+
+if (duration < 15) {
+  return NextResponse.json(
+    {
+      success: false,
+      message:
+        "Meeting duration must be at least 15 minutes.",
+    },
+    {
+      status: 400,
+    }
+  );
+}
+
+    // -------------------------------
+    // Booking from Room Details Page
+    // -------------------------------
+
     if (room_id) {
 
       const available =
@@ -33,12 +82,14 @@ export async function POST(
         );
 
       if (!available.success) {
+
         return NextResponse.json(
           available,
           {
             status: 400,
           }
         );
+
       }
 
       return NextResponse.json(
@@ -47,9 +98,12 @@ export async function POST(
           status: 200,
         }
       );
+
     }
 
-    // Booking from Book Meeting module
+    // -------------------------------
+    // Booking from Book Meeting Page
+    // -------------------------------
 
     const availableRooms =
       await getAvailableRooms(
@@ -59,9 +113,27 @@ export async function POST(
         participant_count
       );
 
+    // Get Maximum Room Capacity
+
+    const maxRoom = await db
+      .select({
+        capacity: room.room_capacity,
+      })
+      .from(room)
+      .orderBy(
+        desc(room.room_capacity)
+      )
+      .limit(1);
+
     return NextResponse.json({
+
       success: true,
+
       data: availableRooms,
+
+      maxCapacity:
+        maxRoom[0]?.capacity ?? 0,
+
     });
 
   } catch (error) {
@@ -78,5 +150,7 @@ export async function POST(
         status: 500,
       }
     );
+
   }
+
 }

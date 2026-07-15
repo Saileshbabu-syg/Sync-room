@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 
 import BookingLayout from "@/components/BookingLayout";
 import RoomCard from "@/components/RoomCard";
+import BackButton from "@/components/BackButton";
 
 type Props = {
   searchParams: Promise<{
@@ -66,17 +67,23 @@ export default async function AvailableRoomsPage({
     >
       <div className="space-y-8">
 
-        <div>
+        <div className="flex items-start justify-between">
 
-          <h1 className="text-3xl font-bold">
-            Available Rooms
-          </h1>
+  <div>
 
-          <p className="mt-2 text-gray-500">
-            Select a room to continue booking.
-          </p>
+    <h1 className="text-3xl font-bold">
+      Available Rooms
+    </h1>
 
-        </div>
+    <p className="mt-2 text-gray-500">
+      Select a room to continue booking.
+    </p>
+
+  </div>
+
+  <BackButton />
+
+</div>
 
         <div className="grid gap-8 lg:grid-cols-2">
 

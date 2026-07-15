@@ -20,9 +20,9 @@ type Meeting = {
   startTime: string;
   endTime: string;
   participantCount: number;
-  roomName: string;
-  meetingType: string;
-  meetingStatus: string;
+  roomName: string | null;
+  meetingType: string | null;
+  meetingStatus: string | null;
 };
 
 type Props = {
@@ -44,7 +44,7 @@ export default function BookingCard({
           </h2>
 
           <p className="mt-1 text-sm text-gray-500">
-            {meeting.meetingType}
+            {meeting.meetingType ?? "-"}
           </p>
 
         </div>
@@ -59,7 +59,7 @@ export default function BookingCard({
                 : "bg-red-100 text-red-700"
             }`}
         >
-          {meeting.meetingStatus}
+          {meeting.meetingStatus ?? "-"}
         </span>
 
       </div>
@@ -70,7 +70,7 @@ export default function BookingCard({
 
           <Building2 className="h-5 w-5 text-blue-600" />
 
-          <span>{meeting.roomName}</span>
+          <span>{meeting.roomName ?? "-"}</span>
 
         </div>
 

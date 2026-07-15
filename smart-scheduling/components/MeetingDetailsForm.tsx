@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { Toaster } from "@/components/ui/sonner";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -15,6 +17,7 @@ import {
 } from "@/components/ui/select";
 
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 type MeetingType = {
   meetingTypeId: number;
@@ -69,12 +72,12 @@ export default function MeetingDetailsForm({
 
 const handleSubmit = async () => {
   if (!meetingTypeId) {
-    alert("Please select a meeting type.");
+    toast.warning("Please select a meeting type.");
     return;
   }
 
   if (!meetingTitle.trim()) {
-    alert("Meeting title is required.");
+    toast.warning("Meeting title is required.");
     return;
   }
 
@@ -86,7 +89,7 @@ if (attendeeInput !== "") {
   const pattern = /^\d+(,\d+)*$/;
 
   if (!pattern.test(attendeeInput)) {
-    alert(
+    toast.warning(
       "Employee ID is invalid"
     );
     return;
@@ -106,7 +109,7 @@ if (attendeeInput !== "") {
     const uniqueIds = new Set(participantEmployeeIds);
 
 if (uniqueIds.size !== participantEmployeeIds.length) {
-  alert("Duplicate employee IDs are not allowed.");
+  toast.warning("Duplicate employee IDs are not allowed.");
   return;
 }
 
@@ -115,7 +118,7 @@ if (
     organizerEmployeeId
   )
 ) {
-  alert(
+  toast.warning(
     "Organizer cannot be added as an attendee."
   );
   return;
@@ -155,11 +158,21 @@ if (
     const result = await response.json();
 
     if (!response.ok) {
-      alert(result.message);
-      return;
-    }
+  toast.error(result.message);
+  return;
+}
 
-    router.push("/booking/success");
+// Clear saved booking forms
+sessionStorage.removeItem(
+  "bookMeetingForm"
+);
+
+sessionStorage.removeItem(
+  "roomBookingForm"
+);
+
+// Redirect to success page
+router.push("/booking/success");
 
     // Next step
     // Redirect to Success Page
@@ -167,7 +180,7 @@ if (
   } catch (error) {
     console.error(error);
 
-    alert("Something went wrong.");
+    toast.error("Something went wrong.");
   } finally {
     setLoading(false);
   }

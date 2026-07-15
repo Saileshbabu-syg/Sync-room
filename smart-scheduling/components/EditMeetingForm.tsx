@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Toaster } from "@/components/ui/sonner";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +16,7 @@ import {
 } from "@/components/ui/select";
 
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 type MeetingType = {
   meetingTypeId: number;
@@ -56,7 +58,7 @@ export default function EditMeetingForm({
   const handleUpdate = async () => {
 
     if (!meetingTitle.trim()) {
-      alert("Meeting title is required.");
+      toast.warning("Meeting title is required.");
       return;
     }
 
@@ -72,7 +74,7 @@ if (attendeeText !== "") {
   const pattern = /^\d+(,\d+)*$/;
 
   if (!pattern.test(attendeeText)) {
-    alert(
+    toast.warning(
       "Employee ID is invalid"
     );
     setLoading(false);
@@ -123,14 +125,14 @@ const participantEmployeeIds =
 
       if (!response.ok) {
   if (result.errors?.length > 0) {
-    alert(result.errors[0].message);
+    toast.error(result.errors[0].message);
   } else {
-    alert(result.message);
+    toast.warning(result.message);
   }
   return;
 }
 
-      alert(result.message);
+      toast.success(result.message);
 
       router.push("/bookings");
 
@@ -140,7 +142,7 @@ const participantEmployeeIds =
 
       console.error(error);
 
-      alert(
+      toast.error(
         "Unable to update meeting."
       );
 

@@ -15,7 +15,7 @@ import {
 } from "drizzle-orm";
 
 import BookingLayout from "@/components/BookingLayout";
-import BookingCard from "@/components/BookingCard";
+import BookingTabs from "@/components/BookingTabs";
 
 export default async function MyBookingsPage() {
 
@@ -42,65 +42,71 @@ export default async function MyBookingsPage() {
       )
     );
 
-const meetings = await db
-  .select({
-    meetingId: meeting.meeting_id,
+  const meetings = await db
+    .select({
+      meetingId: meeting.meeting_id,
 
-    title: meeting.title,
+      title: meeting.title,
 
-    meetingDate: meeting.meeting_date,
+      meetingDate: meeting.meeting_date,
 
-    startTime: meeting.start_time,
+      startTime: meeting.start_time,
 
-    endTime: meeting.end_time,
+      endTime: meeting.end_time,
 
-    participantCount: meeting.participantCount,
+      participantCount:
+        meeting.participantCount,
 
-    roomName: room.room_name,
+      roomName: room.room_name,
 
-    meetingType: meetingTypes.meetingTypeName,
+      meetingType:
+        meetingTypes.meetingTypeName,
 
-    meetingStatus:
-      meetingStatuses.meetingStatusName,
-  })
+      meetingStatus:
+        meetingStatuses.meetingStatusName,
+    })
 
-  .from(meeting)
+    .from(meeting)
 
-  .leftJoin(
-    room,
-    eq(room.room_id, meeting.room_id)
-  )
-
-  .leftJoin(
-    meetingTypes,
-    eq(
-      meetingTypes.meetingTypeId,
-      meeting.meetingTypeId
+    .leftJoin(
+      room,
+      eq(room.room_id, meeting.room_id)
     )
-  )
 
-  .leftJoin(
-    meetingStatuses,
-    eq(
-      meetingStatuses.meetingStatusId,
-      meeting.meetingStatusId
+    .leftJoin(
+      meetingTypes,
+      eq(
+        meetingTypes.meetingTypeId,
+        meeting.meetingTypeId
+      )
     )
-  )
 
-  .where(
-    eq(
-      meeting.organizerEmployeeId,
-      userProfile[0].employeeId
+    .leftJoin(
+      meetingStatuses,
+      eq(
+        meetingStatuses.meetingStatusId,
+        meeting.meetingStatusId
+      )
     )
-  )
 
-  .orderBy(desc(meeting.meeting_date), desc(meeting.start_time));
+    .where(
+      eq(
+        meeting.organizerEmployeeId,
+        userProfile[0].employeeId
+      )
+    )
+
+    .orderBy(
+      desc(meeting.meeting_date),
+      desc(meeting.start_time)
+    );
 
   return (
     <BookingLayout
       session={session}
       userProfile={userProfile[0]}
     >
+
       <div className="space-y-8">
 
         <div>
@@ -115,38 +121,12 @@ const meetings = await db
 
         </div>
 
-        <div className="grid gap-6">
-
-          {meetings.length === 0 ? (
-
-            <div className="rounded-xl border bg-white p-10 text-center shadow">
-
-              <h2 className="text-xl font-semibold">
-                No Meetings Found
-              </h2>
-
-              <p className="mt-2 text-gray-500">
-                You haven't booked any meetings yet.
-              </p>
-
-            </div>
-
-          ) : (
-
-            meetings.map((meeting: any) => (
-
-              <BookingCard
-                key={meeting.meetingId}
-                meeting={meeting}
-              />
-
-            ))
-
-          )}
-
-        </div>
+        <BookingTabs
+          meetings={meetings}
+        />
 
       </div>
+
     </BookingLayout>
   );
 }

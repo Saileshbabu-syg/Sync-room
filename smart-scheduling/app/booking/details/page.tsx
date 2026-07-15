@@ -10,6 +10,7 @@ import BookingSummaryCard from "@/components/BookingSummaryCard";
 import MeetingDetailsForm from "@/components/MeetingDetailsForm";
 
 import { room } from "@/db/schema/rooms";
+import BackButton from "@/components/BackButton";
 
 type Props = {
   searchParams: Promise<{
@@ -55,45 +56,39 @@ export default async function BookingDetailsPage({
   }
 
   return (
-    <BookingLayout
-      session={session}
-      userProfile={userProfile[0]}
-    >
-      <div className="grid gap-8 lg:grid-cols-2">
+   <BookingLayout
+  session={session}
+  userProfile={userProfile[0]}
+>
 
-        <BookingSummaryCard
-          room={roomData[0]}
-        />
+  <div className="mb-6 flex justify-end">
 
-        <MeetingDetailsForm
-          roomId={roomData[0].room_id}
-          organizerEmployeeId={
-            userProfile[0].employeeId!
-          }
-          meetingDate={params.date}
-          startTime={params.start}
-          endTime={params.end}
-          participantCount={Number(
-            params.participants
-          )}
-        />
+    <BackButton />
 
-      </div>
-    </BookingLayout>
+  </div>
+
+  <div className="grid gap-8 lg:grid-cols-2">
+
+    <BookingSummaryCard
+      room={roomData[0]}
+    />
+
+    <MeetingDetailsForm
+      roomId={roomData[0].room_id}
+      organizerEmployeeId={
+        userProfile[0].employeeId!
+      }
+      meetingDate={params.date}
+      startTime={params.start}
+      endTime={params.end}
+      participantCount={Number(
+        params.participants
+      )}
+    />
+
+  </div>
+
+</BookingLayout>
   );
-// return (
-//   <BookingLayout
-//   session={session}
-//   userProfile={userProfile[0]}
-// >
-//   <MeetingDetailsForm
-//     roomId={roomData[0].room_id}
-//     organizerEmployeeId={userProfile[0].employeeId!}
-//     meetingDate={params.date}
-//     startTime={params.start}
-//     endTime={params.end}
-//     participantCount={Number(params.participants)}
-//   />
-// </BookingLayout>
-// );
+
 }
