@@ -1,68 +1,126 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { db } from "@/db";
+
 import { meeting } from "@/db/schema/meeting";
-import { meetingStatuses } from "@/db/schema/meetingStatuses";
+
 import { eq } from "drizzle-orm";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
+  }
 ) {
   try {
     const { id } = await params;
 
-    // 1. Check meeting exists
-    const existingMeeting = await db.query.meeting.findFirst({
-      where: eq(meeting.meeting_id, Number(id)),
-    });
+    const meetingId = Number(id);
+
+    if (isNaN(meetingId)) {
+      return NextResponse.json(
+        {
+          message: "Invalid meeting id.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    // Check meeting exists
+
+    const existingMeeting =
+      await db.query.meeting.findFirst({
+        where: eq(
+          meeting.meeting_id,
+          meetingId
+        ),
+      });
 
     if (!existingMeeting) {
       return NextResponse.json(
-        { message: "Meeting not found" },
-        { status: 404 }
+        {
+          message: "Meeting not found.",
+        },
+        {
+          status: 404,
+        }
       );
     }
 
-    // 2. Check if already cancelled
-    if (existingMeeting.meetingStatusId === 2) {
+    // Completed Meeting
+
+    if (
+      existingMeeting.meetingStatusId === 2
+    ) {
       return NextResponse.json(
-        { message: "Meeting is already cancelled" },
-        { status: 400 }
+        {
+          message:
+            "Completed meetings cannot be cancelled.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
-    // 3. Get CANCELLED status id (dynamic, not hardcoded best practice)
-    const cancelledStatus = await db.query.meetingStatuses.findFirst({
-      where: eq(meetingStatuses.meetingStatusName, "Cancelled"),
-    });
+    // Already Cancelled
 
-    if (!cancelledStatus) {
+    if (
+      existingMeeting.meetingStatusId === 3
+    ) {
       return NextResponse.json(
-        { message: "Cancelled status not configured" },
-        { status: 500 }
+        {
+          message:
+            "Meeting is already cancelled.",
+        },
+        {
+          status: 400,
+        }
       );
     }
 
-    // 4. Update meeting status
+    // Update Status
+
     await db
       .update(meeting)
       .set({
-        meetingStatusId: cancelledStatus.meetingStatusId,
+        meetingStatusId: 3,
+        updated_at: new Date(),
       })
-      .where(eq(meeting.meeting_id, Number(id)));
+      .where(
+        eq(
+          meeting.meeting_id,
+          meetingId
+        )
+      );
 
     return NextResponse.json(
       {
-        message: "Meeting cancelled successfully",
+        success: true,
+        message:
+          "Meeting cancelled successfully.",
       },
-      { status: 200 }
+      {
+        status: 200,
+      }
     );
   } catch (error) {
     console.error(error);
 
     return NextResponse.json(
-      { message: "Something went wrong" },
-      { status: 500 }
+      {
+        success: false,
+        message: "Something went wrong.",
+      },
+      {
+        status: 500,
+      }
     );
   }
 }

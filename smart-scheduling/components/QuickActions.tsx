@@ -34,13 +34,6 @@ const actions = [
     icon: ClipboardList,
     route: "/bookings",
   },
-  {
-    title: "About MeetSched",
-    description:
-      "Learn more about the scheduling platform.",
-    icon: Info,
-    route: "/about",
-  },
 ];
 
 export default function QuickActions() {
@@ -61,7 +54,7 @@ export default function QuickActions() {
 
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-6 md:grid-cols-3">
 
         {actions.map((action) => {
 

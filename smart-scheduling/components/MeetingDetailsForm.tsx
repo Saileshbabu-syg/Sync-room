@@ -87,7 +87,7 @@ if (attendeeInput !== "") {
 
   if (!pattern.test(attendeeInput)) {
     alert(
-      "Employee IDs must contain only numbers separated by commas.\nExample: 2,5,7"
+      "Employee ID is invalid"
     );
     return;
   }

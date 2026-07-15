@@ -8,16 +8,26 @@ import {
   markNotificationAsSent,
 } from "@/lib/services/reminder.service";
 
-import { sendMeetingEmail } from "@/lib/services/email.service";
+import {updateCompletedMeetings} from "@/lib/services/meeting-status.service"
 
+import { sendMeetingEmail } from "@/lib/services/email.service";
 
 cron.schedule("* * * * *", async () => {
   try {
     console.log("Checking pending reminders...");
 
-    const reminders = await getPendingReminders();
+    // Update completed meetings
+    const updatedMeetings =
+      await updateCompletedMeetings();
 
-    
+    if (updatedMeetings > 0) {
+      console.log(
+        `${updatedMeetings} meeting(s) marked as Completed.`
+      );
+    }
+
+    const reminders =
+      await getPendingReminders();
 
     console.log(
       "Reminders Found:",
@@ -25,41 +35,58 @@ cron.schedule("* * * * *", async () => {
     );
 
     for (const reminder of reminders) {
+
       const now = new Date(
-  new Date().toLocaleString("en-US", {
-    timeZone: "Asia/Kolkata",
-  })
-);
+        new Date().toLocaleString(
+          "en-US",
+          {
+            timeZone: "Asia/Kolkata",
+          }
+        )
+      );
 
-const reminderTime = new Date(
-  new Date(reminder.reminder_time).toLocaleString(
-    "en-US",
-    {
-      timeZone: "Asia/Kolkata",
-    }
-  )
-);
+      const reminderTime = new Date(
+        new Date(
+          reminder.reminder_time
+        ).toLocaleString(
+          "en-US",
+          {
+            timeZone:
+              "Asia/Kolkata",
+          }
+        )
+      );
 
-console.log(
-  "Current Time:",
-  new Date().toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
-  })
-);
+      console.log(
+        "Current Time:",
+        new Date().toLocaleString(
+          "en-IN",
+          {
+            timeZone:
+              "Asia/Kolkata",
+          }
+        )
+      );
 
-console.log(
-  "Reminder Time:",
-  reminderTime.toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
-  })
-);
+      console.log(
+        "Reminder Time:",
+        reminderTime.toLocaleString(
+          "en-IN",
+          {
+            timeZone:
+              "Asia/Kolkata",
+          }
+        )
+      );
 
       if (reminderTime > now) {
+
         console.log(
           `Skipping reminder ${reminder.reminder_log_id}`
         );
 
         continue;
+
       }
 
       const attendees =
@@ -67,26 +94,17 @@ console.log(
           reminder.meeting_id
         );
 
-      console.log(
-        "Attendees:",
-        attendees
-      );
-
       const meetingDetails =
         await getMeetingDetails(
           reminder.meeting_id
         );
-
-      console.log(
-        "Meeting Details:",
-        meetingDetails
-      );
 
       if (!meetingDetails) {
         continue;
       }
 
       for (const attendee of attendees) {
+
         if (!attendee.email) {
           continue;
         }
@@ -108,6 +126,7 @@ console.log(
             meetingDetails.end_time
           )
         );
+
       }
 
       await markReminderAsSent(
@@ -121,12 +140,20 @@ console.log(
       console.log(
         `Reminder sent for meeting ${reminder.meeting_id}`
       );
+
     }
+
+    console.log("Cron Completed");
+
+    console.log("--------------------------------");
+
   } catch (error) {
+
     console.error(
       "Reminder Cron Error:",
       error
     );
+
   }
 });
 

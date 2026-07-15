@@ -13,38 +13,40 @@ const features = [
     title: "Easy Booking",
     description:
       "Reserve meeting rooms in just a few clicks.",
+    color: "text-blue-600 bg-blue-100",
   },
   {
     icon: Building2,
     title: "Room Availability",
     description:
       "Check available rooms instantly.",
+    color: "text-green-600 bg-green-100",
   },
   {
     icon: ClipboardCheck,
     title: "Manage Meetings",
     description:
-      "View, edit and cancel bookings.",
+      "View, edit and cancel your bookings.",
+    color: "text-purple-600 bg-purple-100",
   },
   {
     icon: MailCheck,
     title: "Email Notifications",
     description:
-      "Automatic confirmation emails.",
+      "Receive instant confirmation and reminder emails.",
+    color: "text-orange-600 bg-orange-100",
   },
 ];
 
 export default function FeaturesSection() {
   return (
-    <section className="mx-auto mt-10 mb-14 max-w-7xl px-6">
+    <section className="mx-auto mt-12 mb-14 max-w-7xl px-6">
 
       <h2 className="mb-8 text-3xl font-bold">
-
         Why Choose MeetSched?
-
       </h2>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-5 md:grid-cols-2">
 
         {features.map((feature) => {
 
@@ -54,27 +56,33 @@ export default function FeaturesSection() {
 
             <div
               key={feature.title}
-              className="rounded-3xl bg-white p-8 shadow-md transition hover:shadow-xl"
+              className="flex items-start gap-5 rounded-2xl border bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
             >
 
-              <Icon className="mb-6 h-12 w-12 text-blue-700" />
+              <div
+                className={`flex h-14 w-14 items-center justify-center rounded-xl ${feature.color}`}
+              >
+                <Icon className="h-7 w-7" />
+              </div>
 
-              <h3 className="text-xl font-semibold">
+              <div>
 
-                {feature.title}
+                <h3 className="text-xl font-semibold">
+                  {feature.title}
+                </h3>
 
-              </h3>
+                <p className="mt-2 text-gray-500">
+                  {feature.description}
+                </p>
 
-              <p className="mt-4 text-gray-500">
-
-                {feature.description}
-
-              </p>
+              </div>
 
             </div>
 
           );
+
         })}
+
       </div>
 
     </section>

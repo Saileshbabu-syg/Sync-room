@@ -4,15 +4,20 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import {
+  House,
   CalendarPlus,
   Building2,
   ClipboardList,
-  PanelLeftClose,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
 const menus = [
+  {
+    title: "Home",
+    href: "/home",
+    icon: House,
+  },
   {
     title: "Book Meeting",
     href: "/booking",

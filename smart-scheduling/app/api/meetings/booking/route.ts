@@ -27,18 +27,20 @@ if (!result.success) {
     }
   );
 }
-
 const validatedData = result.data;
 
-if (
-  validatedData.participantEmployeeIds &&
-  validatedData.participantEmployeeIds.length >
-    validatedData.participant_count
-) {
+let attendeeIds =
+  validatedData.participantEmployeeIds ?? [];
+
+// Organizer is counted as one participant,
+// so attendees can only be participant_count - 1
+const maximumAttendees =
+  validatedData.participant_count - 1;
+
+if (attendeeIds.length > maximumAttendees) {
   return NextResponse.json(
     {
-      message:
-        "Participant employee count cannot exceed participant count",
+      message: `You can add only ${maximumAttendees} attendee(s). The organizer is counted automatically.`,
     },
     { status: 400 }
   );
@@ -66,12 +68,26 @@ if (!roomDetails) {
   );
 }
 
+// if (
+//   roomDetails.room_capacity !== null &&
+//   validatedData.participant_count > roomDetails.room_capacity
+// ) {
+//   return NextResponse.json(
+//     { message: "Room capacity exceeded" },
+//     { status: 400 }
+//   );
+// }
+
+// Total people in the room = Organizer + Attendees
 if (
   roomDetails.room_capacity !== null &&
-  validatedData.participant_count > roomDetails.room_capacity
+  validatedData.participant_count >
+    roomDetails.room_capacity
 ) {
   return NextResponse.json(
-    { message: "Room capacity exceeded" },
+    {
+      message: `Room capacity exceeded. Room capacity is ${roomDetails.room_capacity}.`,
+    },
     { status: 400 }
   );
 }
@@ -104,8 +120,11 @@ if (existingMeeting) {
 }
 
 
-const attendeeIds =
-  validatedData.participantEmployeeIds ?? [];
+// Automatically add organizer
+attendeeIds.unshift(validatedData.organizer_employee_id);
+
+// Remove duplicates
+attendeeIds = [...new Set(attendeeIds)];
 
 for (const employeeId of attendeeIds) {
   const attendee = await db.query.employee.findFirst({
