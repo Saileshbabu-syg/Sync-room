@@ -44,6 +44,7 @@ export default async function RoomsPage() {
       location: room.roomLocation,
       facilities: room.facilities,
       description: room.roomDescription,
+      imageUrl: room.imageUrl,
       status:
         availabilityMaster.availabilityStatusCode,
     })

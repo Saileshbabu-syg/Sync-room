@@ -206,6 +206,7 @@ router.push("/booking/success");
           <Input
             value={meetingDate}
             readOnly
+            className="bg-gray-100 text-gray-600 cursor-not-allowed"
           />
 
         </div>
@@ -221,6 +222,7 @@ router.push("/booking/success");
           <Input
             value={participantCount}
             readOnly
+            className="bg-gray-100 text-gray-600 cursor-not-allowed"
           />
 
         </div>
@@ -236,6 +238,7 @@ router.push("/booking/success");
           <Input
             value={startTime}
             readOnly
+            className="bg-gray-100 text-gray-600 cursor-not-allowed"
           />
 
         </div>
@@ -251,6 +254,7 @@ router.push("/booking/success");
           <Input
             value={endTime}
             readOnly
+            className="bg-gray-100 text-gray-600 cursor-not-allowed"
           />
 
         </div>
@@ -332,7 +336,7 @@ router.push("/booking/success");
           />
 
           <p className="mt-2 text-sm text-gray-500">
-            Separate employee IDs using commas.
+            The organizer is automatically included as an attendee.
           </p>
 
         </div>

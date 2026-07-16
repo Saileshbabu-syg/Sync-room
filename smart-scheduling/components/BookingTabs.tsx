@@ -4,6 +4,8 @@ import { useState } from "react";
 
 import BookingCard from "@/components/BookingCard";
 
+import { Label } from "@/components/ui/label";
+
 import {
   Tabs,
   TabsList,
@@ -160,42 +162,34 @@ const cancelledMeetings = filterByDate(
 
   </TabsList>
 
-  <div className="flex items-end gap-4">
+  <div className="mt-4 flex items-center gap-2">
 
-    <div className="flex-1">
+    <Label className="text-sm font-medium">
+    Filter by Date:
+  </Label>
 
-      <label className="mb-2 block text-sm font-medium">
+  <Input
+    type="date"
+    value={selectedDate}
+    onChange={(e) =>
+      setSelectedDate(e.target.value)
+    }
+    className="w-44"
+  />
 
-        Filter by Meeting Date
+  {selectedDate && (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() =>
+        setSelectedDate("")
+      }
+    >
+      Clear
+    </Button>
+  )}
 
-      </label>
-
-      <Input
-        type="date"
-        value={selectedDate}
-        onChange={(e) =>
-          setSelectedDate(e.target.value)
-        }
-      />
-
-    </div>
-
-    {selectedDate && (
-
-      <Button
-        variant="outline"
-        onClick={() =>
-          setSelectedDate("")
-        }
-      >
-
-        Clear
-
-      </Button>
-
-    )}
-
-  </div>
+</div>
 
 </div>
 

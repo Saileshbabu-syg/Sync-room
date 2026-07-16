@@ -19,6 +19,7 @@ type Room = {
   roomLocation: string | null;
   facilities: string | null;
   roomDescription: string | null;
+  imageUrl: string | null;
 };
 
 type Props = {
@@ -38,40 +39,45 @@ export default function RoomCard({
   const router = useRouter();
 
   const handleSelectRoom = () => {
-    if (
-      Number(bookingData.participants) >
-      room.room_capacity
-    ) {
-      toast.warning(
-        "Participant count exceeds room capacity."
-      );
-      return;
-    }
-
-    const query = new URLSearchParams({
-      roomId: room.room_id.toString(),
-      roomName: room.room_name,
-      date: bookingData.date,
-      start: bookingData.start,
-      end: bookingData.end,
-      participants: bookingData.participants,
-    });
-
-    router.push(
-      `/booking/details?${query.toString()}`
+  if (
+    Number(bookingData.participants) >
+    room.room_capacity
+  ) {
+    toast.warning(
+      "Participant count exceeds room capacity."
     );
-  };
+    return;
+  }
+
+  const query = new URLSearchParams({
+    roomId: room.room_id.toString(),
+    roomName: room.room_name,
+    date: bookingData.date,
+    start: bookingData.start,
+    end: bookingData.end,
+    participants: bookingData.participants,
+  });
+
+  router.push(
+    `/booking/details?${query.toString()}`
+  );
+};
+
+console.log(room);
 
   return (
     <div className="overflow-hidden rounded-3xl bg-white shadow-md transition hover:shadow-xl">
 
       <Image
-        src="/images/meeting-room.jpg"
-        alt={room.room_name}
-        width={600}
-        height={350}
-        className="h-56 w-full object-cover"
-      />
+  src={
+    room.imageUrl ??
+    "/images/rooms/default-room.jpg"
+  }
+  alt={room.room_name}
+  width={600}
+  height={350}
+  className="h-56 w-full object-cover"
+/>
 
       <div className="space-y-5 p-6">
 

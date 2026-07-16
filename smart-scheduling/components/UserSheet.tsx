@@ -2,6 +2,7 @@
 
 import { signOut } from "next-auth/react";
 import { Session } from "next-auth";
+import { UserCircle2 } from "lucide-react";
 
 import {
   Sheet,
@@ -50,10 +51,8 @@ export default function UserSheet({
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <Button variant="ghost" size="icon">
-          <Menu className="h-6 w-6" />
-        </Button>
-      </SheetTrigger>
+  <UserCircle2 className="h-10 w-10 cursor-pointer text-gray-700 hover:text-black transition-colors" />
+</SheetTrigger>
 
       <SheetContent
         side="right"

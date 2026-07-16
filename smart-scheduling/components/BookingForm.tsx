@@ -163,18 +163,12 @@ if (
   );
   return;
 }
-
-// Navigate only if rooms exist
 const query = new URLSearchParams({
   date: formData.meetingDate,
   start: formData.startTime,
   end: formData.endTime,
   participants: formData.participantCount,
 });
-
-// sessionStorage.removeItem(
-//   "bookMeetingForm"
-// );
 
 sessionStorage.setItem(
   "bookMeetingForm",

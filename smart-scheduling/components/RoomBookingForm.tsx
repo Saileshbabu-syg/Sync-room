@@ -338,6 +338,7 @@ export default function RoomBookingForm({
           <Input
             value={room.room_name}
             readOnly
+            className="bg-gray-100 text-gray-600 cursor-not-allowed"
           />
 
         </div>
@@ -351,6 +352,7 @@ export default function RoomBookingForm({
           <Input
             value={room.room_capacity}
             readOnly
+            className="bg-gray-100 text-gray-600 cursor-not-allowed"
           />
 
         </div>

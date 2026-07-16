@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Session } from "next-auth";
 import { Menu } from "lucide-react";
+import { CircleUserRound } from "lucide-react";
 
 import {
   Sheet,
@@ -32,7 +33,7 @@ export default function UserMenu({ session }: Props) {
 
       <SheetTrigger asChild>
         <Button variant="ghost" size="icon">
-          <Menu className="h-6 w-6" />
+          <CircleUserRound className="h-6 w-6" />
         </Button>
       </SheetTrigger>
 

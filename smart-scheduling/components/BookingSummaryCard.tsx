@@ -13,6 +13,7 @@ type Room = {
   roomLocation: string | null;
   facilities: string | null;
   roomDescription: string | null;
+  imageUrl: string | null;
 };
 
 type Props = {
@@ -26,11 +27,14 @@ export default function BookingSummaryCard({
     <div className="overflow-hidden rounded-2xl border bg-white shadow">
 
       <Image
-        src="/images/meeting-room.jpg"
+        src={
+          room.imageUrl ??
+          "/images/rooms/default-room.jpg"
+        }
         alt={room.room_name}
-        width={800}
-        height={400}
-        className="h-64 w-full object-cover"
+        width={600}
+        height={350}
+        className="h-56 w-full object-cover"
       />
 
       <div className="space-y-5 p-6">

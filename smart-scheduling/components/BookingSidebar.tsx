@@ -39,7 +39,7 @@ export default function BookingSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex h-[calc(100vh-64px)] w-64 flex-col border-r bg-white">
+    <aside className="sticky top-0 flex h-full w-64 flex-col border-r bg-white">
 
       {/* Sidebar Header */}
 

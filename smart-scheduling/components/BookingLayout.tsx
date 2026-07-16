@@ -38,7 +38,7 @@ export default function BookingLayout({
 
       {/* Content */}
 
-      <div className="flex">
+      <div className="flex h-[calc(100vh-64px)]">
 
         {/* Sidebar */}
 
@@ -46,7 +46,7 @@ export default function BookingLayout({
 
         {/* Main Content */}
 
-        <section className="flex-1 p-8">
+        <section className="flex-1 overflow-y-auto p-8">
 
           <div className="rounded-3xl bg-white p-8 shadow-sm">
 

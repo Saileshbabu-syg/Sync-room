@@ -30,6 +30,10 @@ export const room = pgTable("rooms", {
     length: 255,
   }),
 
+  imageUrl: varchar("image_url", {
+  length: 255,
+}),
+
   created_at: timestamp("created_at").defaultNow(),
 
   updated_at: timestamp("updated_at").defaultNow(),

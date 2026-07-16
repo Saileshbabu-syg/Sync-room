@@ -19,6 +19,7 @@ type Room = {
   facilities: string |null;
   description: string | null;
   status: string | null;
+  imageUrl: string | null;
 };
 
 type Props = {
@@ -32,12 +33,15 @@ export default function RoomListCard({
     <div className="overflow-hidden rounded-3xl bg-white shadow-md transition hover:shadow-xl">
 
       <Image
-        src="/images/meeting-room.jpg"
-        alt={room.roomName}
-        width={600}
-        height={350}
-        className="h-56 w-full object-cover"
-      />
+  src={
+    room.imageUrl ??
+    "/images/rooms/default-room.jpg"
+  }
+  alt={room.roomName}
+  width={600}
+  height={350}
+  className="h-56 w-full object-cover"
+/>
 
       <div className="space-y-5 p-6">
 
