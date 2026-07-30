@@ -1,0 +1,240 @@
+{
+  "id": "896cb90d-7d97-45c7-945d-b412a3106b3e",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.Meeting": {
+      "name": "Meeting",
+      "schema": "",
+      "columns": {
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_date": {
+          "name": "meeting_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.Notification_type_master": {
+      "name": "Notification_type_master",
+      "schema": "",
+      "columns": {
+        "notification_type_id": {
+          "name": "notification_type_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "notification_type_name": {
+          "name": "notification_type_name",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "Notification_type_master_notification_type_name_unique": {
+          "name": "Notification_type_master_notification_type_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "notification_type_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.Recurrence_frequency_master": {
+      "name": "Recurrence_frequency_master",
+      "schema": "",
+      "columns": {
+        "frequency_id": {
+          "name": "frequency_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "frequency_name": {
+          "name": "frequency_name",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "Recurrence_frequency_master_frequency_name_unique": {
+          "name": "Recurrence_frequency_master_frequency_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "frequency_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.Recurring_meetings": {
+      "name": "Recurring_meetings",
+      "schema": "",
+      "columns": {
+        "recurring_meeting_id": {
+          "name": "recurring_meeting_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "frequency_id": {
+          "name": "frequency_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurrence_count": {
+          "name": "occurrence_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recurrence_end_date": {
+          "name": "recurrence_end_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "Recurring_meetings_meeting_id_Meeting_meeting_id_fk": {
+          "name": "Recurring_meetings_meeting_id_Meeting_meeting_id_fk",
+          "tableFrom": "Recurring_meetings",
+          "tableTo": "Meeting",
+          "columnsFrom": [
+            "meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "Recurring_meetings_frequency_id_Recurrence_frequency_master_frequency_id_fk": {
+          "name": "Recurring_meetings_frequency_id_Recurrence_frequency_master_frequency_id_fk",
+          "tableFrom": "Recurring_meetings",
+          "tableTo": "Recurrence_frequency_master",
+          "columnsFrom": [
+            "frequency_id"
+          ],
+          "columnsTo": [
+            "frequency_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
