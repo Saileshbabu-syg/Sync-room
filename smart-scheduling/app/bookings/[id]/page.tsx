@@ -2,17 +2,17 @@ import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
-import { organizers } from "@/db/schema/organizer";
+import { organizers } from "@/db/schema";
 
 import BookingLayout from "@/components/BookingLayout";
 import BookingDetailsCard from "@/components/BookingDetailsCard";
 
-import { meeting } from "@/db/schema/meeting";
-import { room } from "@/db/schema/rooms";
-import { meetingTypes } from "@/db/schema/meetingTypes";
-import { meetingStatuses } from "@/db/schema/meetingStatuses";
-import { meeting_attendees } from "@/db/schema/meeting_attendees";
-import { employee } from "@/db/schema/employee";
+import { meeting } from "@/db/schema";
+import { room } from "@/db/schema";
+import { meetingTypes } from "@/db/schema";
+import { meetingStatuses } from "@/db/schema";
+import { meeting_attendees } from "@/db/schema";
+import { employee } from "@/db/schema";
 
 import {
   and,

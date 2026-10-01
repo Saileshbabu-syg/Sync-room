@@ -3,11 +3,11 @@ import { redirect } from "next/navigation";
 
 import { db } from "@/db";
 
-import { organizers } from "@/db/schema/organizer";
-import { meeting } from "@/db/schema/meeting";
-import { room } from "@/db/schema/rooms";
-import { meetingTypes } from "@/db/schema/meetingTypes";
-import { meetingStatuses } from "@/db/schema/meetingStatuses";
+import { organizers } from "@/db/schema";
+import { meeting } from "@/db/schema";
+import { room } from "@/db/schema";
+import { meetingTypes } from "@/db/schema";
+import { meetingStatuses } from "@/db/schema";
 
 import {
   desc,

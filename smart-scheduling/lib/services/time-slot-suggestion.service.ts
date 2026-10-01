@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { meeting } from "@/db/schema/meeting";
+import { meeting } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 
 function addOneHour(time: string): string {

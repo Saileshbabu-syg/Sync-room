@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createMeetingSchema } from "@/lib/validations/meeting.validator";
 import { db } from "@/db";
 
-import { employee } from "@/db/schema/employee";
-import { room } from "@/db/schema/rooms";
-import { meeting } from "@/db/schema/meeting";
-import { meetingTypes } from "@/db/schema/meetingTypes";
-import { meetingStatuses } from "@/db/schema/meetingStatuses";
-import { meeting_attendees } from "@/db/schema/meeting_attendees";
+import { employee } from "@/db/schema";
+import { room } from "@/db/schema";
+import { meeting } from "@/db/schema";
+import { meetingTypes } from "@/db/schema";
+import { meetingStatuses } from "@/db/schema";
+import { meeting_attendees } from "@/db/schema";
 import { and, eq, lt, gt } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {

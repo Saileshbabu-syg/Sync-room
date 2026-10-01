@@ -1,7 +1,7 @@
 import { db } from "@/db";
 
 import { meeting_audit_logs }
-from "@/db/schema/meeting_audit_logs";
+from "@/db/schema";
 
 export async function createAuditLog(
   meetingId: number,

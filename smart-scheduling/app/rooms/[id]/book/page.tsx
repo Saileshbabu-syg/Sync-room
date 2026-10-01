@@ -3,8 +3,8 @@ import { redirect } from "next/navigation";
 
 import { db } from "@/db";
 
-import { organizers } from "@/db/schema/organizer";
-import { room } from "@/db/schema/rooms";
+import { organizers } from "@/db/schema";
+import { room } from "@/db/schema";
 
 import { eq } from "drizzle-orm";
 

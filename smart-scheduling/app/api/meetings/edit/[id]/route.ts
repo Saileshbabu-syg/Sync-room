@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { db } from "@/db";
 
-import { meeting } from "@/db/schema/meeting";
-import { meetingTypes } from "@/db/schema/meetingTypes";
-import { room } from "@/db/schema/rooms";
-import { employee } from "@/db/schema/employee";
-import { meeting_attendees } from "@/db/schema/meeting_attendees";
+import { meeting } from "@/db/schema";
+import { meetingTypes } from "@/db/schema";
+import { room } from "@/db/schema";
+import { employee } from "@/db/schema";
+import { meeting_attendees } from "@/db/schema";
 
 import { editMeetingSchema } from "@/lib/validations/editMeeting.validator";
 

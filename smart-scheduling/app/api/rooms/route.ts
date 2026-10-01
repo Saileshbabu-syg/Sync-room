@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { room } from "@/db/schema/rooms";
+import { room } from "@/db/schema";
 import { like } from "drizzle-orm";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

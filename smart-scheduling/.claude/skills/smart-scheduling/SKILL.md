@@ -14,7 +14,7 @@ Next.js 16 (App Router) meeting-room scheduler. Drizzle ORM + Postgres (Neon), N
   - Correct: `...@ep-xxxx.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require`
   - Wrong (breaks writes): `...@ep-xxxx-pooler.c-6.us-east-2.aws.neon.tech/...`
 - A `docker-compose.yml` exists for spinning up a **local** Postgres container as a fallback/offline option (`docker compose up -d`), matching the schema via `npx drizzle-kit push`. Not used for day-to-day team work — Neon is the shared source of truth.
-- Schema lives in `db/schema/*.ts`. Apply changes with `npx drizzle-kit push`.
+- Schema lives in `db/schema.ts`. Apply changes with `npx drizzle-kit push`.
 
 ## Roles
 

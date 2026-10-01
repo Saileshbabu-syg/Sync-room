@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { db } from "@/db";
-import { meetingTypes } from "@/db/schema/meetingTypes";
+import { meetingTypes } from "@/db/schema";
 
 export async function GET() {
   try {

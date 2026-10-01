@@ -3,9 +3,9 @@ import Google from "next-auth/providers/google";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { employee } from "@/db/schema/employee";
-import { organizers } from "@/db/schema/organizer";
-import { roles } from "@/db/schema/roles";
+import { employee } from "@/db/schema";
+import { organizers } from "@/db/schema";
+import { roles } from "@/db/schema";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [

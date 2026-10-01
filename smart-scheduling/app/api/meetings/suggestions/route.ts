@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { db } from "@/db";
 
-import { room } from "@/db/schema/rooms";
+import { room } from "@/db/schema";
 
 import {
   getAvailableRooms,

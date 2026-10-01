@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { meeting } from "@/db/schema/meeting";
+import { meeting } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 
 export async function checkMeetingConflict(

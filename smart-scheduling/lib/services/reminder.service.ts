@@ -1,10 +1,10 @@
 import { db } from "@/db";
 
-import { reminder_logs } from "@/db/schema/reminder_logs";
-import { notifications } from "@/db/schema/notifications";
-import { meeting_attendees } from "@/db/schema/meeting_attendees";
-import { employee } from "@/db/schema/employee";
-import { meeting } from "@/db/schema/meeting";
+import { reminder_logs } from "@/db/schema";
+import { notifications } from "@/db/schema";
+import { meeting_attendees } from "@/db/schema";
+import { employee } from "@/db/schema";
+import { meeting } from "@/db/schema";
 
 import { and, eq, lte } from "drizzle-orm";
 

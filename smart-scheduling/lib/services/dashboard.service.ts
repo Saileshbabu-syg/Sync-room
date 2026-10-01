@@ -1,8 +1,8 @@
 import { db } from "@/db";
 
-import { meeting } from "@/db/schema/meeting";
-import { room } from "@/db/schema/rooms";
-import { meetingStatuses } from "@/db/schema/meetingStatuses";
+import { meeting } from "@/db/schema";
+import { room } from "@/db/schema";
+import { meetingStatuses } from "@/db/schema";
 
 import {
   and,

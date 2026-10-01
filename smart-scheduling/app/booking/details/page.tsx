@@ -2,14 +2,14 @@ import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
-import { organizers } from "@/db/schema/organizer";
+import { organizers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 import BookingLayout from "@/components/BookingLayout";
 import BookingSummaryCard from "@/components/BookingSummaryCard";
 import MeetingDetailsForm from "@/components/MeetingDetailsForm";
 
-import { room } from "@/db/schema/rooms";
+import { room } from "@/db/schema";
 import BackButton from "@/components/BackButton";
 
 type Props = {

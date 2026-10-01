@@ -1,7 +1,7 @@
 import { db } from "@/db";
 
-import { meeting } from "@/db/schema/meeting";
-import { recurring_meetings } from "@/db/schema/recurring_meetings";
+import { meeting } from "@/db/schema";
+import { recurring_meetings } from "@/db/schema";
 
 function getNextDate(
   currentDate: Date,

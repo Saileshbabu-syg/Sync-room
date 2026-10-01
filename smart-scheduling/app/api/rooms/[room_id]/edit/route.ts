@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { organizers } from "@/db/schema/organizer";
+import { organizers } from "@/db/schema";
 
 import { db } from "@/db";
 
-import { room } from "@/db/schema/rooms";
-import { availabilityMaster } from "@/db/schema/availabilityMaster";
+import { room } from "@/db/schema";
+import { availabilityMaster } from "@/db/schema";
 
 import { editRoomSchema } from "@/lib/validations/editRoom.validator";
 

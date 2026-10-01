@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcrypt";
 import {db} from "@/db";
-import {employee} from "@/db/schema/employee";
-import {sessions} from "@/db/schema/session";
-import {accounts} from "@/db/schema/account";
-import { organizers } from "@/db/schema/organizer";
+import {employee} from "@/db/schema";
+import {sessions} from "@/db/schema";
+import {accounts} from "@/db/schema";
+import { organizers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function POST(req: Request) {

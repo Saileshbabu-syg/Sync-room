@@ -7,7 +7,7 @@ An internal meeting-room booking app: employees book rooms for meetings, admins 
 ## Project structure
 
 - `app/` — pages and API routes (App Router). Key folders: `booking/`, `bookings/` (edit/cancel), `dashboard/`, `rooms/`, `login/`, `signup/`, `api/` (all backend routes).
-- `db/schema/` — Drizzle table definitions, one file per table.
+- `db/schema.ts` — all Drizzle table definitions, relations and types in one file.
 - `lib/services/` — business logic (conflict checking, room suggestions, dashboard stats, audit logging, notifications, reminders).
 - `lib/validations/` — Zod schemas for request validation.
 - `lib/cron/` — the reminder email cron job.
@@ -39,7 +39,7 @@ No formal branching/PR convention yet — the team currently pushes/PRs to `main
   - Correct: `...@ep-xxxx.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require`
   - Wrong (breaks writes): `...@ep-xxxx-pooler.c-6.us-east-2.aws.neon.tech/...`
 - A `docker-compose.yml` exists for spinning up a **local** Postgres container as a fallback/offline option (`docker compose up -d`), matching the schema via `npx drizzle-kit push`. Not used for day-to-day team work — Neon is the shared source of truth.
-- Schema lives in `db/schema/*.ts`. Apply changes with `npx drizzle-kit push`.
+- Schema lives in `db/schema.ts`. Apply changes with `npx drizzle-kit push`.
 
 ## Roles
 

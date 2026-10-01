@@ -3,10 +3,10 @@ import { redirect } from "next/navigation";
 
 import { db } from "@/db";
 
-import { organizers } from "@/db/schema/organizer";
-import { meeting } from "@/db/schema/meeting";
-import { meetingTypes } from "@/db/schema/meetingTypes";
-import { meeting_attendees } from "@/db/schema/meeting_attendees";
+import { organizers } from "@/db/schema";
+import { meeting } from "@/db/schema";
+import { meetingTypes } from "@/db/schema";
+import { meeting_attendees } from "@/db/schema";
 
 import { eq } from "drizzle-orm";
 

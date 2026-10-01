@@ -2,7 +2,7 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { room } from "@/db/schema/rooms";
+import { room } from "@/db/schema";
 
 export async function GET(
   request: Request,
