@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
-import Link from "next/link";
 import { signIn } from "next-auth/react";
 
 import {
@@ -17,17 +16,12 @@ import {
 } from "@/components/ui/alert-dialog";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
-export default function LoginPage() {
+function LoginContent() {
   const searchParams = useSearchParams();
 
   const [open, setOpen] = useState(false);
 
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-  });
 
  const hasError =
   searchParams.get("error") === "not-authorized";
@@ -41,33 +35,6 @@ useEffect(() => {
     return () => clearTimeout(timer);
   }
 }, [hasError]);
-
-  const handleLogin = async () => {
-    const response = await fetch("/api/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: formData.email,
-        password: formData.password,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (response.ok) {
-      localStorage.setItem(
-        "organizer",
-        JSON.stringify(data.user)
-      );
-
-      window.location.href = "/home";
-      return;
-    }
-
-    alert(data.message);
-  };
 
   return (
     <div className="min-h-screen grid bg-slate-50 lg:grid-cols-2">
@@ -96,37 +63,6 @@ useEffect(() => {
 
           <div className="space-y-5">
 
-            <Input
-              type="email"
-              placeholder="Email Address"
-              value={formData.email}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  email: e.target.value,
-                })
-              }
-            />
-
-            <Input
-              type="password"
-              placeholder="Password"
-              value={formData.password}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  password: e.target.value,
-                })
-              }
-            />
-
-            <Button
-              className="h-11 w-full"
-              onClick={handleLogin}
-            >
-              Login
-            </Button>
-
             <Button
               variant="outline"
               className="h-11 w-full bg-[#155DFC] text-white hover:bg-[#0F4FCC] border-0"
@@ -140,16 +76,6 @@ useEffect(() => {
             </Button>
 
           </div>
-
-          <p className="mt-8 text-center text-sm text-muted-foreground">
-            Don&apos;t have an account?{" "}
-            <Link
-              href="/signup"
-              className="font-semibold text-blue-700 hover:text-blue-800"
-            >
-              Sign Up
-            </Link>
-          </p>
 
         </div>
 
@@ -287,5 +213,13 @@ useEffect(() => {
       </AlertDialog>
 
         </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
   );
 }
