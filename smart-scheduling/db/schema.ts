@@ -10,9 +10,9 @@
  *
  * NOTE: table names, column names and exported identifiers are deliberately
  * unchanged from the previous per-file schema so the existing database and all
- * call sites keep working. Apply changes with `npx drizzle-kit push`.
+ * call sites keep working. Apply changes with `npx drizzle-kit generate` then `npx drizzle-kit migrate`.
  */
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   bigint,
   date,
@@ -24,6 +24,7 @@ import {
   time,
   timestamp,
   unique,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -50,7 +51,30 @@ export const meetingTypes = pgTable("meeting_types", {
   meetingTypeName: varchar("meeting_type_name", { length: 50 })
     .notNull()
     .unique(),
+  // Lower number = higher priority (1 Client, 2 Interview, 3 Team meeting,
+  // 4 Training / One-on-one, 5 Others). A meeting may only bump a strictly
+  // higher rank number; equal ranks never bump each other.
+  priorityRank: integer("priority_rank").notNull().default(5),
 });
+
+// Which meeting types each role may book. Drives the type list shown to a
+// user after login and is re-checked server-side on booking and edit.
+export const roleMeetingTypes = pgTable(
+  "role_meeting_types",
+  {
+    roleMeetingTypeId: serial("role_meeting_type_id").primaryKey(),
+    roleId: integer("role_id")
+      .notNull()
+      .references(() => roles.roleId),
+    meetingTypeId: integer("meeting_type_id")
+      .notNull()
+      .references(() => meetingTypes.meetingTypeId),
+  },
+  (t) => [
+    unique().on(t.roleId, t.meetingTypeId),
+    index("role_meeting_types_meeting_type_id_idx").on(t.meetingTypeId),
+  ]
+);
 
 export const meetingStatuses = pgTable("meeting_statuses", {
   meetingStatusId: serial("meeting_status_id").primaryKey(),
@@ -290,13 +314,79 @@ export const meeting_audit_logs = pgTable(
   (t) => [index("meeting_audit_logs_meeting_id_idx").on(t.meeting_id)]
 );
 
+// A higher-priority meeting (the claimant) asking for the slot held by a
+// lower-priority one (the bumped meeting). The bumped meeting keeps its slot
+// until the organizer reschedules/cancels or `deadline` passes, at which point
+// the cron job auto-reallocates it. status: PENDING | RESCHEDULED | CANCELLED |
+// AUTO_REALLOCATED | AUTO_CANCELLED | WITHDRAWN.
+export const reschedule_requests = pgTable(
+  "reschedule_requests",
+  {
+    reschedule_request_id: serial("reschedule_request_id").primaryKey(),
+    bumped_meeting_id: integer("bumped_meeting_id")
+      .notNull()
+      .references(() => meeting.meeting_id),
+    claimant_meeting_id: integer("claimant_meeting_id")
+      .notNull()
+      .references(() => meeting.meeting_id),
+    status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+    deadline: timestamp("deadline", { withTimezone: true }).notNull(),
+    resolved_at: timestamp("resolved_at", { withTimezone: true }),
+    created_at: timestamp("created_at").defaultNow(),
+  },
+  (t) => [
+    // One claim per slot: a meeting can have at most one pending request.
+    uniqueIndex("reschedule_requests_one_pending_per_bumped_idx")
+      .on(t.bumped_meeting_id)
+      .where(sql`${t.status} = 'PENDING'`),
+    index("reschedule_requests_claimant_idx").on(t.claimant_meeting_id),
+    // Cron scan: pending requests ordered by deadline.
+    index("reschedule_requests_status_deadline_idx").on(t.status, t.deadline),
+  ]
+);
+
 /* -------------------------------------------------------------------------- */
-/* 4. Relations                                                               */
+/* 4. Relations                                                             */
 /* -------------------------------------------------------------------------- */
 
 export const rolesRelations = relations(roles, ({ many }) => ({
   employees: many(employee),
+  allowedMeetingTypes: many(roleMeetingTypes),
 }));
+
+export const meetingTypesRelations = relations(meetingTypes, ({ many }) => ({
+  allowedRoles: many(roleMeetingTypes),
+}));
+
+export const roleMeetingTypesRelations = relations(
+  roleMeetingTypes,
+  ({ one }) => ({
+    role: one(roles, {
+      fields: [roleMeetingTypes.roleId],
+      references: [roles.roleId],
+    }),
+    meetingType: one(meetingTypes, {
+      fields: [roleMeetingTypes.meetingTypeId],
+      references: [meetingTypes.meetingTypeId],
+    }),
+  })
+);
+
+export const rescheduleRequestsRelations = relations(
+  reschedule_requests,
+  ({ one }) => ({
+    bumpedMeeting: one(meeting, {
+      fields: [reschedule_requests.bumped_meeting_id],
+      references: [meeting.meeting_id],
+      relationName: "bumpedMeeting",
+    }),
+    claimantMeeting: one(meeting, {
+      fields: [reschedule_requests.claimant_meeting_id],
+      references: [meeting.meeting_id],
+      relationName: "claimantMeeting",
+    }),
+  })
+);
 
 export const employeeRelations = relations(employee, ({ one, many }) => ({
   role: one(roles, {
@@ -361,6 +451,8 @@ export const meetingRelations = relations(meeting, ({ one, many }) => ({
   notifications: many(notifications),
   reminderLogs: many(reminder_logs),
   auditLogs: many(meeting_audit_logs),
+  bumpRequests: many(reschedule_requests, { relationName: "bumpedMeeting" }),
+  claimRequests: many(reschedule_requests, { relationName: "claimantMeeting" }),
 }));
 
 export const meetingAttendeesRelations = relations(
@@ -438,3 +530,7 @@ export type RecurringMeeting = typeof recurring_meetings.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type ReminderLog = typeof reminder_logs.$inferSelect;
 export type MeetingAuditLog = typeof meeting_audit_logs.$inferSelect;
+export type MeetingType = typeof meetingTypes.$inferSelect;
+export type RoleMeetingType = typeof roleMeetingTypes.$inferSelect;
+export type RescheduleRequest = typeof reschedule_requests.$inferSelect;
+export type NewRescheduleRequest = typeof reschedule_requests.$inferInsert;
