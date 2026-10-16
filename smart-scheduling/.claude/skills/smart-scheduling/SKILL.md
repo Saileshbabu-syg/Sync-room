@@ -13,8 +13,8 @@ Next.js 16 (App Router) meeting-room scheduler. Drizzle ORM + Postgres (Neon), N
   - Neon's pooler uses PgBouncer-style transaction pooling, which breaks Drizzle/`pg`'s prepared statements (`relation "X" does not exist` errors on INSERT, even though the table exists and SELECTs work fine).
   - Correct: `...@ep-xxxx.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require`
   - Wrong (breaks writes): `...@ep-xxxx-pooler.c-6.us-east-2.aws.neon.tech/...`
-- A `docker-compose.yml` exists for spinning up a **local** Postgres container as a fallback/offline option (`docker compose up -d`), matching the schema via `npx drizzle-kit push`. Not used for day-to-day team work — Neon is the shared source of truth.
-- Schema lives in `db/schema.ts`. Apply changes with `npx drizzle-kit push`.
+- A `docker-compose.yml` exists for spinning up a **local** Postgres container as a fallback/offline option (`docker compose up -d`), matching the schema via `npx drizzle-kit migrate`. Not used for day-to-day team work — Neon is the shared source of truth.
+- Schema lives in `db/schema.ts`. Apply changes with `npx drizzle-kit generate` (creates a migration file in `drizzle/`, review it) followed by `npx drizzle-kit migrate`. Do not use `drizzle-kit push`.
 
 ## Roles
 

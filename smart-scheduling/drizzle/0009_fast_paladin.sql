@@ -1,0 +1,2 @@
+-- Baseline placeholder: this migration was applied to the database with `drizzle-kit push`
+-- before migration files were tracked. Intentionally empty; do not delete (the journal references it).
