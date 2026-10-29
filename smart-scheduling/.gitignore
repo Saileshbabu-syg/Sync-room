@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# audit / remediation artefacts and local test config (internal-confidential)
+/AUDIT_REPORT.md
+/REMEDIATION_REPORT.md
+/audit-evidence/
+/test-results/

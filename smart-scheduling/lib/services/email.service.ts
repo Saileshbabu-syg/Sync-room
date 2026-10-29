@@ -1,10 +1,23 @@
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 
-import { generateCalendarInvite }
-from "./calendar.service";
+import { generateCalendarInvite } from "./calendar.service";
+import { escapeHtml, sanitizeHeaderValue } from "@/lib/html";
 
-const transporter =
-  nodemailer.createTransport({
+let transporter: Transporter | null = null;
+
+function createDefaultTransport(): Transporter {
+  // SMTP_HOST points the app at a local mail sink (Mailpit etc.) instead of
+  // Gmail; the automated tests use it so nothing is ever delivered for real.
+  if (process.env.SMTP_HOST) {
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT ?? 25),
+      secure: process.env.SMTP_SECURE === "true",
+      ignoreTLS: process.env.SMTP_SECURE !== "true",
+    });
+  }
+
+  return nodemailer.createTransport({
     service: "gmail",
 
     auth: {
@@ -12,57 +25,122 @@ const transporter =
       pass: process.env.EMAIL_PASSWORD,
     },
   });
+}
 
-export async function sendMeetingEmail(
-  to: string,
-  title: string,
-  meetingDate: string,
-  startTime: string,
-  endTime: string
-) {
+function getTransporter(): Transporter {
+  transporter ??= createDefaultTransport();
+  return transporter;
+}
 
-  const calendarInvite =
-    await generateCalendarInvite(
-      title,
-      meetingDate,
-      startTime,
-      endTime
-    );
+// Test hook: swap the transport (e.g. nodemailer's jsonTransport). Pass null to
+// go back to the default.
+export function setMailTransport(next: Transporter | null) {
+  transporter = next;
+}
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_USER,
+export type MeetingEmailKind = "scheduled" | "updated" | "reminder";
 
-    to,
+const HEADINGS: Record<MeetingEmailKind, string> = {
+  scheduled: "Meeting Scheduled",
+  updated: "Meeting Updated",
+  reminder: "Meeting Reminder",
+};
 
-    subject:
-      `Meeting Scheduled - ${title}`,
+type MeetingEmailFields = {
+  title: string;
+  meetingDate: string;
+  startTime: string;
+  endTime: string;
+  kind?: MeetingEmailKind;
+};
 
-    html: `
-      <h2>Meeting Scheduled</h2>
+// Every dynamic value is untrusted (titles are typed by any employee), so it
+// is HTML-escaped exactly once, here, at the point of interpolation. Header
+// values are stripped of line breaks.
+export function renderMeetingEmail({
+  title,
+  meetingDate,
+  startTime,
+  endTime,
+  kind = "scheduled",
+}: MeetingEmailFields) {
+  const heading = HEADINGS[kind];
 
-      <p><strong>Title:</strong> ${title}</p>
+  const html = `
+      <h2>${escapeHtml(heading)}</h2>
 
-      <p><strong>Date:</strong> ${meetingDate}</p>
+      <p><strong>Title:</strong> ${escapeHtml(title)}</p>
 
-      <p><strong>Start Time:</strong> ${startTime}</p>
+      <p><strong>Date:</strong> ${escapeHtml(meetingDate)}</p>
 
-      <p><strong>End Time:</strong> ${endTime}</p>
+      <p><strong>Start Time:</strong> ${escapeHtml(startTime)}</p>
+
+      <p><strong>End Time:</strong> ${escapeHtml(endTime)}</p>
 
       <p>
         Calendar invite attached.
       </p>
-    `,
+    `;
+
+  const text = [
+    heading,
+    "",
+    `Title: ${title}`,
+    `Date: ${meetingDate}`,
+    `Start Time: ${startTime}`,
+    `End Time: ${endTime}`,
+    "",
+    "Calendar invite attached.",
+  ].join("\n");
+
+  return {
+    subject: `${heading} - ${sanitizeHeaderValue(title)}`,
+    html,
+    text,
+  };
+}
+
+export async function sendMeetingEmail(
+  to: string | string[],
+  title: string,
+  meetingDate: string,
+  startTime: string,
+  endTime: string,
+  kind: MeetingEmailKind = "scheduled"
+) {
+  const calendarInvite = await generateCalendarInvite(
+    title,
+    meetingDate,
+    startTime,
+    endTime
+  );
+
+  const { subject, html, text } = renderMeetingEmail({
+    title,
+    meetingDate,
+    startTime,
+    endTime,
+    kind,
+  });
+
+  return getTransporter().sendMail({
+    from: process.env.EMAIL_USER,
+
+    to,
+
+    subject,
+
+    html,
+
+    text,
 
     attachments: [
       {
-        filename:
-          "meeting-invite.ics",
+        filename: "meeting-invite.ics",
 
-        content:
-          calendarInvite,
+        content: calendarInvite,
 
-        contentType:
-          "text/calendar",
+        contentType: "text/calendar",
       },
     ],
   });

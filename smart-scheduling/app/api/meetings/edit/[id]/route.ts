@@ -1,16 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { and, eq, inArray } from "drizzle-orm";
+
 import { db } from "@/db";
 
-import { meeting } from "@/db/schema";
-import { meetingTypes } from "@/db/schema";
-import { room } from "@/db/schema";
-import { employee } from "@/db/schema";
-import { meeting_attendees } from "@/db/schema";
+import {
+  employee,
+  meeting,
+  meeting_attendees,
+  meetingTypes,
+  room,
+  roles,
+} from "@/db/schema";
 
 import { editMeetingSchema } from "@/lib/validations/editMeeting.validator";
+import { getCurrentOrganizer } from "@/lib/auth-helpers";
+import {
+  guardMutation,
+  jsonError,
+  parseIdParam,
+  rateLimit,
+  readJson,
+} from "@/lib/api";
+import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
+import { isMeetingEnded } from "@/lib/time";
+import { AUDIT_ACTION, createAuditLog } from "@/lib/services/audit.service";
+import { isMeetingTypeAllowedForRole } from "@/lib/services/meeting-type-access.service";
+import {
+  dispatchNotification,
+  queueMeetingNotification,
+} from "@/lib/services/notification.service";
 
-import { eq } from "drizzle-orm";
+class EditError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -21,28 +49,35 @@ export async function PATCH(
   }
 ) {
   try {
-    const { id } = await params;
+    const organizer = await getCurrentOrganizer();
 
-    const meetingId = Number(id);
-
-    if (isNaN(meetingId)) {
+    if (!organizer) {
       return NextResponse.json(
-        {
-          message: "Invalid meeting id.",
-        },
-        {
-          status: 400,
-        }
+        { message: "Unauthorized" },
+        { status: 401 }
       );
     }
 
-    const body = await req.json();
+    const blocked =
+      guardMutation(req) ?? rateLimit(organizer.employeeId, "edit", 30);
 
-    const result =
-      editMeetingSchema.safeParse(body);
+    if (blocked) return blocked;
+
+    const { id } = await params;
+
+    const meetingId = parseIdParam(id);
+
+    if (meetingId === null) {
+      return jsonError(400, "Invalid meeting id.");
+    }
+
+    const body = await readJson(req);
+
+    if (!body.ok) return body.response;
+
+    const result = editMeetingSchema.safeParse(body.data);
 
     if (!result.success) {
-       console.log(result.error.issues);
       return NextResponse.json(
         {
           message: "Validation failed",
@@ -56,329 +91,232 @@ export async function PATCH(
 
     const validatedData = result.data;
 
-    // Check meeting exists
+    const notificationId = await db.transaction(async (tx) => {
+      // Lock the meeting row so concurrent edits/cancels are serialised.
+      const [existingMeeting] = await tx
+        .select()
+        .from(meeting)
+        .where(eq(meeting.meeting_id, meetingId))
+        .for("update");
 
-    const existingMeeting =
-      await db.query.meeting.findFirst({
-        where: eq(
-          meeting.meeting_id,
-          meetingId
-        ),
-      });
+      if (!existingMeeting) {
+        throw new EditError("Meeting not found.", 404);
+      }
 
-    if (!existingMeeting) {
-      return NextResponse.json(
-        {
-          message: "Meeting not found.",
-        },
-        {
-          status: 404,
-        }
-      );
-    }
-
-    // Only Scheduled meetings can be edited
-
-    if (
-      existingMeeting.meetingStatusId === 2
-    ) {
-      return NextResponse.json(
-        {
-          message:
-            "Completed meetings cannot be edited.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    if (
-      existingMeeting.meetingStatusId === 3
-    ) {
-      return NextResponse.json(
-        {
-          message:
-            "Cancelled meetings cannot be edited.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    // Validate Meeting Type
-
-    if (
-      validatedData.meetingTypeId !==
-      undefined
-    ) {
-      const meetingType =
-        await db.query.meetingTypes.findFirst({
-          where: eq(
-            meetingTypes.meetingTypeId,
-            validatedData.meetingTypeId
-          ),
-        });
-
-      if (!meetingType) {
-        return NextResponse.json(
-          {
-            message:
-              "Meeting type not found.",
-          },
-          {
-            status: 404,
-          }
+      // Only the organizer or an Admin (current role) may edit a meeting.
+      if (
+        existingMeeting.organizerEmployeeId !== organizer.employeeId &&
+        organizer.role !== ROLE_ADMIN
+      ) {
+        throw new EditError(
+          "You do not have permission to edit this meeting.",
+          403
         );
       }
-    }
 
-    // Validate Room Capacity
+      // Only Scheduled meetings can be edited
+      if (existingMeeting.meetingStatusId === MEETING_STATUS.COMPLETED) {
+        throw new EditError("Completed meetings cannot be edited.", 400);
+      }
 
-    const roomDetails =
-      await db.query.room.findFirst({
-        where: eq(
-          room.room_id,
-          existingMeeting.room_id
-        ),
-      });
+      if (existingMeeting.meetingStatusId === MEETING_STATUS.CANCELLED) {
+        throw new EditError("Cancelled meetings cannot be edited.", 400);
+      }
 
-    if (!roomDetails) {
-      return NextResponse.json(
-        {
-          message: "Room not found.",
-        },
-        {
-          status: 404,
-        }
-      );
-    }
-
-    const participantCount =
-      validatedData.participantCount ??
-      existingMeeting.participantCount;
-
-    if (
-      roomDetails.room_capacity !== null &&
-      participantCount >
-        roomDetails.room_capacity
-    ) {
-      return NextResponse.json(
-        {
-          message:
-            "Room capacity exceeded.",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    // Validate Attendees
-
-    const attendeeIds =
-      validatedData.participantEmployeeIds ??
-      [];
-
-    const maximumAttendees =
-      participantCount - 1;
-
-    if (
-      attendeeIds.length >
-      maximumAttendees
-    ) {
-      return NextResponse.json(
-        {
-          message: `You can add only ${maximumAttendees} attendee(s). Organizer is counted automatically.`,
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    for (const employeeId of attendeeIds) {
-      const attendee =
-        await db.query.employee.findFirst({
-          where: eq(
-            employee.employee_id,
-            employeeId
-          ),
-        });
-
-      if (!attendee) {
-        return NextResponse.json(
-          {
-            message: `Employee ${employeeId} not found.`,
-          },
-          {
-            status: 404,
-          }
+      if (
+        isMeetingEnded(existingMeeting.meeting_date, existingMeeting.end_time)
+      ) {
+        throw new EditError(
+          "Meetings that have already ended cannot be edited.",
+          400
         );
       }
-    }
 
-    // Check if any changes were made
+      const [roomDetails] = await tx
+        .select()
+        .from(room)
+        .where(eq(room.room_id, existingMeeting.room_id));
 
-const newTitle =
-  validatedData.title ?? existingMeeting.title;
+      if (!roomDetails) {
+        throw new EditError("Room not found.", 404);
+      }
 
-const newParticipantCount =
-  validatedData.participantCount ??
-  existingMeeting.participantCount;
+      const existingRows = await tx
+        .select({ employee_id: meeting_attendees.employee_id })
+        .from(meeting_attendees)
+        .where(eq(meeting_attendees.meeting_id, meetingId));
 
-const newMeetingTypeId =
-  validatedData.meetingTypeId ??
-  existingMeeting.meetingTypeId;
+      // Existing attendees, organizer excluded.
+      const oldAttendees = existingRows
+        .map((a) => a.employee_id)
+        .filter((empId) => empId !== existingMeeting.organizerEmployeeId)
+        .sort((a, b) => a - b);
 
-const existingAttendees = await db
-  .select({
-    employee_id: meeting_attendees.employee_id,
-  })
-  .from(meeting_attendees)
-  .where(
-    eq(meeting_attendees.meeting_id, meetingId)
-  );
+      const newParticipantCount =
+        validatedData.participantCount ?? existingMeeting.participantCount;
 
-// Remove organizer from comparison
-const oldAttendees = existingAttendees
-  .map((a) => a.employee_id)
-  .filter(
-    (id) =>
-      id !== existingMeeting.organizerEmployeeId
-  )
-  .sort((a, b) => a - b);
+      if (newParticipantCount > roomDetails.room_capacity) {
+        throw new EditError("Room capacity exceeded.", 400);
+      }
 
-const newAttendees = [
-  ...(validatedData.participantEmployeeIds ?? []),
-].sort((a, b) => a - b);
+      // Attendees are only touched when the request supplies them.
+      const suppliedAttendees = validatedData.participantEmployeeIds;
 
-const noChanges =
-  newTitle === existingMeeting.title &&
-  newParticipantCount ===
-    existingMeeting.participantCount &&
-  newMeetingTypeId ===
-    existingMeeting.meetingTypeId &&
-  JSON.stringify(oldAttendees) ===
-    JSON.stringify(newAttendees);
+      const newAttendees =
+        suppliedAttendees !== undefined
+          ? [...new Set(suppliedAttendees)]
+              .filter((empId) => empId !== existingMeeting.organizerEmployeeId)
+              .sort((a, b) => a - b)
+          : oldAttendees;
 
-if (noChanges) {
-  return NextResponse.json(
-    {
-      success: false,
-      message: "No changes detected.",
-    },
-    {
-      status: 400,
-    }
-  );
-}
-
-    // Update Meeting
-
-    await db
-      .update(meeting)
-      .set({
-        ...(validatedData.title !==
-          undefined && {
-          title: validatedData.title,
-        }),
-
-        ...(validatedData.participantCount !==
-          undefined && {
-          participantCount:
-            validatedData.participantCount,
-        }),
-
-        ...(validatedData.meetingTypeId !==
-          undefined && {
-          meetingTypeId:
-            validatedData.meetingTypeId,
-        }),
-
-        updated_at: new Date(),
-      })
-      .where(
-        eq(
-          meeting.meeting_id,
-          meetingId
-        )
-      );
-
-    // Update Attendees
-
-    if (
-      validatedData.participantEmployeeIds !==
-      undefined
-    ) {
-      await db
-        .delete(meeting_attendees)
-        .where(
-          eq(
-            meeting_attendees.meeting_id,
-            meetingId
-          )
+      // The organizer counts as one participant; the headcount can never be
+      // lower than the people actually invited.
+      if (newAttendees.length > newParticipantCount - 1) {
+        throw new EditError(
+          `You can add only ${newParticipantCount - 1} attendee(s). Organizer is counted automatically.`,
+          400
         );
+      }
 
-      const attendees = [
-        existingMeeting.organizerEmployeeId,
-        ...validatedData.participantEmployeeIds,
-      ];
+      if (suppliedAttendees !== undefined && newAttendees.length > 0) {
+        const found = await tx
+          .select({ id: employee.employee_id })
+          .from(employee)
+          .where(inArray(employee.employee_id, newAttendees));
 
-      const uniqueAttendees = [
-        ...new Set(attendees),
-      ];
+        if (found.length !== newAttendees.length) {
+          throw new EditError("One or more attendees not found.", 404);
+        }
+      }
 
-      await db
-        .insert(meeting_attendees)
-        .values(
-          uniqueAttendees.map(
+      // Meeting type: must exist and be one the meeting owner's role may book.
+      const typeChanged =
+        validatedData.meetingTypeId !== undefined &&
+        validatedData.meetingTypeId !== existingMeeting.meetingTypeId;
+
+      if (typeChanged) {
+        const [meetingType] = await tx
+          .select({ id: meetingTypes.meetingTypeId })
+          .from(meetingTypes)
+          .where(eq(meetingTypes.meetingTypeId, validatedData.meetingTypeId!));
+
+        if (!meetingType) {
+          throw new EditError("Meeting type not found.", 404);
+        }
+
+        const [owner] = await tx
+          .select({ role: roles.roleName })
+          .from(employee)
+          .innerJoin(roles, eq(roles.roleId, employee.role_id))
+          .where(eq(employee.employee_id, existingMeeting.organizerEmployeeId));
+
+        if (
+          !owner ||
+          !(await isMeetingTypeAllowedForRole(
+            owner.role,
+            validatedData.meetingTypeId!,
+            tx
+          ))
+        ) {
+          throw new EditError(
+            "This role is not allowed to use that meeting type.",
+            403
+          );
+        }
+      }
+
+      // Only fields that were actually supplied are compared.
+      const changes: string[] = [];
+
+      if (
+        validatedData.title !== undefined &&
+        validatedData.title !== existingMeeting.title
+      ) {
+        changes.push("title");
+      }
+
+      if (newParticipantCount !== existingMeeting.participantCount) {
+        changes.push("participantCount");
+      }
+
+      if (typeChanged) {
+        changes.push("meetingType");
+      }
+
+      const attendeesChanged =
+        suppliedAttendees !== undefined &&
+        JSON.stringify(oldAttendees) !== JSON.stringify(newAttendees);
+
+      if (attendeesChanged) {
+        changes.push("attendees");
+      }
+
+      if (changes.length === 0) {
+        throw new EditError("No changes detected.", 400);
+      }
+
+      await tx
+        .update(meeting)
+        .set({
+          ...(validatedData.title !== undefined && {
+            title: validatedData.title,
+          }),
+          participantCount: newParticipantCount,
+          ...(typeChanged && {
+            meetingTypeId: validatedData.meetingTypeId,
+          }),
+          updated_at: new Date(),
+        })
+        .where(eq(meeting.meeting_id, meetingId));
+
+      if (attendeesChanged) {
+        await tx
+          .delete(meeting_attendees)
+          .where(
+            and(
+              eq(meeting_attendees.meeting_id, meetingId)
+            )
+          );
+
+        await tx.insert(meeting_attendees).values(
+          [existingMeeting.organizerEmployeeId, ...newAttendees].map(
             (employeeId) => ({
               meeting_id: meetingId,
               employee_id: employeeId,
             })
           )
         );
-    }
-
-    // Send Updated Meeting Email
-
-    await fetch(
-      `${process.env.NEXTAUTH_URL}/api/notifications/email`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify({
-          meetingId,
-        }),
       }
-    );
+
+      await createAuditLog(
+        meetingId,
+        AUDIT_ACTION.UPDATED,
+        `Updated: ${changes.join(", ")}`,
+        organizer.employeeId,
+        tx
+      );
+
+      return queueMeetingNotification(tx, meetingId, "UPDATED");
+    });
+
+    dispatchNotification(notificationId);
 
     return NextResponse.json(
       {
         success: true,
-        message:
-          "Meeting updated successfully.",
+        message: "Meeting updated successfully.",
       },
       {
         status: 200,
       }
     );
   } catch (error) {
+    if (error instanceof EditError) {
+      return jsonError(error.status, error.message);
+    }
+
     console.error(error);
 
-    return NextResponse.json(
-      {
-        success: false,
-        message: "Something went wrong.",
-      },
-      {
-        status: 500,
-      }
-    );
+    return jsonError(500, "Something went wrong.");
   }
 }

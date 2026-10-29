@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -9,26 +9,25 @@ import { CalendarSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { usePersistedForm } from "@/lib/hooks/usePersistedForm";
+
+const EMPTY_FORM = {
+  meetingDate: "",
+  startTime: "",
+  endTime: "",
+  participantCount: "",
+};
 
 export default function BookingForm() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
 
-  const [formData, setFormData] = useState({
-    meetingDate: "",
-    startTime: "",
-    endTime: "",
-    participantCount: "",
-  });
-
- useEffect(() => {
-  const saved = sessionStorage.getItem("bookMeetingForm");
-
-  if (saved) {
-    setFormData(JSON.parse(saved));
-  }
-}, []);
+  // Restores a half-filled form from sessionStorage when the user comes back.
+  const [formData, setFormData] = usePersistedForm(
+    "bookMeetingForm",
+    EMPTY_FORM
+  );
 
   // Today's date
 const today = new Date();

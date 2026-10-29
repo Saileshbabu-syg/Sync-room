@@ -13,7 +13,7 @@ Ten agents live in `.claude/agents/<role>/<slug>/AGENT.md`; skills in `.claude/s
 | Components and forms | `implement` | none |
 | Scheduling domain (conflicts, recurrence, ICS) | `smart-scheduling`, `diagnosing-bugs` | `scheduling-agent/conflict-check-guardian`, `recurring-meeting-builder`, `calendar-export-builder` |
 | Cron / email | `diagnosing-bugs` | `scheduling-agent/reminder-notification` |
-| Testing (no runner installed yet) | `tdd` | `qa-agent/test-tooling-proposer` |
+| Testing (`node:test` via tsx — see `tests/README.md`; no Vitest) | `tdd` | `qa-agent/test-tooling-proposer` |
 | Security / env | `security-review` (built-in) | `devops-agent/security-scanner`, `devops-agent/env-auditor` |
 | CI/CD (none exists) | `wizard` | none |
 | Git / PR | `pr`, `code-review`, `resolving-merge-conflicts` | none |
