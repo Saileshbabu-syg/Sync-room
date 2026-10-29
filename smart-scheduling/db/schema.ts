@@ -20,6 +20,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   bigint,
+  check,
   date,
   index,
   integer,
@@ -48,19 +49,25 @@ export const availabilityMaster = pgTable("availability_master", {
   availabilityStatusCode: varchar("availability_status_code", {
     length: 30,
   }).unique(),
-  createdAt: timestamp("created_at"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const meetingTypes = pgTable("meeting_types", {
-  meetingTypeId: serial("meeting_type_id").primaryKey(),
-  meetingTypeName: varchar("meeting_type_name", { length: 50 })
-    .notNull()
-    .unique(),
-  // Lower number = higher priority (1 Client, 2 Interview, 3 Team meeting,
-  // 4 Training / One-on-one, 5 Others). A meeting may only bump a strictly
-  // higher rank number; equal ranks never bump each other.
-  priorityRank: integer("priority_rank").notNull().default(5),
-});
+export const meetingTypes = pgTable(
+  "meeting_types",
+  {
+    meetingTypeId: serial("meeting_type_id").primaryKey(),
+    meetingTypeName: varchar("meeting_type_name", { length: 50 })
+      .notNull()
+      .unique(),
+    // Lower number = higher priority (1 Client, 2 Interview, 3 Team meeting,
+    // 4 Training / One-on-one, 5 Others). A meeting may only bump a strictly
+    // higher rank number; equal ranks never bump each other.
+    priorityRank: integer("priority_rank").notNull().default(5),
+  },
+  (t) => [
+    check("meeting_types_priority_rank_range", sql`${t.priorityRank} BETWEEN 1 AND 5`),
+  ]
+);
 
 // Which meeting types each role may book. Drives the type list shown to a
 // user after login and is re-checked server-side on booking and edit.
@@ -117,7 +124,8 @@ export const employee = pgTable(
       .notNull()
       .references(() => roles.roleId),
     employee_name: varchar("employee_name", { length: 100 }).notNull(),
-    email: varchar("email", { length: 150 }).unique(),
+    // Login key: sign-in matches on it, so it must always be present.
+    email: varchar("email", { length: 150 }).notNull().unique(),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
@@ -196,7 +204,10 @@ export const room = pgTable(
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
-  (t) => [index("rooms_availability_status_id_idx").on(t.availabilityStatusId)]
+  (t) => [
+    index("rooms_availability_status_id_idx").on(t.availabilityStatusId),
+    check("rooms_capacity_positive", sql`${t.room_capacity} >= 1`),
+  ]
 );
 
 // Parent of a series of `meeting` rows (one per occurrence). Declared before
@@ -213,7 +224,13 @@ export const recurring_meetings = pgTable(
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
-  (t) => [index("recurring_meetings_frequency_id_idx").on(t.frequency_id)]
+  (t) => [
+    index("recurring_meetings_frequency_id_idx").on(t.frequency_id),
+    check(
+      "recurring_meetings_occurrence_count_positive",
+      sql`${t.occurrence_count} >= 1`
+    ),
+  ]
 );
 
 export const meeting = pgTable(
@@ -252,6 +269,7 @@ export const meeting = pgTable(
     index("meeting_status_id_idx").on(t.meetingStatusId),
     index("meeting_type_id_idx").on(t.meetingTypeId),
     index("meeting_recurring_meeting_id_idx").on(t.recurringMeetingId),
+    check("meeting_participant_count_positive", sql`${t.participantCount} >= 1`),
   ]
 );
 
@@ -293,6 +311,11 @@ export const notifications = pgTable(
   (t) => [
     index("notifications_meeting_id_idx").on(t.meeting_id),
     index("notifications_type_id_idx").on(t.notification_type_id),
+    check(
+      "notifications_status_valid",
+      sql`${t.status} IN ('PENDING', 'SENT', 'FAILED', 'SKIPPED')`
+    ),
+    check("notifications_attempts_nonneg", sql`${t.attempts} >= 0`),
   ]
 );
 
@@ -314,6 +337,11 @@ export const reminder_logs = pgTable(
     // One reminder per meeting, so retries / double submits cannot duplicate it.
     uniqueIndex("reminder_logs_meeting_id_uq").on(t.meeting_id),
     index("reminder_logs_status_time_idx").on(t.status, t.reminder_time),
+    check(
+      "reminder_logs_status_valid",
+      sql`${t.status} IN ('PENDING', 'SENT', 'SKIPPED', 'FAILED')`
+    ),
+    check("reminder_logs_attempts_nonneg", sql`${t.attempts} >= 0`),
   ]
 );
 
@@ -363,6 +391,14 @@ export const reschedule_requests = pgTable(
     index("reschedule_requests_claimant_idx").on(t.claimant_meeting_id),
     // Cron scan: pending requests ordered by deadline.
     index("reschedule_requests_status_deadline_idx").on(t.status, t.deadline),
+    check(
+      "reschedule_requests_status_valid",
+      sql`${t.status} IN ('PENDING', 'RESCHEDULED', 'CANCELLED', 'AUTO_REALLOCATED', 'AUTO_CANCELLED', 'WITHDRAWN')`
+    ),
+    check(
+      "reschedule_requests_distinct_meetings",
+      sql`${t.bumped_meeting_id} <> ${t.claimant_meeting_id}`
+    ),
   ]
 );
 
