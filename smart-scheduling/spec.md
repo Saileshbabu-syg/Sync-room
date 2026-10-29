@@ -19,7 +19,7 @@ There's no self-signup and no public credentials — get these from whoever set 
 - The shared Neon `DATABASE_URL` (direct endpoint, see below)
 - Google OAuth `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
 - `NEXTAUTH_SECRET` (any shared secret string, ask the team)
-- Gmail app-password (`EMAIL_USER` / `EMAIL_PASSWORD`) for the reminder-email sender
+- An SMTP relay and sender address (`SMTP_HOST`, `EMAIL_FROM`; see "Email" below) for booking e-mail
 
 **Becoming a test user**: since login requires a pre-existing `Employee` row (there's no self-signup and no employee-management UI yet), ask an admin to insert your row directly — either via the Neon SQL console/dashboard or `psql`:
 ```sql
@@ -80,4 +80,20 @@ Meeting types are simplified to in-person only concepts: e.g. `Team Meeting`, `I
 npm install
 npm run dev
 ```
-`.env` needs `DATABASE_URL` (Neon direct endpoint), `GOOGLE_CLIENT_ID`/`SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `EMAIL_USER`/`EMAIL_PASSWORD` (Gmail app password for reminder emails).
+`.env` needs `DATABASE_URL` (Neon direct endpoint), `GOOGLE_CLIENT_ID`/`SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `EMAIL_FROM` and `SMTP_HOST` (+ `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` if the relay needs them) for booking e-mail.
+
+## Email
+
+All booking e-mail (confirmation, recurring-series confirmation, update, reminder) is sent by
+`lib/services/email.service.ts` from one sender, configured only through the environment:
+
+| Variable | Purpose |
+|---|---|
+| `EMAIL_FROM` | Official sender, e.g. `Meeting Rooms <rooms@company.com>`. Required: nothing is sent without it. |
+| `SMTP_HOST` | The organisation's approved SMTP relay. Required. |
+| `SMTP_PORT` | Default `587`. |
+| `SMTP_SECURE` | `true` for implicit TLS (port 465); otherwise STARTTLS is used when offered. |
+| `SMTP_USER` / `SMTP_PASSWORD` | Only if the relay requires authentication. |
+
+A recurring booking sends one confirmation listing every saved occurrence (loaded from the
+database), plus any skipped or cancelled dates; one-time bookings keep the single-date format.

@@ -6,7 +6,11 @@ import { MAX_DELIVERY_ATTEMPTS, NOTIFICATION_TYPE } from "@/lib/constants";
 import type { DbExecutor } from "@/lib/db-types";
 
 import { getMeetingAttendees, getMeetingDetails } from "./reminder.service";
-import { sendMeetingEmail } from "./email.service";
+import { sendMeetingEmail, type MeetingEmailKind } from "./email.service";
+import {
+  loadSeriesEmailContext,
+  type SeriesEmailContext,
+} from "./meeting-series.service";
 
 // Booking / edit e-mails go through the `notifications` table, which acts as a
 // small outbox:
@@ -103,6 +107,34 @@ export async function deliverNotification(
       .map((a) => a.email)
       .filter((email): email is string => Boolean(email));
 
+    const isBooking = type?.name === NOTIFICATION_TYPE.BOOKED;
+    const kind: MeetingEmailKind =
+      type?.name === NOTIFICATION_TYPE.UPDATED
+        ? "updated"
+        : type?.name === NOTIFICATION_TYPE.CANCELLED
+          ? "cancelled"
+          : "scheduled";
+
+    // A booking confirmation for a recurring series lists every saved
+    // occurrence, not just the meeting this row points at (the first one). An
+    // edit or cancellation only ever concerns one meeting, so those keep the
+    // single-date format.
+    let series: SeriesEmailContext | null = null;
+
+    if (isBooking && details.recurringMeetingId !== null) {
+      series = await loadSeriesEmailContext(tx, details.recurringMeetingId);
+
+      // Every occurrence was cancelled before this went out: nothing to confirm.
+      if (!series) {
+        await tx
+          .update(notifications)
+          .set({ status: "SKIPPED", attempts: row.attempts + 1 })
+          .where(eq(notifications.notification_id, notificationId));
+
+        return "SKIPPED" as const;
+      }
+    }
+
     try {
       if (recipients.length > 0) {
         // One message to all attendees: delivery is all-or-nothing, so a retry
@@ -113,7 +145,8 @@ export async function deliverNotification(
           String(details.meeting_date),
           String(details.start_time),
           String(details.end_time),
-          type?.name === NOTIFICATION_TYPE.UPDATED ? "updated" : "scheduled"
+          kind,
+          series ?? {}
         );
       }
 

@@ -300,8 +300,9 @@ export async function createBooking(input: BookingInput) {
         );
       }
 
-      // One confirmation e-mail per booking (for a series: for its first
-      // occurrence, as before).
+      // One confirmation e-mail per booking. It is anchored on the first
+      // occurrence; for a series, delivery loads the whole series from the
+      // database and lists every occurrence.
       const notificationId = await queueMeetingNotification(
         tx,
         insertedMeetings[0].meeting_id,

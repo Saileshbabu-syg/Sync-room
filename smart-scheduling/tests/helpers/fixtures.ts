@@ -167,7 +167,14 @@ export function dateFromToday(days: number) {
 // Replaces the mail transport with an in-memory JSON transport and records
 // every message "sent". Nothing leaves the process.
 export function captureMail(options: { failTimes?: number } = {}) {
-  const sent: { to: string; subject: string; html: string; text: string }[] = [];
+  const sent: {
+    from: string;
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+    ics: string;
+  }[] = [];
   let failuresLeft = options.failTimes ?? 0;
 
   const transport = nodemailer.createTransport({ jsonTransport: true });
@@ -184,11 +191,15 @@ export function captureMail(options: { failTimes?: number } = {}) {
     const info = await original(message);
     const m = message as Record<string, unknown>;
 
+    const attachment = (m.attachments as { content?: unknown }[] | undefined)?.[0];
+
     sent.push({
+      from: String(m.from),
       to: Array.isArray(m.to) ? m.to.join(",") : String(m.to),
       subject: String(m.subject),
       html: String(m.html),
       text: String(m.text),
+      ics: String(attachment?.content ?? ""),
     });
 
     return info;

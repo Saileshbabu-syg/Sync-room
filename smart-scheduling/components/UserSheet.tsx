@@ -27,7 +27,6 @@ import {
   BadgeCheck,
   Shield,
   LogOut,
-  Menu,
 } from "lucide-react";
 
 type UserProfile = {
@@ -45,7 +44,6 @@ type Props = {
 };
 
 export default function UserSheet({
-  session,
   userProfile,
 }: Props) {
   return (

@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { encode } from "@auth/core/jwt";
+import { encode } from "next-auth/jwt";
 
 import { startSmtpSink } from "../helpers/smtp-sink";
 
@@ -69,6 +69,7 @@ export async function startApp(
         AUTH_TRUST_HOST: "true",
         SMTP_HOST: "127.0.0.1",
         SMTP_PORT: String(sink.port),
+        SMTP_ALLOW_INSECURE: "true", // local plaintext sink
         REMINDER_CRON_ENABLED: "false",
         ...(relaxedRateLimits
           ? {
