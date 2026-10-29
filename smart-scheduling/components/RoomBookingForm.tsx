@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { CalendarSearch } from "lucide-react";
@@ -9,6 +9,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { usePersistedForm } from "@/lib/hooks/usePersistedForm";
+
+type BookedSlot = {
+  title: string;
+  startTime: string;
+  endTime: string;
+  status: string | null;
+};
+
+const EMPTY_FORM = {
+  meetingDate: "",
+  startTime: "",
+  endTime: "",
+  participantCount: "",
+};
 
 type Props = {
   room: {
@@ -29,32 +44,13 @@ export default function RoomBookingForm({
     useState(false);
 
   const [bookedSlots, setBookedSlots] =
-    useState<any[]>([]);
+    useState<BookedSlot[]>([]);
 
-  const [formData, setFormData] =
-    useState({
-      meetingDate: "",
-      startTime: "",
-      endTime: "",
-      participantCount: "",
-    });
-
-    useEffect(() => {
-
-  const saved =
-    sessionStorage.getItem(
-      "roomBookingForm"
-    );
-
-  if (saved) {
-
-    setFormData(
-      JSON.parse(saved)
-    );
-
-  }
-
-}, []);
+  // Restores a half-filled form from sessionStorage when the user comes back.
+  const [formData, setFormData] = usePersistedForm(
+    "roomBookingForm",
+    EMPTY_FORM
+  );
 
   const today = new Date()
     .toISOString()

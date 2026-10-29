@@ -8,6 +8,9 @@ import {
   getAvailableRooms,
   isRoomAvailable,
 } from "@/lib/services/room-suggestion.service";
+import { getCurrentOrganizer } from "@/lib/auth-helpers";
+import { jsonError, rateLimit, readJson } from "@/lib/api";
+import { suggestionsSchema } from "@/lib/validations/suggestions.validator";
 
 import { desc } from "drizzle-orm";
 
@@ -16,7 +19,37 @@ export async function POST(
 ) {
   try {
 
-    const body = await req.json();
+    const organizer = await getCurrentOrganizer();
+
+    if (!organizer) {
+      return NextResponse.json(
+        { success: false, message: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const limited = rateLimit(organizer.employeeId, "suggestions", 60);
+
+    if (limited) return limited;
+
+    const body = await readJson(req);
+
+    if (!body.ok) return body.response;
+
+    // Same rules as booking: real dates/times, not in the past, within the
+    // booking window, and at least 15 minutes long.
+    const parsed = suggestionsSchema.safeParse(body.data);
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: parsed.error.issues[0]?.message ?? "Validation failed",
+          errors: parsed.error.issues,
+        },
+        { status: 400 }
+      );
+    }
 
     const {
       room_id,
@@ -24,47 +57,7 @@ export async function POST(
       start_time,
       end_time,
       participant_count,
-    } = body;
-
-    if (
-  participant_count === undefined ||
-  participant_count < 1
-) {
-  return NextResponse.json(
-    {
-      success: false,
-      message:
-        "Participant count must be at least 1.",
-    },
-    {
-      status: 400,
-    }
-  );
-}
-
-const start = new Date(
-  `${meeting_date}T${start_time}`
-);
-
-const end = new Date(
-  `${meeting_date}T${end_time}`
-);
-
-const duration =
-  (end.getTime() - start.getTime()) / 60000;
-
-if (duration < 15) {
-  return NextResponse.json(
-    {
-      success: false,
-      message:
-        "Meeting duration must be at least 15 minutes.",
-    },
-    {
-      status: 400,
-    }
-  );
-}
+    } = parsed.data;
 
     // -------------------------------
     // Booking from Room Details Page
@@ -140,16 +133,7 @@ if (duration < 15) {
 
     console.error(error);
 
-    return NextResponse.json(
-      {
-        success: false,
-        message:
-          "Failed to fetch room suggestions",
-      },
-      {
-        status: 500,
-      }
-    );
+    return jsonError(500, "Failed to fetch room suggestions");
 
   }
 

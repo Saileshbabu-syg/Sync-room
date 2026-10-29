@@ -41,7 +41,7 @@ export default function UpcomingMeetingCard({
             </h3>
 
             <p className="mt-2 text-gray-500">
-              You don't have any scheduled meetings.
+              You don&apos;t have any scheduled meetings.
             </p>
 
           </div>

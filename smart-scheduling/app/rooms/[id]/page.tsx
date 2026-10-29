@@ -1,9 +1,10 @@
 import { auth } from "@/auth";
+import { parseIdParam } from "@/lib/api";
+import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
 
-import { organizers } from "@/db/schema";
 import { room } from "@/db/schema";
 import { availabilityMaster } from "@/db/schema";
 
@@ -30,22 +31,21 @@ export default async function RoomViewPage({
 
   const { id } = await params;
 
-  const userProfile = await db
-    .select({
-      organizerId: organizers.organizerId,
-      employeeId: organizers.employeeId,
-      name: organizers.name,
-      email: organizers.email,
-      role: organizers.role,
-      imageUrl: organizers.imageUrl,
-    })
-    .from(organizers)
-    .where(
-      eq(
-        organizers.email,
-        session.user!.email!
-      )
-    );
+  const roomId = parseIdParam(id);
+
+  if (roomId === null) {
+    redirect("/rooms");
+  }
+
+  const currentUser = await getCurrentUserProfile();
+
+  // Signed in, but no longer a known employee (removed or email changed):
+  // treat as signed out instead of crashing on a missing profile.
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  const userProfile = [currentUser];
 
   const roomDetails = await db
     .select({
@@ -69,7 +69,7 @@ export default async function RoomViewPage({
     .where(
       eq(
         room.room_id,
-        Number(id)
+        roomId
       )
     );
 

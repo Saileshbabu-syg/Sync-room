@@ -11,10 +11,16 @@
  * NOTE: table names, column names and exported identifiers are deliberately
  * unchanged from the previous per-file schema so the existing database and all
  * call sites keep working. Apply changes with `npx drizzle-kit generate` then `npx drizzle-kit migrate`.
+ *
+ * Not expressible in Drizzle (so it lives only in migration 0020 — apply
+ * schema changes with `migrate`, never `push`): the `meeting_no_room_overlap`
+ * EXCLUDE constraint that stops two non-cancelled meetings from overlapping in
+ * the same room, and the `meeting_end_after_start` check.
  */
 import { relations, sql } from "drizzle-orm";
 import {
   bigint,
+  check,
   date,
   index,
   integer,
@@ -43,19 +49,25 @@ export const availabilityMaster = pgTable("availability_master", {
   availabilityStatusCode: varchar("availability_status_code", {
     length: 30,
   }).unique(),
-  createdAt: timestamp("created_at"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const meetingTypes = pgTable("meeting_types", {
-  meetingTypeId: serial("meeting_type_id").primaryKey(),
-  meetingTypeName: varchar("meeting_type_name", { length: 50 })
-    .notNull()
-    .unique(),
-  // Lower number = higher priority (1 Client, 2 Interview, 3 Team meeting,
-  // 4 Training / One-on-one, 5 Others). A meeting may only bump a strictly
-  // higher rank number; equal ranks never bump each other.
-  priorityRank: integer("priority_rank").notNull().default(5),
-});
+export const meetingTypes = pgTable(
+  "meeting_types",
+  {
+    meetingTypeId: serial("meeting_type_id").primaryKey(),
+    meetingTypeName: varchar("meeting_type_name", { length: 50 })
+      .notNull()
+      .unique(),
+    // Lower number = higher priority (1 Client, 2 Interview, 3 Team meeting,
+    // 4 Training / One-on-one, 5 Others). A meeting may only bump a strictly
+    // higher rank number; equal ranks never bump each other.
+    priorityRank: integer("priority_rank").notNull().default(5),
+  },
+  (t) => [
+    check("meeting_types_priority_rank_range", sql`${t.priorityRank} BETWEEN 1 AND 5`),
+  ]
+);
 
 // Which meeting types each role may book. Drives the type list shown to a
 // user after login and is re-checked server-side on booking and edit.
@@ -112,7 +124,8 @@ export const employee = pgTable(
       .notNull()
       .references(() => roles.roleId),
     employee_name: varchar("employee_name", { length: 100 }).notNull(),
-    email: varchar("email", { length: 150 }).unique(),
+    // Login key: sign-in matches on it, so it must always be present.
+    email: varchar("email", { length: 150 }).notNull().unique(),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
@@ -191,7 +204,33 @@ export const room = pgTable(
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
-  (t) => [index("rooms_availability_status_id_idx").on(t.availabilityStatusId)]
+  (t) => [
+    index("rooms_availability_status_id_idx").on(t.availabilityStatusId),
+    check("rooms_capacity_positive", sql`${t.room_capacity} >= 1`),
+  ]
+);
+
+// Parent of a series of `meeting` rows (one per occurrence). Declared before
+// `meeting` because `meeting.recurring_meeting_id` references it.
+export const recurring_meetings = pgTable(
+  "recurring_meetings",
+  {
+    recurring_meeting_id: serial("recurring_meeting_id").primaryKey(),
+    frequency_id: integer("frequency_id")
+      .notNull()
+      .references(() => recurrence_frequency_master.frequency_id),
+    occurrence_count: integer("occurrence_count").notNull(),
+    recurrence_end_date: date("recurrence_end_date"),
+    created_at: timestamp("created_at").defaultNow(),
+    updated_at: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [
+    index("recurring_meetings_frequency_id_idx").on(t.frequency_id),
+    check(
+      "recurring_meetings_occurrence_count_positive",
+      sql`${t.occurrence_count} >= 1`
+    ),
+  ]
 );
 
 export const meeting = pgTable(
@@ -215,6 +254,11 @@ export const meeting = pgTable(
       .references(() => meetingStatuses.meetingStatusId),
     start_time: time("start_time").notNull(),
     end_time: time("end_time").notNull(),
+    // Set when this occurrence belongs to a recurring series; null for
+    // one-off meetings.
+    recurringMeetingId: integer("recurring_meeting_id").references(
+      () => recurring_meetings.recurring_meeting_id
+    ),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
@@ -224,6 +268,8 @@ export const meeting = pgTable(
     index("meeting_organizer_employee_id_idx").on(t.organizerEmployeeId),
     index("meeting_status_id_idx").on(t.meetingStatusId),
     index("meeting_type_id_idx").on(t.meetingTypeId),
+    index("meeting_recurring_meeting_id_idx").on(t.recurringMeetingId),
+    check("meeting_participant_count_positive", sql`${t.participantCount} >= 1`),
   ]
 );
 
@@ -245,27 +291,6 @@ export const meeting_attendees = pgTable(
   ]
 );
 
-export const recurring_meetings = pgTable(
-  "recurring_meetings",
-  {
-    recurring_meeting_id: serial("recurring_meeting_id").primaryKey(),
-    meeting_id: integer("meeting_id")
-      .notNull()
-      .references(() => meeting.meeting_id),
-    frequency_id: integer("frequency_id")
-      .notNull()
-      .references(() => recurrence_frequency_master.frequency_id),
-    occurrence_count: integer("occurrence_count").notNull(),
-    recurrence_end_date: date("recurrence_end_date"),
-    created_at: timestamp("created_at").defaultNow(),
-    updated_at: timestamp("updated_at").defaultNow(),
-  },
-  (t) => [
-    index("recurring_meetings_meeting_id_idx").on(t.meeting_id),
-    index("recurring_meetings_frequency_id_idx").on(t.frequency_id),
-  ]
-);
-
 export const notifications = pgTable(
   "notifications",
   {
@@ -277,12 +302,20 @@ export const notifications = pgTable(
       .notNull()
       .references(() => notification_type_master.notification_type_id),
     status: varchar("status", { length: 20 }).default("PENDING"),
+    // Delivery attempts so far; PENDING rows are retried until the limit,
+    // then parked as FAILED.
+    attempts: integer("attempts").notNull().default(0),
     sent_at: timestamp("sent_at"),
     created_at: timestamp("created_at").defaultNow(),
   },
   (t) => [
     index("notifications_meeting_id_idx").on(t.meeting_id),
     index("notifications_type_id_idx").on(t.notification_type_id),
+    check(
+      "notifications_status_valid",
+      sql`${t.status} IN ('PENDING', 'SENT', 'FAILED', 'SKIPPED')`
+    ),
+    check("notifications_attempts_nonneg", sql`${t.attempts} >= 0`),
   ]
 );
 
@@ -294,10 +327,22 @@ export const reminder_logs = pgTable(
       .notNull()
       .references(() => meeting.meeting_id),
     reminder_time: timestamp("reminder_time", { withTimezone: true }).notNull(),
-    status: varchar("status", { length: 20 }).default("SENT"),
+    // PENDING (due at reminder_time) -> SENT | SKIPPED | FAILED
+    status: varchar("status", { length: 20 }).default("PENDING"),
+    attempts: integer("attempts").notNull().default(0),
     created_at: timestamp("created_at").defaultNow(),
   },
-  (t) => [index("reminder_logs_meeting_id_idx").on(t.meeting_id)]
+  (t) => [
+    index("reminder_logs_meeting_id_idx").on(t.meeting_id),
+    // One reminder per meeting, so retries / double submits cannot duplicate it.
+    uniqueIndex("reminder_logs_meeting_id_uq").on(t.meeting_id),
+    index("reminder_logs_status_time_idx").on(t.status, t.reminder_time),
+    check(
+      "reminder_logs_status_valid",
+      sql`${t.status} IN ('PENDING', 'SENT', 'SKIPPED', 'FAILED')`
+    ),
+    check("reminder_logs_attempts_nonneg", sql`${t.attempts} >= 0`),
+  ]
 );
 
 export const meeting_audit_logs = pgTable(
@@ -309,6 +354,10 @@ export const meeting_audit_logs = pgTable(
       .references(() => meeting.meeting_id),
     action: varchar("action", { length: 100 }).notNull(),
     remarks: varchar("remarks", { length: 255 }),
+    // Who triggered the event; null for system actions (cron).
+    actor_employee_id: integer("actor_employee_id").references(
+      () => employee.employee_id
+    ),
     created_at: timestamp("created_at").defaultNow(),
   },
   (t) => [index("meeting_audit_logs_meeting_id_idx").on(t.meeting_id)]
@@ -342,6 +391,14 @@ export const reschedule_requests = pgTable(
     index("reschedule_requests_claimant_idx").on(t.claimant_meeting_id),
     // Cron scan: pending requests ordered by deadline.
     index("reschedule_requests_status_deadline_idx").on(t.status, t.deadline),
+    check(
+      "reschedule_requests_status_valid",
+      sql`${t.status} IN ('PENDING', 'RESCHEDULED', 'CANCELLED', 'AUTO_REALLOCATED', 'AUTO_CANCELLED', 'WITHDRAWN')`
+    ),
+    check(
+      "reschedule_requests_distinct_meetings",
+      sql`${t.bumped_meeting_id} <> ${t.claimant_meeting_id}`
+    ),
   ]
 );
 
@@ -447,7 +504,10 @@ export const meetingRelations = relations(meeting, ({ one, many }) => ({
     references: [meetingStatuses.meetingStatusId],
   }),
   attendees: many(meeting_attendees),
-  recurrences: many(recurring_meetings),
+  recurringMeeting: one(recurring_meetings, {
+    fields: [meeting.recurringMeetingId],
+    references: [recurring_meetings.recurring_meeting_id],
+  }),
   notifications: many(notifications),
   reminderLogs: many(reminder_logs),
   auditLogs: many(meeting_audit_logs),
@@ -471,11 +531,8 @@ export const meetingAttendeesRelations = relations(
 
 export const recurringMeetingsRelations = relations(
   recurring_meetings,
-  ({ one }) => ({
-    meeting: one(meeting, {
-      fields: [recurring_meetings.meeting_id],
-      references: [meeting.meeting_id],
-    }),
+  ({ one, many }) => ({
+    occurrences: many(meeting),
     frequency: one(recurrence_frequency_master, {
       fields: [recurring_meetings.frequency_id],
       references: [recurrence_frequency_master.frequency_id],
@@ -527,6 +584,7 @@ export type NewMeeting = typeof meeting.$inferInsert;
 export type MeetingAttendee = typeof meeting_attendees.$inferSelect;
 export type NewMeetingAttendee = typeof meeting_attendees.$inferInsert;
 export type RecurringMeeting = typeof recurring_meetings.$inferSelect;
+export type NewRecurringMeeting = typeof recurring_meetings.$inferInsert;
 export type Notification = typeof notifications.$inferSelect;
 export type ReminderLog = typeof reminder_logs.$inferSelect;
 export type MeetingAuditLog = typeof meeting_audit_logs.$inferSelect;

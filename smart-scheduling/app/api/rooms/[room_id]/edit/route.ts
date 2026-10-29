@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { auth } from "@/auth";
-import { organizers } from "@/db/schema";
-
 import { db } from "@/db";
 
-import { room } from "@/db/schema";
+import { meeting, room } from "@/db/schema";
 import { availabilityMaster } from "@/db/schema";
 
 import { editRoomSchema } from "@/lib/validations/editRoom.validator";
+import { getCurrentOrganizer } from "@/lib/auth-helpers";
+import {
+  guardMutation,
+  jsonError,
+  parseIdParam,
+  readJson,
+} from "@/lib/api";
+import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
+import { nowInAppTimezone } from "@/lib/time";
 
-import { eq } from "drizzle-orm";
+import { and, eq, gt, or, sql } from "drizzle-orm";
 
 export async function PATCH(
   req: NextRequest,
@@ -24,68 +30,50 @@ export async function PATCH(
 ) {
   try {
 
-    const session = await auth();
+    const organizer = await getCurrentOrganizer();
 
-if (!session?.user?.email) {
-  return NextResponse.json(
-    {
-      success: false,
-      message: "Unauthorized.",
-    },
-    {
-      status: 401,
-    }
-  );
-}
-
-const organizer = await db.query.organizers.findFirst({
-  where: eq(
-    organizers.email,
-    session.user.email
-  ),
-});
-
-if (
-  !organizer ||
-  organizer.role !== "Admin"
-) {
-  return NextResponse.json(
-    {
-      success: false,
-      message: "Only Admin can edit rooms.",
-    },
-    {
-      status: 403,
-    }
-  );
-}
-
-    const { room_id } =
-      await params;
-
-    const roomId =
-      Number(room_id);
-
-    if (isNaN(roomId)) {
-
+    if (!organizer) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            "Invalid room id.",
+          message: "Unauthorized.",
         },
         {
-          status: 400,
+          status: 401,
         }
       );
-
     }
 
-    const body =
-      await req.json();
+    // Admin status is checked against the Employee record on every request,
+    // so a demoted admin loses this immediately.
+    if (organizer.role !== ROLE_ADMIN) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Only Admin can edit rooms.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    const blocked = guardMutation(req);
+
+    if (blocked) return blocked;
+
+    const roomId = parseIdParam((await params).room_id);
+
+    if (roomId === null) {
+      return jsonError(400, "Invalid room id.");
+    }
+
+    const body = await readJson(req);
+
+    if (!body.ok) return body.response;
 
     const result =
-      editRoomSchema.safeParse(body);
+      editRoomSchema.safeParse(body.data);
 
     if (!result.success) {
 
@@ -156,6 +144,36 @@ if (
         }
       );
 
+    }
+
+    // Capacity may not drop below an upcoming meeting that is already booked
+    // in this room.
+    const now = nowInAppTimezone();
+
+    const [largest] = await db
+      .select({
+        participants: sql<number>`coalesce(max(${meeting.participantCount}), 0)`,
+      })
+      .from(meeting)
+      .where(
+        and(
+          eq(meeting.room_id, roomId),
+          eq(meeting.meetingStatusId, MEETING_STATUS.SCHEDULED),
+          or(
+            gt(meeting.meeting_date, now.date),
+            and(
+              eq(meeting.meeting_date, now.date),
+              sql`${meeting.end_time} > ${now.time}::time`
+            )
+          )
+        )
+      );
+
+    if (validatedData.room_capacity < Number(largest.participants)) {
+      return jsonError(
+        409,
+        `Capacity cannot be lower than ${largest.participants}: an upcoming meeting in this room has that many participants.`
+      );
     }
 
     // Update room

@@ -1,12 +1,17 @@
 import { auth } from "@/auth";
+import { parseIdParam } from "@/lib/api";
+import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
+import { isMeetingEnded } from "@/lib/time";
+import { getAllowedMeetingTypes } from "@/lib/services/meeting-type-access.service";
+import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
 
-import { organizers } from "@/db/schema";
 import { meeting } from "@/db/schema";
 import { meetingTypes } from "@/db/schema";
 import { meeting_attendees } from "@/db/schema";
+import { employee, roles } from "@/db/schema";
 
 import { eq } from "drizzle-orm";
 
@@ -30,24 +35,23 @@ export default async function EditMeetingPage({
 
   const { id } = await params;
 
+  const meetingId = parseIdParam(id);
+
+  if (meetingId === null) {
+    redirect("/bookings");
+  }
+
   // Logged in Organizer
 
-  const userProfile = await db
-    .select({
-      organizerId: organizers.organizerId,
-      employeeId: organizers.employeeId,
-      name: organizers.name,
-      email: organizers.email,
-      role: organizers.role,
-      imageUrl: organizers.imageUrl,
-    })
-    .from(organizers)
-    .where(
-      eq(
-        organizers.email,
-        session.user!.email!
-      )
-    );
+  const currentUser = await getCurrentUserProfile();
+
+  // Signed in, but no longer a known employee (removed or email changed):
+  // treat as signed out instead of crashing on a missing profile.
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  const userProfile = [currentUser];
 
   if (userProfile.length === 0) {
     redirect("/login");
@@ -61,7 +65,7 @@ export default async function EditMeetingPage({
     .where(
       eq(
         meeting.meeting_id,
-        Number(id)
+        meetingId
       )
     );
 
@@ -69,20 +73,45 @@ export default async function EditMeetingPage({
     redirect("/bookings");
   }
 
+  // Only the organizer or an Admin may open the edit form (the API enforces
+  // the same rule). Others get the redirect used for unknown meetings.
+  if (
+    meetingData[0].organizerEmployeeId !== userProfile[0].employeeId &&
+    userProfile[0].role !== ROLE_ADMIN
+  ) {
+    redirect("/bookings");
+  }
+
   // Only Scheduled meetings can be edited
 
   if (
-    meetingData[0].meetingStatusId !== 1
+    meetingData[0].meetingStatusId !== MEETING_STATUS.SCHEDULED ||
+    isMeetingEnded(meetingData[0].meeting_date, meetingData[0].end_time)
   ) {
     redirect("/bookings");
   }
 
   // Meeting Types
 
-  const meetingTypeList =
+  // Only the types the meeting's organizer is allowed to use (the same rule
+  // the edit API enforces).
+  const [owner] = await db
+    .select({ role: roles.roleName })
+    .from(employee)
+    .innerJoin(roles, eq(roles.roleId, employee.role_id))
+    .where(eq(employee.employee_id, meetingData[0].organizerEmployeeId));
+
+  const allowedTypes = owner ? await getAllowedMeetingTypes(owner.role) : [];
+
+  const meetingTypeList = (
     await db
       .select()
-      .from(meetingTypes);
+      .from(meetingTypes)
+  ).filter(
+    (t) =>
+      t.meetingTypeId === meetingData[0].meetingTypeId ||
+      allowedTypes.some((a) => a.meetingTypeId === t.meetingTypeId)
+  );
 
   // Attendees
 
@@ -95,7 +124,7 @@ export default async function EditMeetingPage({
     .where(
       eq(
         meeting_attendees.meeting_id,
-        Number(id)
+        meetingId
       )
     );
 

@@ -1,16 +1,20 @@
+import { and, eq, exists, ne, sql } from "drizzle-orm";
+
 import { db } from "@/db";
 
 import { room } from "@/db/schema";
 import { meeting } from "@/db/schema";
 import { meetingStatuses } from "@/db/schema";
+import { meeting_attendees } from "@/db/schema";
 
 import {
-  and,
-  eq,
-  lt,
-  gt,
-  ne,
-} from "drizzle-orm";
+  AVAILABILITY_STATUS,
+  MEETING_STATUS,
+  ROLE_ADMIN,
+} from "@/lib/constants";
+import { nowInAppTimezone } from "@/lib/time";
+
+import { holdsSlot, overlapsSlot } from "./conflict-check.service";
 
 export async function getAvailableRooms(
   meetingDate: string,
@@ -19,34 +23,25 @@ export async function getAvailableRooms(
   participantCount: number
 ) {
 
-  // Find meetings that conflict with the requested slot
+  // Find meetings that conflict with the requested slot (half-open intervals,
+  // evaluated in SQL on real time values — same rule as the booking path).
 
   const conflictingMeetings = await db
-    .select()
+    .select({ roomId: meeting.room_id })
     .from(meeting)
     .where(
       and(
-        eq(
-          meeting.meeting_date,
-          meetingDate
-        ),
-        lt(
-          meeting.start_time,
-          endTime
-        ),
-        gt(
-          meeting.end_time,
-          startTime
-        )
+        eq(meeting.meeting_date, meetingDate),
+        overlapsSlot(startTime, endTime),
+        holdsSlot
       )
     );
 
   // Extract booked room ids
 
-  const conflictingRoomIds =
-    conflictingMeetings.map(
-      (meeting) => meeting.room_id
-    );
+  const conflictingRoomIds = new Set(
+    conflictingMeetings.map((m) => m.roomId)
+  );
 
   // Fetch all rooms
 
@@ -60,15 +55,13 @@ export async function getAvailableRooms(
     (roomDetails) =>
 
       // Room should not already be booked
-      !conflictingRoomIds.includes(
-        roomDetails.room_id
-      )
+      !conflictingRoomIds.has(roomDetails.room_id)
 
       // Room should have enough capacity
       && roomDetails.room_capacity >= participantCount
 
       // Room should be Available
-      && roomDetails.availabilityStatusId === 1
+      && roomDetails.availabilityStatusId === AVAILABILITY_STATUS.AVAILABLE
   );
 
 }
@@ -101,7 +94,7 @@ export async function isRoomAvailable(
   // Room must be Available
 
   if (
-    roomDetails.availabilityStatusId !== 1
+    roomDetails.availabilityStatusId !== AVAILABILITY_STATUS.AVAILABLE
   ) {
 
     return {
@@ -139,14 +132,8 @@ export async function isRoomAvailable(
           meeting.meeting_date,
           meetingDate
         ),
-        lt(
-          meeting.start_time,
-          endTime
-        ),
-        gt(
-          meeting.end_time,
-          startTime
-        )
+        overlapsSlot(startTime, endTime),
+        holdsSlot
       ),
     });
 
@@ -167,16 +154,21 @@ export async function isRoomAvailable(
 
 }
 
+export type ScheduleViewer = {
+  employeeId: number;
+  role: string;
+};
+
+// Room calendar for one day. Titles are private: only the organizer, the
+// attendees and Admins see them; everyone else sees the slot as "Busy" (they
+// still need the time range to know when the room is free).
 export async function getRoomSchedule(
   roomId: number,
-  meetingDate: string
+  meetingDate: string,
+  viewer: ScheduleViewer
 ) {
 
-  const today =
-    new Date().toISOString().split("T")[0];
-
-  const currentTime =
-    new Date().toTimeString().slice(0, 8);
+  const current = nowInAppTimezone();
 
   const schedules = await db
     .select({
@@ -184,6 +176,18 @@ export async function getRoomSchedule(
       startTime: meeting.start_time,
       endTime: meeting.end_time,
       status: meetingStatuses.meetingStatusName,
+      organizerEmployeeId: meeting.organizerEmployeeId,
+      isAttendee: exists(
+        db
+          .select({ one: sql`1` })
+          .from(meeting_attendees)
+          .where(
+            and(
+              eq(meeting_attendees.meeting_id, meeting.meeting_id),
+              eq(meeting_attendees.employee_id, viewer.employeeId)
+            )
+          )
+      ),
     })
     .from(meeting)
     .innerJoin(
@@ -200,23 +204,27 @@ export async function getRoomSchedule(
 
         // Hide cancelled meetings
         ne(
-          meetingStatuses.meetingStatusName,
-          "Cancelled"
+          meeting.meetingStatusId,
+          MEETING_STATUS.CANCELLED
         )
       )
     );
 
-  // If selected date is today,
-  // remove meetings that have already ended.
+  const visible =
+    // If selected date is today, remove meetings that have already ended.
+    meetingDate === current.date
+      ? schedules.filter((m) => m.endTime > current.time)
+      : schedules;
 
-  if (meetingDate === today) {
-
-    return schedules.filter(
-      (meeting) =>
-        meeting.endTime > currentTime
-    );
-
-  }
-
-  return schedules;
+  return visible.map((m) => ({
+    title:
+      viewer.role === ROLE_ADMIN ||
+      m.organizerEmployeeId === viewer.employeeId ||
+      m.isAttendee
+        ? m.title
+        : "Busy",
+    startTime: m.startTime,
+    endTime: m.endTime,
+    status: m.status,
+  }));
 }

@@ -1,4 +1,5 @@
 import { db } from "@/db";
+import { nowInAppTimezone } from "@/lib/time";
 
 import { meeting } from "@/db/schema";
 import { room } from "@/db/schema";
@@ -8,7 +9,6 @@ import {
   and,
   asc,
   eq,
-  gte,
   sql,
 } from "drizzle-orm";
 
@@ -16,14 +16,10 @@ export async function getUpcomingMeeting(
   employeeId: number
 ) {
 
-  const today = new Date()
-    .toISOString()
-    .split("T")[0];
+  const today = nowInAppTimezone().date;
 
   const currentTime =
-    new Date()
-      .toTimeString()
-      .slice(0, 8);
+    nowInAppTimezone().time;
 
   const meetings = await db
 
@@ -124,9 +120,7 @@ export async function getTodayMeetings(
   employeeId: number
 ) {
 
-  const today = new Date()
-    .toISOString()
-    .split("T")[0];
+  const today = nowInAppTimezone().date;
 
   return await db
 
