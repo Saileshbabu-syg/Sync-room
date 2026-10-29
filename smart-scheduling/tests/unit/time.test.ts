@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  appWallClockToUtc,
   durationMinutes,
   isMeetingEnded,
   isSlotStartInPast,
@@ -97,5 +98,14 @@ describe("application timezone (Asia/Kolkata)", () => {
     assert.equal(isMeetingEnded("2026-03-01", "12:00:01", now), false);
     assert.equal(isMeetingEnded("2026-02-28", "23:59:59", now), true);
     assert.equal(isMeetingEnded("2026-03-02", "00:30:00", now), false);
+  });
+});
+
+describe("appWallClockToUtc", () => {
+  it("converts an Asia/Kolkata wall-clock time to UTC (+05:30) without shifting the date wrongly", () => {
+    assert.deepEqual(appWallClockToUtc("2026-12-01", "10:00:00"), [2026, 12, 1, 4, 30]);
+    // Before 05:30 local the UTC date is the previous day.
+    assert.deepEqual(appWallClockToUtc("2026-12-02", "00:30:00"), [2026, 12, 1, 19, 0]);
+    assert.deepEqual(appWallClockToUtc("2026-12-31", "23:30:00"), [2026, 12, 31, 18, 0]);
   });
 });

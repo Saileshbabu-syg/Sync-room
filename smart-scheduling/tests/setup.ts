@@ -32,8 +32,10 @@ process.env.DATABASE_URL = assertSafeTestDatabaseUrl(
 );
 
 // Dummy, obviously-fake credentials: no test can reach a real mail account.
-process.env.EMAIL_USER = "mailer@example.invalid";
-process.env.EMAIL_PASSWORD = "not-a-real-password";
+process.env.EMAIL_FROM = "Meeting Rooms <rooms@example.invalid>";
+// No SMTP_USER/SMTP_PASSWORD: the test sink does not authenticate.
+delete process.env.SMTP_USER;
+delete process.env.SMTP_PASSWORD;
 process.env.NEXTAUTH_SECRET = "test-only-secret-0123456789abcdef0123456789abcdef";
 process.env.AUTH_SECRET = process.env.NEXTAUTH_SECRET;
 process.env.GOOGLE_CLIENT_ID = "test-client-id";

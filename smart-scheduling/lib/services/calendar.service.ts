@@ -1,4 +1,18 @@
-import { createEvent } from "ics";
+import { createEvent, createEvents } from "ics";
+
+import { appWallClockToUtc } from "@/lib/time";
+
+// Meeting dates and times are wall-clock values in APP_TIMEZONE. They are
+// converted to UTC explicitly so the invite does not depend on the timezone of
+// the server that generates it.
+const utcTimes = (date: string, startTime: string, endTime: string) => ({
+  start: appWallClockToUtc(date, startTime),
+  end: appWallClockToUtc(date, endTime),
+  startInputType: "utc" as const,
+  startOutputType: "utc" as const,
+  endInputType: "utc" as const,
+  endOutputType: "utc" as const,
+});
 
 export async function generateCalendarInvite(
   title: string,
@@ -6,33 +20,10 @@ export async function generateCalendarInvite(
   startTime: string,
   endTime: string
 ) {
-  const [year, month, day] =
-    meetingDate.split("-").map(Number);
-
-  const [startHour, startMinute] =
-    startTime.split(":").map(Number);
-
-  const [endHour, endMinute] =
-    endTime.split(":").map(Number);
-
   const { error, value } = createEvent({
     title,
 
-    start: [
-      year,
-      month,
-      day,
-      startHour,
-      startMinute,
-    ],
-
-    end: [
-      year,
-      month,
-      day,
-      endHour,
-      endMinute,
-    ],
+    ...utcTimes(meetingDate, startTime, endTime),
 
     status: "CONFIRMED",
 
@@ -43,6 +34,30 @@ export async function generateCalendarInvite(
     throw new Error(
       "Failed to generate calendar invite"
     );
+  }
+
+  return value;
+}
+
+// One VEVENT per saved occurrence (not an RRULE), so the invite always matches
+// the bookings exactly, including skipped and cancelled dates.
+export async function generateSeriesCalendarInvite(
+  title: string,
+  occurrences: { date: string; startTime: string; endTime: string }[],
+  location?: string
+) {
+  const { error, value } = createEvents(
+    occurrences.map((o) => ({
+      title,
+      ...utcTimes(o.date, o.startTime, o.endTime),
+      ...(location ? { location } : {}),
+      status: "CONFIRMED" as const,
+      busyStatus: "BUSY" as const,
+    }))
+  );
+
+  if (error || !value) {
+    throw new Error("Failed to generate calendar invite");
   }
 
   return value;

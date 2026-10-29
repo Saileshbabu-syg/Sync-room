@@ -1,0 +1,96 @@
+# CI for the smart-scheduling app (Azure Pipelines). Not yet connected to any
+# Azure DevOps organisation: it has only been written, not run there.
+#
+# Before the first run, create (in Azure DevOps, never in this file):
+#   - a pipeline variable or variable-group entry  CI_POSTGRES_PASSWORD
+#     (secret; any random value, used only by the throw-away CI database)
+#
+# The repository root contains the app in smart-scheduling/, so every step runs
+# there.
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: ['*']
+
+pool:
+  vmImage: ubuntu-latest
+
+resources:
+  containers:
+    - container: postgres
+      image: postgres:16-alpine
+      ports: ['5432:5432']
+      env:
+        POSTGRES_PASSWORD: $(CI_POSTGRES_PASSWORD)
+        POSTGRES_DB: ss_test_main
+      options: >-
+        --health-cmd "pg_isready -U postgres"
+        --health-interval 5s
+        --health-timeout 5s
+        --health-retries 10
+
+variables:
+  appDir: smart-scheduling
+
+jobs:
+  - job: verify
+    displayName: Typecheck, lint, tests, build, audit
+    timeoutInMinutes: 30
+    services:
+      postgres: postgres
+    steps:
+      - task: NodeTool@0
+        displayName: Use Node.js 22 (Next.js 16 needs >= 20.9)
+        inputs:
+          versionSpec: '22.x'
+
+      - script: npm ci
+        displayName: Install (npm ci)
+        workingDirectory: $(appDir)
+
+      - script: npm run typecheck
+        displayName: Typecheck
+        workingDirectory: $(appDir)
+
+      - script: npm run lint
+        displayName: Lint
+        workingDirectory: $(appDir)
+
+      - script: npm run test:unit
+        displayName: Unit tests
+        workingDirectory: $(appDir)
+
+      # Fails the build on any high/critical vulnerability in production
+      # dependencies. Dev-only advisories are reviewed, not gated (see
+      # DEPLOYMENT.md, "Known limitations").
+      - script: npm audit --omit=dev --audit-level=high
+        displayName: Dependency audit (production)
+        workingDirectory: $(appDir)
+
+      # tests/helpers/safety.ts refuses anything but a local ss_test_* database.
+      - script: npm run test:db
+        displayName: Database tests
+        workingDirectory: $(appDir)
+        env:
+          TEST_ADMIN_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/postgres
+          TEST_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/ss_test_main
+
+      # build:test builds with the isolated test environment, so a CI build can
+      # never see a real database URL.
+      - script: npm run build:test
+        displayName: Production build
+        workingDirectory: $(appDir)
+        env:
+          TEST_ADMIN_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/postgres
+          TEST_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/ss_test_main
+
+      - script: npm run test:e2e
+        displayName: End-to-end tests (mocked auth, local SMTP sink)
+        workingDirectory: $(appDir)
+        env:
+          TEST_ADMIN_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/postgres
+          TEST_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/ss_test_main

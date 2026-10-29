@@ -1,4 +1,3 @@
-import { Bell } from "lucide-react";
 import { Session } from "next-auth";
 
 import UserSheet from "./UserSheet";

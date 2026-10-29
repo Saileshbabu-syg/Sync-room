@@ -39,10 +39,50 @@ export function parseIdParam(value: string | undefined | null): number | null {
   return id >= 1 && id <= MAX_INT4 ? id : null;
 }
 
+// The origin(s) a browser-initiated mutation may come from.
+//  - AUTH_URL / NEXTAUTH_URL set (required in production): exactly that
+//    origin. Request headers are never consulted, so nothing a client or an
+//    intermediary sends can change what counts as "same origin".
+//  - Not set (local development, tests): the request's own Host header.
+//    X-Forwarded-Host is honoured only when TRUST_PROXY_HEADERS=true, i.e. an
+//    operator states that a reverse proxy in front of the app overwrites it.
+function isTrustedOrigin(req: Request, candidate: string): boolean {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+
+  const configured = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL;
+
+  if (configured) {
+    try {
+      return parsed.origin === new URL(configured).origin;
+    } catch {
+      return false;
+    }
+  }
+
+  const forwarded =
+    process.env.TRUST_PROXY_HEADERS === "true"
+      ? req.headers.get("x-forwarded-host")
+      : null;
+
+  const host = (forwarded ?? req.headers.get("host"))?.split(",")[0].trim();
+
+  return Boolean(host) && parsed.host === host;
+}
+
 // Defence in depth on top of SameSite=Lax session cookies: refuse mutating
-// requests that the browser marks as cross-site, whose Origin is not this
-// host, or (when a JSON body is expected) that are not application/json —
-// which also rules out "simple" cross-site form posts.
+// requests that the browser marks as cross-site, whose Origin (or, when there
+// is no Origin, Referer) is not this application, or (when a JSON body is
+// expected) that are not application/json — which also rules out "simple"
+// cross-site form posts. Requests with neither header (non-browser clients)
+// are still subject to authentication and authorization.
 export function guardMutation(
   req: Request,
   { expectJson = true }: { expectJson?: boolean } = {}
@@ -53,26 +93,10 @@ export function guardMutation(
     return jsonError(403, "Cross-site requests are not allowed.");
   }
 
-  const origin = req.headers.get("origin");
+  const source = req.headers.get("origin") ?? req.headers.get("referer");
 
-  if (origin) {
-    const host = (
-      req.headers.get("x-forwarded-host") ?? req.headers.get("host")
-    )
-      ?.split(",")[0]
-      .trim();
-
-    let originHost: string;
-
-    try {
-      originHost = new URL(origin).host;
-    } catch {
-      return jsonError(403, "Cross-site requests are not allowed.");
-    }
-
-    if (originHost !== host) {
-      return jsonError(403, "Cross-site requests are not allowed.");
-    }
+  if (source && !isTrustedOrigin(req, source)) {
+    return jsonError(403, "Cross-site requests are not allowed.");
   }
 
   if (expectJson) {
