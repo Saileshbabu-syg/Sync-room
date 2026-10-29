@@ -64,6 +64,9 @@ export async function POST(req: NextRequest) {
           success: false,
           message: error.message,
           ...(error.conflicts ? { conflicts: error.conflicts } : {}),
+          ...(error.conflicts && error.occurrenceDates
+            ? { occurrenceDates: error.occurrenceDates }
+            : {}),
         },
         { status: error.status }
       );

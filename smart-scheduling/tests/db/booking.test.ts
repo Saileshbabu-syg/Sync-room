@@ -360,6 +360,46 @@ describe("recurring bookings are atomic (F-01)", () => {
     assert.equal(attendees.length, 4);
   });
 
+  it("skip_dates books only the remaining occurrences and records the real count", async () => {
+    const taken = dateFromToday(7 + 7);
+
+    await createBooking(
+      input({ occurrenceDates: [taken], startTime: "10:15", endTime: "10:45" })
+    );
+
+    const { meetings, recurringMeetingId } = await createRecurringMeeting(
+      series({ occurrence_count: 3, skip_dates: [taken] })
+    );
+
+    assert.equal(meetings.length, 2);
+    assert.ok(!meetings.some((m) => m.meeting_date === taken));
+    assert.equal(await count(), 3, "the pre-existing meeting plus the two new ones");
+
+    const [row] = await db
+      .select()
+      .from(recurring_meetings)
+      .where(eq(recurring_meetings.recurring_meeting_id, recurringMeetingId));
+    assert.equal(row.occurrence_count, 2);
+  });
+
+  it("skip_dates rejects a date outside the series and an empty result", async () => {
+    const outside = await rejection(
+      createRecurringMeeting(series({ skip_dates: [dateFromToday(1)] }))
+    );
+    assert.equal(outside.status, 400);
+
+    const none = await rejection(
+      createRecurringMeeting(
+        series({
+          occurrence_count: 2,
+          skip_dates: [DAY(), dateFromToday(7 + 7)],
+        })
+      )
+    );
+    assert.equal(none.status, 400);
+    assert.equal(await count(), 0);
+  });
+
   it("a conflict on ANY occurrence rejects the whole series and leaves nothing behind", async () => {
     // Occupy the 3rd weekly occurrence.
     await createBooking(
@@ -370,6 +410,9 @@ describe("recurring bookings are atomic (F-01)", () => {
 
     assert.equal(err.status, 409);
     assert.deepEqual(err.conflicts, [dateFromToday(7 + 14)]);
+    // The full series is returned too, so the UI can show which dates are free.
+    assert.ok(err.occurrenceDates?.includes(dateFromToday(7 + 14)));
+    assert.ok(err.occurrenceDates!.length > err.conflicts!.length);
     assert.equal(await count(), 1, "only the pre-existing meeting remains");
     assert.equal((await db.select().from(recurring_meetings)).length, 0);
   });
@@ -416,7 +459,7 @@ describe("room under maintenance (F-06)", () => {
         organizerRole: "Employee",
         participantCount: 2,
         meetingTypeId: f.types.team,
-        frequency_id: 1,
+        frequency_id: 2,
         occurrence_count: 3,
         notify: false,
       })
@@ -559,7 +602,7 @@ describe("role -> meeting type rules (F-05)", () => {
         organizerRole: "Employee",
         participantCount: 2,
         meetingTypeId: f.types.client,
-        frequency_id: 1,
+        frequency_id: 2,
         occurrence_count: 2,
         notify: false,
       })

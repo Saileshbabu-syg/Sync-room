@@ -17,6 +17,8 @@ type CreateRecurringMeetingInput = {
   frequency_id: number;
   occurrence_count: number;
   participantEmployeeIds?: number[];
+  // Occurrences to leave out (must be dates of the generated series).
+  skip_dates?: string[];
   notify?: boolean;
 };
 
@@ -31,7 +33,14 @@ function formatDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-// Daily/Weekly just add days. Monthly clamps to the target month's last day
+function isWeekend(date: Date) {
+  const day = date.getUTCDay();
+  return day === 0 || day === 6;
+}
+
+// Daily means every working day: Saturdays and Sundays are skipped, so ten
+// daily occurrences from a Monday span two Monday-to-Friday weeks.
+// Weekly just adds 7 days. Monthly clamps to the target month's last day
 // (e.g. Jan 31 -> Feb 28/29, not Mar 3) instead of letting setMonth() roll over.
 function getNextDate(
   currentDate: Date,
@@ -41,7 +50,11 @@ function getNextDate(
   switch (frequencyId) {
     case 1: {
       const next = new Date(currentDate);
-      next.setUTCDate(next.getUTCDate() + 1);
+
+      do {
+        next.setUTCDate(next.getUTCDate() + 1);
+      } while (isWeekend(next));
+
       return next;
     }
 
@@ -87,11 +100,40 @@ export function computeOccurrenceDates(
 // maintenance, capacity and role rules) as a single meeting — either every
 // occurrence is created or none is.
 export async function createRecurringMeeting(data: CreateRecurringMeetingInput) {
-  const occurrenceDates = computeOccurrenceDates(
+  // A daily series runs Monday to Friday, so it cannot start on a weekend.
+  // Refuse instead of silently moving the first meeting to another day.
+  if (
+    data.frequency_id === 1 &&
+    isWeekend(new Date(`${data.meeting_date}T00:00:00.000Z`))
+  ) {
+    throw new BookingError(
+      "Daily meetings run Monday to Friday. Please choose a weekday as the start date.",
+      400
+    );
+  }
+
+  const seriesDates = computeOccurrenceDates(
     data.meeting_date,
     data.frequency_id,
     data.occurrence_count
   );
+
+  const skip = new Set(data.skip_dates ?? []);
+
+  for (const date of skip) {
+    if (!seriesDates.includes(date)) {
+      throw new BookingError(
+        `${date} is not one of the dates in this series`,
+        400
+      );
+    }
+  }
+
+  const occurrenceDates = seriesDates.filter((d) => !skip.has(d));
+
+  if (occurrenceDates.length === 0) {
+    throw new BookingError("No dates left to book", 400);
+  }
 
   const { meetings, recurringMeetingId } = await createBooking({
     title: data.title,
@@ -106,7 +148,9 @@ export async function createRecurringMeeting(data: CreateRecurringMeetingInput) 
     participantEmployeeIds: data.participantEmployeeIds,
     recurrence: {
       frequencyId: data.frequency_id,
-      occurrenceCount: data.occurrence_count,
+      // What is actually booked, which is less than requested when dates were
+      // skipped.
+      occurrenceCount: occurrenceDates.length,
     },
     notify: data.notify,
   });

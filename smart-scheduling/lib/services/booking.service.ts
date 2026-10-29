@@ -42,12 +42,21 @@ import { createRemindersForMeetings } from "./reminder.service";
 export class BookingError extends Error {
   status: number;
   conflicts?: string[];
+  // Every date the series would have used, so the caller can show which
+  // occurrences are free and which are taken.
+  occurrenceDates?: string[];
 
-  constructor(message: string, status: number, conflicts?: string[]) {
+  constructor(
+    message: string,
+    status: number,
+    conflicts?: string[],
+    occurrenceDates?: string[]
+  ) {
     super(message);
     this.name = "BookingError";
     this.status = status;
     this.conflicts = conflicts;
+    this.occurrenceDates = occurrenceDates;
   }
 }
 
@@ -209,7 +218,8 @@ export async function createBooking(input: BookingInput) {
             ? "Room is already booked for one or more occurrences"
             : "Room is already booked for the selected time slot",
           409,
-          isSeries ? conflictingDates : undefined
+          isSeries ? conflictingDates : undefined,
+          isSeries ? input.occurrenceDates : undefined
         );
       }
 
@@ -311,7 +321,8 @@ export async function createBooking(input: BookingInput) {
           ? "Room is already booked for one or more occurrences"
           : "Room is already booked for the selected time slot",
         409,
-        conflicts && conflicts.length > 0 ? conflicts : undefined
+        conflicts && conflicts.length > 0 ? conflicts : undefined,
+        isSeries ? input.occurrenceDates : undefined
       );
     }
 

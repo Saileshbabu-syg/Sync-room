@@ -34,6 +34,14 @@ export const recurringMeetingSchema = z
       .array(z.number().int().positive())
       .max(100)
       .optional(),
+
+    // Occurrence dates to leave out of the series ("book only the dates that
+    // are free"). Each must be one of the dates the series generates; the
+    // server checks that.
+    skip_dates: z
+      .array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/))
+      .max(12)
+      .optional(),
   })
   .refine((data) => data.start_time < data.end_time, {
     message: "End time must be after start time",

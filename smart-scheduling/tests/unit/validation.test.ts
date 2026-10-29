@@ -195,7 +195,30 @@ describe("booking window and recurrence dates", () => {
     ]);
   });
 
-  it("weekly adds 7 days and daily adds 1", () => {
+  it("daily skips Saturdays and Sundays", () => {
+    // Fri 6 Nov -> Mon 9 Nov, not Sat 7 Nov.
+    assert.deepEqual(computeOccurrenceDates("2026-11-06", 1, 3), [
+      "2026-11-06",
+      "2026-11-09",
+      "2026-11-10",
+    ]);
+
+    // Ten occurrences from a Monday cover exactly two Monday-Friday weeks.
+    assert.deepEqual(computeOccurrenceDates("2026-11-02", 1, 10), [
+      "2026-11-02",
+      "2026-11-03",
+      "2026-11-04",
+      "2026-11-05",
+      "2026-11-06",
+      "2026-11-09",
+      "2026-11-10",
+      "2026-11-11",
+      "2026-11-12",
+      "2026-11-13",
+    ]);
+  });
+
+  it("weekly adds 7 days and daily adds 1 on a working day", () => {
     assert.deepEqual(computeOccurrenceDates("2026-11-02", 2, 3), [
       "2026-11-02",
       "2026-11-09",
