@@ -28,6 +28,8 @@ export const MEETING_STATUS_ROWS = [
   { id: MEETING_STATUS.SCHEDULED, name: "Scheduled" },
   { id: MEETING_STATUS.COMPLETED, name: "Completed" },
   { id: MEETING_STATUS.CANCELLED, name: "Cancelled" },
+  { id: MEETING_STATUS.PENDING_RESCHEDULE, name: "PENDING_RESCHEDULE" },
+  { id: MEETING_STATUS.PENDING_ROOM, name: "PENDING_ROOM" },
 ] as const;
 
 export const AVAILABILITY_ROWS = [

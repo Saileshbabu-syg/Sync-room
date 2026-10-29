@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { meeting } from "@/db/schema";
@@ -16,8 +16,13 @@ export function overlapsSlot(startTime: string, endTime: string) {
   );
 }
 
-// Cancelled meetings no longer hold their slot.
-export const holdsSlot = ne(meeting.meetingStatusId, MEETING_STATUS.CANCELLED);
+// Cancelled meetings no longer hold their slot, and neither does a PENDING_ROOM
+// booking (a higher-priority meeting still waiting for the slot). Mirrors the
+// `meeting_no_room_overlap` constraint.
+export const holdsSlot = notInArray(meeting.meetingStatusId, [
+  MEETING_STATUS.CANCELLED,
+  MEETING_STATUS.PENDING_ROOM,
+]);
 
 export async function checkMeetingConflict(
   roomId: number,

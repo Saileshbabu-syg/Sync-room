@@ -8,6 +8,12 @@ export const MEETING_STATUS = {
   SCHEDULED: 1,
   COMPLETED: 2,
   CANCELLED: 3,
+  // Priority bumping. PENDING_RESCHEDULE: a lower-priority meeting that still
+  // holds its slot while its organizer decides. PENDING_ROOM: the
+  // higher-priority booking waiting for that slot; it does not hold the slot
+  // until it is promoted to SCHEDULED.
+  PENDING_RESCHEDULE: 4,
+  PENDING_ROOM: 5,
 } as const;
 
 export const AVAILABILITY_STATUS = {
