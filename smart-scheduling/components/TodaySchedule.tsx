@@ -33,7 +33,7 @@ export default function TodaySchedule({
 
           <CalendarClock className="h-7 w-7 text-blue-600" />
 
-          Today's Schedule
+          Today&apos;s Schedule
 
         </h2>
 

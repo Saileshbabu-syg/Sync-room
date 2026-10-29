@@ -1,160 +1,50 @@
 import cron from "node-cron";
 
-import {
-  getPendingReminders,
-  getMeetingAttendees,
-  getMeetingDetails,
-  markReminderAsSent,
-  markNotificationAsSent,
-} from "@/lib/services/reminder.service";
+import { updateCompletedMeetings } from "@/lib/services/meeting-status.service";
+import { processPendingNotifications } from "@/lib/services/notification.service";
+import { processDueReminders } from "@/lib/services/reminder.service";
 
-import {updateCompletedMeetings} from "@/lib/services/meeting-status.service"
+// One tick: mark finished meetings, send due reminders, retry undelivered
+// booking e-mails. Exported so it can be run (and tested) without the timer.
+//
+// Every step claims its rows with FOR UPDATE SKIP LOCKED, so several server
+// instances (or Next.js workers) each running this job do not send anything
+// twice.
+export async function runReminderTick() {
+  const completed = await updateCompletedMeetings();
+  const reminders = await processDueReminders();
+  const notifications = await processPendingNotifications();
 
-import { sendMeetingEmail } from "@/lib/services/email.service";
+  return { completed, reminders, notifications };
+}
 
-cron.schedule("* * * * *", async () => {
-  try {
-    console.log("Checking pending reminders...");
+const globalForCron = globalThis as typeof globalThis & {
+  __reminderCronStarted?: boolean;
+};
 
-    // Update completed meetings
-    const updatedMeetings =
-      await updateCompletedMeetings();
+// Set REMINDER_CRON_ENABLED=false to run an instance without the scheduler
+// (e.g. extra web replicas, or tests).
+if (
+  process.env.REMINDER_CRON_ENABLED !== "false" &&
+  !globalForCron.__reminderCronStarted
+) {
+  globalForCron.__reminderCronStarted = true;
 
-    if (updatedMeetings > 0) {
-      console.log(
-        `${updatedMeetings} meeting(s) marked as Completed.`
-      );
+  cron.schedule("* * * * *", async () => {
+    try {
+      const result = await runReminderTick();
+
+      if (
+        result.completed > 0 ||
+        result.reminders.sent > 0 ||
+        result.notifications.SENT > 0
+      ) {
+        console.log("Reminder cron:", JSON.stringify(result));
+      }
+    } catch (error) {
+      console.error("Reminder Cron Error:", error);
     }
-
-    const reminders =
-      await getPendingReminders();
-
-    console.log(
-      "Reminders Found:",
-      reminders.length
-    );
-
-    for (const reminder of reminders) {
-
-      const now = new Date(
-        new Date().toLocaleString(
-          "en-US",
-          {
-            timeZone: "Asia/Kolkata",
-          }
-        )
-      );
-
-      const reminderTime = new Date(
-        new Date(
-          reminder.reminder_time
-        ).toLocaleString(
-          "en-US",
-          {
-            timeZone:
-              "Asia/Kolkata",
-          }
-        )
-      );
-
-      console.log(
-        "Current Time:",
-        new Date().toLocaleString(
-          "en-IN",
-          {
-            timeZone:
-              "Asia/Kolkata",
-          }
-        )
-      );
-
-      console.log(
-        "Reminder Time:",
-        reminderTime.toLocaleString(
-          "en-IN",
-          {
-            timeZone:
-              "Asia/Kolkata",
-          }
-        )
-      );
-
-      if (reminderTime > now) {
-
-        console.log(
-          `Skipping reminder ${reminder.reminder_log_id}`
-        );
-
-        continue;
-
-      }
-
-      const attendees =
-        await getMeetingAttendees(
-          reminder.meeting_id
-        );
-
-      const meetingDetails =
-        await getMeetingDetails(
-          reminder.meeting_id
-        );
-
-      if (!meetingDetails) {
-        continue;
-      }
-
-      for (const attendee of attendees) {
-
-        if (!attendee.email) {
-          continue;
-        }
-
-        console.log(
-          `Sending mail to ${attendee.email}`
-        );
-
-        await sendMeetingEmail(
-          attendee.email,
-          meetingDetails.title,
-          String(
-            meetingDetails.meeting_date
-          ),
-          String(
-            meetingDetails.start_time
-          ),
-          String(
-            meetingDetails.end_time
-          )
-        );
-
-      }
-
-      await markReminderAsSent(
-        reminder.reminder_log_id
-      );
-
-      await markNotificationAsSent(
-        reminder.meeting_id
-      );
-
-      console.log(
-        `Reminder sent for meeting ${reminder.meeting_id}`
-      );
-
-    }
-
-    console.log("Cron Completed");
-
-    console.log("--------------------------------");
-
-  } catch (error) {
-
-    console.error(
-      "Reminder Cron Error:",
-      error
-    );
-
-  }
-});
+  });
+}
 
 export {};

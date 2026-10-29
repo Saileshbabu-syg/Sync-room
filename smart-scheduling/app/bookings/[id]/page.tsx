@@ -1,8 +1,10 @@
 import { auth } from "@/auth";
+import { parseIdParam } from "@/lib/api";
+import { ROLE_ADMIN } from "@/lib/constants";
+import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
-import { organizers } from "@/db/schema";
 
 import BookingLayout from "@/components/BookingLayout";
 import BookingDetailsCard from "@/components/BookingDetailsCard";
@@ -38,22 +40,21 @@ export default async function BookingViewPage({
 
   const { id } = await params;
 
-  const userProfile = await db
-    .select({
-      organizerId: organizers.organizerId,
-      employeeId: organizers.employeeId,
-      name: organizers.name,
-      email: organizers.email,
-      role: organizers.role,
-      imageUrl: organizers.imageUrl,
-    })
-    .from(organizers)
-    .where(
-      eq(
-        organizers.email,
-        session.user!.email!
-      )
-    );
+  const meetingId = parseIdParam(id);
+
+  if (meetingId === null) {
+    redirect("/bookings");
+  }
+
+  const currentUser = await getCurrentUserProfile();
+
+  // Signed in, but no longer a known employee (removed or email changed):
+  // treat as signed out instead of crashing on a missing profile.
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  const userProfile = [currentUser];
 
  // Meeting Details
 const meetingData = await db
@@ -106,11 +107,37 @@ const meetingData = await db
   .where(
     eq(
       meeting.meeting_id,
-      Number(id)
+      meetingId
     )
   );
 
 if (meetingData.length === 0) {
+  redirect("/bookings");
+}
+
+// Access policy: a meeting's details are visible to its organizer, its
+// attendees and Admins. Anyone else gets the same redirect as for a meeting
+// that does not exist, so ids cannot be probed.
+const isOrganizer =
+  meetingData[0].organizerEmployeeId === userProfile[0].employeeId;
+
+let canView = isOrganizer || userProfile[0].role === ROLE_ADMIN;
+
+if (!canView) {
+  const [attendance] = await db
+    .select({ id: meeting_attendees.meeting_attendee_id })
+    .from(meeting_attendees)
+    .where(
+      and(
+        eq(meeting_attendees.meeting_id, meetingId),
+        eq(meeting_attendees.employee_id, userProfile[0].employeeId)
+      )
+    );
+
+  canView = Boolean(attendance);
+}
+
+if (!canView) {
   redirect("/bookings");
 }
 
@@ -152,7 +179,7 @@ const attendees = await db
     and(
       eq(
         meeting_attendees.meeting_id,
-        Number(id)
+        meetingId
       ),
       ne(
         meeting_attendees.employee_id,

@@ -1,104 +1,115 @@
-import { db } from "@/db";
+import { BookingError, createBooking } from "@/lib/services/booking.service";
 
-import { meeting } from "@/db/schema";
-import { recurring_meetings } from "@/db/schema";
+// Kept as an alias so callers that import the old name keep working.
+export { BookingError as RecurringMeetingError };
 
-function getNextDate(
-  currentDate: Date,
-  frequencyId: number
-) {
-  const nextDate = new Date(currentDate);
-
-  switch (frequencyId) {
-    case 1: // Daily
-      nextDate.setDate(nextDate.getDate() + 1);
-      break;
-
-    case 2: // Weekly
-      nextDate.setDate(nextDate.getDate() + 7);
-      break;
-
-    case 3: // Monthly
-      nextDate.setMonth(nextDate.getMonth() + 1);
-      break;
-  }
-
-  return nextDate;
-}
-
-export async function createRecurringMeeting(
-data: {
+type CreateRecurringMeetingInput = {
   title: string;
   room_id: number;
   meeting_date: string;
   start_time: string;
   end_time: string;
   organizerEmployeeId: number;
+  // Current role of the signed-in organizer (never taken from the request body).
+  organizerRole: string;
   participantCount: number;
   meetingTypeId: number;
-  meetingStatusId: number;
   frequency_id: number;
   occurrence_count: number;
+  participantEmployeeIds?: number[];
+  notify?: boolean;
+};
+
+function daysInMonth(year: number, monthIndex: number) {
+  return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 }
+
+function formatDate(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// Daily/Weekly just add days. Monthly clamps to the target month's last day
+// (e.g. Jan 31 -> Feb 28/29, not Mar 3) instead of letting setMonth() roll over.
+function getNextDate(
+  currentDate: Date,
+  originalDay: number,
+  frequencyId: number
 ) {
-  const createdMeetings = [];
+  switch (frequencyId) {
+    case 1: {
+      const next = new Date(currentDate);
+      next.setUTCDate(next.getUTCDate() + 1);
+      return next;
+    }
 
-  let currentDate = new Date(
-    data.meeting_date
-  );
+    case 2: {
+      const next = new Date(currentDate);
+      next.setUTCDate(next.getUTCDate() + 7);
+      return next;
+    }
 
-  for (
-    let i = 0;
-    i < data.occurrence_count;
-    i++
-  ) {
-    const insertedMeeting =
-      await db
-        .insert(meeting)
-        .values({
-          title: data.title,
-          room_id: data.room_id,
-          meeting_date: currentDate
-            .toISOString()
-            .split("T")[0],
+    case 3: {
+      const monthIndex = currentDate.getUTCFullYear() * 12 + currentDate.getUTCMonth() + 1;
+      const targetYear = Math.floor(monthIndex / 12);
+      const targetMonthIndex = monthIndex % 12;
+      const day = Math.min(originalDay, daysInMonth(targetYear, targetMonthIndex));
+      return new Date(Date.UTC(targetYear, targetMonthIndex, day));
+    }
 
-          organizerEmployeeId: data.organizerEmployeeId,
-          participantCount: data.participantCount,
-          meetingTypeId: data.meetingTypeId,
-          meetingStatusId: data.meetingStatusId,
+    default:
+      return currentDate;
+  }
+}
 
-          start_time: data.start_time,
-          end_time: data.end_time,
-        })
-        .returning();
+export function computeOccurrenceDates(
+  firstDate: string,
+  frequencyId: number,
+  occurrenceCount: number
+) {
+  const start = new Date(`${firstDate}T00:00:00.000Z`);
+  const originalDay = start.getUTCDate();
 
-    createdMeetings.push(
-      insertedMeeting[0]
-    );
+  const dates: string[] = [];
+  let currentDate = start;
 
-    currentDate = getNextDate(
-      currentDate,
-      data.frequency_id
-    );
+  for (let i = 0; i < occurrenceCount; i++) {
+    dates.push(formatDate(currentDate));
+    currentDate = getNextDate(currentDate, originalDay, frequencyId);
   }
 
-  await db
-    .insert(recurring_meetings)
-    .values({
-      meeting_id:
-        createdMeetings[0].meeting_id,
+  return dates;
+}
 
-      frequency_id:
-        data.frequency_id,
+// A series is booked through the same transaction (and the same conflict,
+// maintenance, capacity and role rules) as a single meeting — either every
+// occurrence is created or none is.
+export async function createRecurringMeeting(data: CreateRecurringMeetingInput) {
+  const occurrenceDates = computeOccurrenceDates(
+    data.meeting_date,
+    data.frequency_id,
+    data.occurrence_count
+  );
 
-      occurrence_count:
-        data.occurrence_count,
+  const { meetings, recurringMeetingId } = await createBooking({
+    title: data.title,
+    roomId: data.room_id,
+    occurrenceDates,
+    startTime: data.start_time,
+    endTime: data.end_time,
+    organizerEmployeeId: data.organizerEmployeeId,
+    organizerRole: data.organizerRole,
+    participantCount: data.participantCount,
+    meetingTypeId: data.meetingTypeId,
+    participantEmployeeIds: data.participantEmployeeIds,
+    recurrence: {
+      frequencyId: data.frequency_id,
+      occurrenceCount: data.occurrence_count,
+    },
+    notify: data.notify,
+  });
 
-      recurrence_end_date:
-        currentDate
-          .toISOString()
-          .split("T")[0],
-    });
-
-  return createdMeetings;
+  return { meetings, recurringMeetingId: recurringMeetingId! };
 }

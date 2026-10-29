@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/sonner";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 
 import {
   Select,
@@ -23,6 +24,13 @@ type MeetingType = {
   meetingTypeId: number;
   meetingTypeName: string;
 };
+
+type RecurrenceFrequency = {
+  frequency_id: number;
+  frequency_name: string;
+};
+
+const MAX_OCCURRENCES = 12;
 
 type Props = {
   roomId: number;
@@ -60,11 +68,29 @@ export default function MeetingDetailsForm({
   const [attendeeIds, setAttendeeIds] =
     useState("");
 
+  const [isRecurring, setIsRecurring] =
+    useState(false);
+
+  const [frequencies, setFrequencies] =
+    useState<RecurrenceFrequency[]>([]);
+
+  const [frequencyId, setFrequencyId] =
+    useState("");
+
+  const [occurrenceCount, setOccurrenceCount] =
+    useState("2");
+
   useEffect(() => {
     fetch("/api/meeting-types")
       .then((res) => res.json())
       .then((data) => {
         setMeetingTypes(data.data);
+      });
+
+    fetch("/api/recurrence-frequencies")
+      .then((res) => res.json())
+      .then((data) => {
+        setFrequencies(data.data ?? []);
       });
   }, []);
 
@@ -97,6 +123,22 @@ if (attendeeInput !== "") {
 
 }
 
+  if (isRecurring) {
+    if (!frequencyId) {
+      toast.warning("Please select a recurrence frequency.");
+      return;
+    }
+
+    const count = Number(occurrenceCount);
+
+    if (!Number.isInteger(count) || count < 1 || count > MAX_OCCURRENCES) {
+      toast.warning(
+        `Occurrence count must be between 1 and ${MAX_OCCURRENCES}.`
+      );
+      return;
+    }
+  }
+
   setLoading(true);
 
   try {
@@ -124,42 +166,75 @@ if (
   return;
 }
 
-    const response = await fetch("/api/meetings/booking", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        title: meetingTitle,
+    const response = isRecurring
+      ? await fetch("/api/meetings/recurring", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: meetingTitle,
+            meeting_date: meetingDate,
+            organizerEmployeeId,
+            room_id: roomId,
+            participantCount,
+            meetingTypeId: Number(meetingTypeId),
+            meetingStatusId: 1,
+            start_time: startTime,
+            end_time: endTime,
+            frequency_id: Number(frequencyId),
+            occurrence_count: Number(occurrenceCount),
+            participantEmployeeIds,
+          }),
+        })
+      : await fetch("/api/meetings/booking", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: meetingTitle,
 
-        meeting_date: meetingDate,
+            meeting_date: meetingDate,
 
-        organizer_employee_id:
-          organizerEmployeeId,
+            organizer_employee_id:
+              organizerEmployeeId,
 
-        room_id: roomId,
+            room_id: roomId,
 
-        participant_count:
-          participantCount,
+            participant_count:
+              participantCount,
 
-        meeting_type_id:
-          Number(meetingTypeId),
+            meeting_type_id:
+              Number(meetingTypeId),
 
-        meeting_status_id: 1,
+            meeting_status_id: 1,
 
-        start_time: startTime,
+            start_time: startTime,
 
-        end_time: endTime,
+            end_time: endTime,
 
-        participantEmployeeIds,
-      }),
-    });
+            participantEmployeeIds,
+          }),
+        });
 
     const result = await response.json();
 
     if (!response.ok) {
-  toast.error(result.message);
+  if (isRecurring && Array.isArray(result.conflicts)) {
+    toast.error(
+      `${result.message}: ${result.conflicts.join(", ")}`
+    );
+  } else {
+    toast.error(result.message);
+  }
   return;
+}
+
+if (isRecurring) {
+  toast.success(
+    `${result.data.length} meetings scheduled.`
+  );
 }
 
 // Clear saved booking forms
@@ -338,6 +413,95 @@ router.push("/booking/success");
           <p className="mt-2 text-sm text-gray-500">
             The organizer is automatically included as an attendee.
           </p>
+
+        </div>
+
+        {/* Recurrence */}
+
+        <div>
+
+          <div className="flex items-center gap-2">
+
+            <Checkbox
+              id="isRecurring"
+              checked={isRecurring}
+              onCheckedChange={(checked) =>
+                setIsRecurring(checked === true)
+              }
+            />
+
+            <Label htmlFor="isRecurring" className="cursor-pointer">
+              Make this a recurring meeting
+            </Label>
+
+          </div>
+
+          {isRecurring && (
+
+            <div className="mt-4 grid gap-6 md:grid-cols-2">
+
+              <div>
+
+                <Label>
+                  Frequency
+                </Label>
+
+                <Select
+                  value={frequencyId}
+                  onValueChange={setFrequencyId}
+                >
+
+                  <SelectTrigger>
+
+                    <SelectValue placeholder="Select Frequency" />
+
+                  </SelectTrigger>
+
+                  <SelectContent>
+
+                    {frequencies.map((frequency) => (
+
+                      <SelectItem
+                        key={frequency.frequency_id}
+                        value={String(frequency.frequency_id)}
+                      >
+                        {frequency.frequency_name}
+                      </SelectItem>
+
+                    ))}
+
+                  </SelectContent>
+
+                </Select>
+
+              </div>
+
+              <div>
+
+                <Label>
+                  Number Of Occurrences
+                </Label>
+
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_OCCURRENCES}
+                  step={1}
+                  value={occurrenceCount}
+                  onChange={(e) =>
+                    setOccurrenceCount(e.target.value)
+                  }
+                />
+
+                <p className="mt-2 text-sm text-gray-500">
+                  Up to {MAX_OCCURRENCES} occurrences.
+                </p>
+
+              </div>
+
+            </div>
+
+          )}
 
         </div>
 

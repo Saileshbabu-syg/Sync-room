@@ -11,6 +11,11 @@
  * NOTE: table names, column names and exported identifiers are deliberately
  * unchanged from the previous per-file schema so the existing database and all
  * call sites keep working. Apply changes with `npx drizzle-kit generate` then `npx drizzle-kit migrate`.
+ *
+ * Not expressible in Drizzle (so it lives only in migration 0020 — apply
+ * schema changes with `migrate`, never `push`): the `meeting_no_room_overlap`
+ * EXCLUDE constraint that stops two non-cancelled meetings from overlapping in
+ * the same room, and the `meeting_end_after_start` check.
  */
 import { relations, sql } from "drizzle-orm";
 import {
@@ -194,6 +199,23 @@ export const room = pgTable(
   (t) => [index("rooms_availability_status_id_idx").on(t.availabilityStatusId)]
 );
 
+// Parent of a series of `meeting` rows (one per occurrence). Declared before
+// `meeting` because `meeting.recurring_meeting_id` references it.
+export const recurring_meetings = pgTable(
+  "recurring_meetings",
+  {
+    recurring_meeting_id: serial("recurring_meeting_id").primaryKey(),
+    frequency_id: integer("frequency_id")
+      .notNull()
+      .references(() => recurrence_frequency_master.frequency_id),
+    occurrence_count: integer("occurrence_count").notNull(),
+    recurrence_end_date: date("recurrence_end_date"),
+    created_at: timestamp("created_at").defaultNow(),
+    updated_at: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [index("recurring_meetings_frequency_id_idx").on(t.frequency_id)]
+);
+
 export const meeting = pgTable(
   "meeting",
   {
@@ -215,6 +237,11 @@ export const meeting = pgTable(
       .references(() => meetingStatuses.meetingStatusId),
     start_time: time("start_time").notNull(),
     end_time: time("end_time").notNull(),
+    // Set when this occurrence belongs to a recurring series; null for
+    // one-off meetings.
+    recurringMeetingId: integer("recurring_meeting_id").references(
+      () => recurring_meetings.recurring_meeting_id
+    ),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
@@ -224,6 +251,7 @@ export const meeting = pgTable(
     index("meeting_organizer_employee_id_idx").on(t.organizerEmployeeId),
     index("meeting_status_id_idx").on(t.meetingStatusId),
     index("meeting_type_id_idx").on(t.meetingTypeId),
+    index("meeting_recurring_meeting_id_idx").on(t.recurringMeetingId),
   ]
 );
 
@@ -245,27 +273,6 @@ export const meeting_attendees = pgTable(
   ]
 );
 
-export const recurring_meetings = pgTable(
-  "recurring_meetings",
-  {
-    recurring_meeting_id: serial("recurring_meeting_id").primaryKey(),
-    meeting_id: integer("meeting_id")
-      .notNull()
-      .references(() => meeting.meeting_id),
-    frequency_id: integer("frequency_id")
-      .notNull()
-      .references(() => recurrence_frequency_master.frequency_id),
-    occurrence_count: integer("occurrence_count").notNull(),
-    recurrence_end_date: date("recurrence_end_date"),
-    created_at: timestamp("created_at").defaultNow(),
-    updated_at: timestamp("updated_at").defaultNow(),
-  },
-  (t) => [
-    index("recurring_meetings_meeting_id_idx").on(t.meeting_id),
-    index("recurring_meetings_frequency_id_idx").on(t.frequency_id),
-  ]
-);
-
 export const notifications = pgTable(
   "notifications",
   {
@@ -277,6 +284,9 @@ export const notifications = pgTable(
       .notNull()
       .references(() => notification_type_master.notification_type_id),
     status: varchar("status", { length: 20 }).default("PENDING"),
+    // Delivery attempts so far; PENDING rows are retried until the limit,
+    // then parked as FAILED.
+    attempts: integer("attempts").notNull().default(0),
     sent_at: timestamp("sent_at"),
     created_at: timestamp("created_at").defaultNow(),
   },
@@ -294,10 +304,17 @@ export const reminder_logs = pgTable(
       .notNull()
       .references(() => meeting.meeting_id),
     reminder_time: timestamp("reminder_time", { withTimezone: true }).notNull(),
-    status: varchar("status", { length: 20 }).default("SENT"),
+    // PENDING (due at reminder_time) -> SENT | SKIPPED | FAILED
+    status: varchar("status", { length: 20 }).default("PENDING"),
+    attempts: integer("attempts").notNull().default(0),
     created_at: timestamp("created_at").defaultNow(),
   },
-  (t) => [index("reminder_logs_meeting_id_idx").on(t.meeting_id)]
+  (t) => [
+    index("reminder_logs_meeting_id_idx").on(t.meeting_id),
+    // One reminder per meeting, so retries / double submits cannot duplicate it.
+    uniqueIndex("reminder_logs_meeting_id_uq").on(t.meeting_id),
+    index("reminder_logs_status_time_idx").on(t.status, t.reminder_time),
+  ]
 );
 
 export const meeting_audit_logs = pgTable(
@@ -309,6 +326,10 @@ export const meeting_audit_logs = pgTable(
       .references(() => meeting.meeting_id),
     action: varchar("action", { length: 100 }).notNull(),
     remarks: varchar("remarks", { length: 255 }),
+    // Who triggered the event; null for system actions (cron).
+    actor_employee_id: integer("actor_employee_id").references(
+      () => employee.employee_id
+    ),
     created_at: timestamp("created_at").defaultNow(),
   },
   (t) => [index("meeting_audit_logs_meeting_id_idx").on(t.meeting_id)]
@@ -447,7 +468,10 @@ export const meetingRelations = relations(meeting, ({ one, many }) => ({
     references: [meetingStatuses.meetingStatusId],
   }),
   attendees: many(meeting_attendees),
-  recurrences: many(recurring_meetings),
+  recurringMeeting: one(recurring_meetings, {
+    fields: [meeting.recurringMeetingId],
+    references: [recurring_meetings.recurring_meeting_id],
+  }),
   notifications: many(notifications),
   reminderLogs: many(reminder_logs),
   auditLogs: many(meeting_audit_logs),
@@ -471,11 +495,8 @@ export const meetingAttendeesRelations = relations(
 
 export const recurringMeetingsRelations = relations(
   recurring_meetings,
-  ({ one }) => ({
-    meeting: one(meeting, {
-      fields: [recurring_meetings.meeting_id],
-      references: [meeting.meeting_id],
-    }),
+  ({ one, many }) => ({
+    occurrences: many(meeting),
     frequency: one(recurrence_frequency_master, {
       fields: [recurring_meetings.frequency_id],
       references: [recurrence_frequency_master.frequency_id],
@@ -527,6 +548,7 @@ export type NewMeeting = typeof meeting.$inferInsert;
 export type MeetingAttendee = typeof meeting_attendees.$inferSelect;
 export type NewMeetingAttendee = typeof meeting_attendees.$inferInsert;
 export type RecurringMeeting = typeof recurring_meetings.$inferSelect;
+export type NewRecurringMeeting = typeof recurring_meetings.$inferInsert;
 export type Notification = typeof notifications.$inferSelect;
 export type ReminderLog = typeof reminder_logs.$inferSelect;
 export type MeetingAuditLog = typeof meeting_audit_logs.$inferSelect;

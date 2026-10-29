@@ -45,6 +45,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           .from(organizers)
           .where(eq(organizers.email, user.email!));
 
+        // Keep the cached Organizer copy in step with the Employee record.
+        // (Authorization never reads this copy — it resolves the role from
+        // Employee on every request — but the UI and reports still show it.)
+        if (
+          existingOrganizer.length > 0 &&
+          (existingOrganizer[0].role !== role ||
+            existingOrganizer[0].employeeId !== employeeId)
+        ) {
+          await db
+            .update(organizers)
+            .set({ role, employeeId, updatedAt: new Date() })
+            .where(eq(organizers.email, user.email!));
+        }
+
         // Create Organizer if not exists
         if (existingOrganizer.length === 0) {
           await db.insert(organizers).values({

@@ -6,7 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --import tsx --import ./tests/setup.ts --test \"tests/unit/**/*.test.ts\"",
+    "test:db": "node --import tsx --import ./tests/setup.ts --test --test-concurrency=1 \"tests/db/**/*.test.ts\"",
+    "test:e2e": "node --import tsx --import ./tests/setup.ts --test --test-concurrency=1 \"tests/e2e/**/*.test.ts\"",
+    "test": "npm run test:unit && npm run test:db",
+    "test:all": "npm run test:unit && npm run test:db && npm run test:e2e",
+    "build:test": "node tests/helpers/next-with-test-env.mjs build"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

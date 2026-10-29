@@ -1,8 +1,9 @@
 import { auth } from "@/auth";
+import { parseIdParam } from "@/lib/api";
+import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
-import { organizers } from "@/db/schema";
 import { eq } from "drizzle-orm";
 
 import BookingLayout from "@/components/BookingLayout";
@@ -34,22 +35,20 @@ export default async function BookingDetailsPage({
 
   const params = await searchParams;
 
-  const userProfile = await db
-    .select({
-      organizerId: organizers.organizerId,
-      employeeId: organizers.employeeId,
-      name: organizers.name,
-      email: organizers.email,
-      role: organizers.role,
-      imageUrl: organizers.imageUrl,
-    })
-    .from(organizers)
-    .where(eq(organizers.email, session.user!.email!));
+  const currentUser = await getCurrentUserProfile();
+
+  // Signed in, but no longer a known employee (removed or email changed):
+  // treat as signed out instead of crashing on a missing profile.
+  if (!currentUser) {
+    redirect("/login");
+  }
+
+  const userProfile = [currentUser];
 
   const roomData = await db
     .select()
     .from(room)
-    .where(eq(room.room_id, Number(params.roomId)));
+    .where(eq(room.room_id, parseIdParam(params.roomId) ?? -1));
 
   if (roomData.length === 0) {
     return <h1>Room Not Found</h1>;
