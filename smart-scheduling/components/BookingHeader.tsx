@@ -1,6 +1,5 @@
 "use client";
 
-import { Bell } from "lucide-react";
 import { Session } from "next-auth";
 
 import UserSheet from "@/components/UserSheet";

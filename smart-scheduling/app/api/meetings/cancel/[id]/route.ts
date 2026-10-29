@@ -15,6 +15,10 @@ import {
 import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
 import { isMeetingEnded } from "@/lib/time";
 import { AUDIT_ACTION, createAuditLog } from "@/lib/services/audit.service";
+import {
+  dispatchNotification,
+  queueMeetingNotification,
+} from "@/lib/services/notification.service";
 
 class CancelError extends Error {
   status: number;
@@ -59,7 +63,7 @@ export async function PATCH(
       return jsonError(400, "Invalid meeting id.");
     }
 
-    await db.transaction(async (tx) => {
+    const notificationId = await db.transaction(async (tx) => {
       // Lock the row so a concurrent edit/cancel cannot interleave.
       const [existingMeeting] = await tx
         .select()
@@ -117,7 +121,11 @@ export async function PATCH(
         organizer.employeeId,
         tx
       );
+
+      return queueMeetingNotification(tx, meetingId, "CANCELLED");
     });
+
+    dispatchNotification(notificationId);
 
     return NextResponse.json(
       {

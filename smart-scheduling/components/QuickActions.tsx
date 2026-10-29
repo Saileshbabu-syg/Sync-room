@@ -6,7 +6,6 @@ import {
   CalendarPlus,
   Building2,
   ClipboardList,
-  Info,
   ArrowRight,
 } from "lucide-react";
 

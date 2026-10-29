@@ -18,21 +18,43 @@ export async function runReminderTick() {
   return { completed, reminders, notifications };
 }
 
+type Tick = typeof runReminderTick;
+type Schedule = (expression: string, task: () => Promise<void>) => unknown;
+
 const globalForCron = globalThis as typeof globalThis & {
   __reminderCronStarted?: boolean;
 };
 
-// Set REMINDER_CRON_ENABLED=false to run an instance without the scheduler
-// (e.g. extra web replicas, or tests).
-if (
-  process.env.REMINDER_CRON_ENABLED !== "false" &&
-  !globalForCron.__reminderCronStarted
-) {
+// Starts the per-minute scheduler in this process. Called once from
+// instrumentation.ts when the server boots. Returns false when it did not
+// start (disabled with REMINDER_CRON_ENABLED=false, or already started in this
+// process).
+//
+// - A tick that is still running when the next minute arrives is skipped, so a
+//   slow mail relay cannot pile up overlapping ticks in one process.
+// - A failing tick (e.g. the database is down) is logged and the schedule
+//   keeps running; it never throws into the server.
+// - Only a message is logged, never the error object, which can carry
+//   connection details.
+export function startReminderScheduler({
+  schedule = (expression, task) => cron.schedule(expression, task),
+  tick = runReminderTick,
+  env = process.env,
+}: { schedule?: Schedule; tick?: Tick; env?: Record<string, string | undefined> } = {}) {
+  if (env.REMINDER_CRON_ENABLED === "false") return false;
+  if (globalForCron.__reminderCronStarted) return false;
+
   globalForCron.__reminderCronStarted = true;
 
-  cron.schedule("* * * * *", async () => {
+  let running = false;
+
+  schedule("* * * * *", async () => {
+    if (running) return;
+
+    running = true;
+
     try {
-      const result = await runReminderTick();
+      const result = await tick();
 
       if (
         result.completed > 0 ||
@@ -42,9 +64,19 @@ if (
         console.log("Reminder cron:", JSON.stringify(result));
       }
     } catch (error) {
-      console.error("Reminder Cron Error:", error);
+      console.error(
+        "Reminder Cron Error:",
+        error instanceof Error ? error.message : "unknown error"
+      );
+    } finally {
+      running = false;
     }
   });
+
+  return true;
 }
 
-export {};
+// Test hook: forget that this process started the scheduler.
+export function resetReminderSchedulerForTests() {
+  globalForCron.__reminderCronStarted = false;
+}

@@ -96,3 +96,37 @@ export function isMeetingEnded(
 
   return timeToSeconds(endTime) <= timeToSeconds(current.time);
 }
+
+// Offset (ms) of APP_TIMEZONE from UTC at the given instant.
+function appTimezoneOffsetMs(instant: number) {
+  const { date, time } = nowInAppTimezone(new Date(instant));
+  const [y, mo, d] = date.split("-").map(Number);
+  const [h, mi, s] = time.split(":").map(Number);
+
+  return Date.UTC(y, mo - 1, d, h, mi, s) - Math.floor(instant / 1000) * 1000;
+}
+
+// A wall-clock date + time in APP_TIMEZONE (how meetings are stored and shown)
+// -> [year, month, day, hour, minute] in UTC. Independent of the server's own
+// timezone, so a calendar invite lands at the same moment on any host.
+export function appWallClockToUtc(
+  date: string,
+  time: string
+): [number, number, number, number, number] {
+  const [y, mo, d] = date.split("-").map(Number);
+  const [h, mi] = time.split(":").map(Number);
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+
+  let utc = wall - appTimezoneOffsetMs(wall);
+  utc = wall - appTimezoneOffsetMs(utc);
+
+  const u = new Date(utc);
+
+  return [
+    u.getUTCFullYear(),
+    u.getUTCMonth() + 1,
+    u.getUTCDate(),
+    u.getUTCHours(),
+    u.getUTCMinutes(),
+  ];
+}

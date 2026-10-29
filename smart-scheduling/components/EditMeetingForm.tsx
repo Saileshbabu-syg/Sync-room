@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Toaster } from "@/components/ui/sonner";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

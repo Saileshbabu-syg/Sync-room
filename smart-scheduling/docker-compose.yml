@@ -1,14 +1,18 @@
+# Local development database only. The password comes from POSTGRES_PASSWORD
+# (put it in the untracked .env next to this file, see .env.example); compose
+# refuses to start without it. Not for production.
 services:
   db:
     image: postgres:16-alpine
     container_name: smart-scheduling-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: dc5a2d382046c85a8be0477772f40c1c
-      POSTGRES_DB: smart_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-smart_db}
     ports:
-      - "5432:5432"
+      # Loopback only: the dev database is not exposed to the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - smart_db_data:/var/lib/postgresql/data
 

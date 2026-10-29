@@ -30,8 +30,7 @@ if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname) || !/^ss_
 process.env.DATABASE_URL = raw;
 process.env.DOTENV_CONFIG_PATH = path.join(root, ".env.does-not-exist");
 process.env.DOTENV_CONFIG_QUIET = "true";
-process.env.EMAIL_USER = "mailer@example.invalid";
-process.env.EMAIL_PASSWORD = "not-a-real-password";
+process.env.EMAIL_FROM = "Meeting Rooms <rooms@example.invalid>";
 process.env.NEXTAUTH_SECRET = "test-only-secret-0123456789abcdef0123456789abcdef";
 process.env.AUTH_SECRET = process.env.NEXTAUTH_SECRET;
 process.env.GOOGLE_CLIENT_ID = "test-client-id";

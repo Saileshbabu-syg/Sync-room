@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local, untracked audit scratch files (see .gitignore); not application code.
+    "audit-evidence/**",
   ]),
 ]);
 
