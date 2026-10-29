@@ -10,6 +10,14 @@ export const MEETING_STATUS = {
   CANCELLED: 3,
 } as const;
 
+// Display names for MEETING_STATUS ids. The UI derives the label from the id,
+// so it does not depend on how the status names are cased in the database.
+export const MEETING_STATUS_LABEL: Record<number, string> = {
+  [MEETING_STATUS.SCHEDULED]: "Scheduled",
+  [MEETING_STATUS.COMPLETED]: "Completed",
+  [MEETING_STATUS.CANCELLED]: "Cancelled",
+};
+
 export const AVAILABILITY_STATUS = {
   AVAILABLE: 1,
 } as const;

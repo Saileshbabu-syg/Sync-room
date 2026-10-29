@@ -109,7 +109,25 @@ export function buildSmtpOptions(
   };
 }
 
+// Existing setup, kept until the company mail relay is integrated: with no
+// SMTP_HOST but EMAIL_USER / EMAIL_PASSWORD set, mail goes out through Gmail
+// from EMAIL_USER, exactly as before. Setting SMTP_HOST (and EMAIL_FROM)
+// switches to the SMTP relay above; nothing else needs to change.
+export function legacyGmailAccount(env: NodeJS.ProcessEnv = process.env) {
+  const user = env.EMAIL_USER?.trim();
+
+  return !env.SMTP_HOST?.trim() && user && env.EMAIL_PASSWORD
+    ? { user, pass: env.EMAIL_PASSWORD }
+    : null;
+}
+
 function createDefaultTransport(): Transporter {
+  const gmail = legacyGmailAccount();
+
+  if (gmail) {
+    return nodemailer.createTransport({ service: "gmail", auth: gmail });
+  }
+
   return nodemailer.createTransport(buildSmtpOptions());
 }
 
@@ -149,7 +167,7 @@ function parseSender(value: string | undefined): string {
 // The configured sender, used for every message. Throws (so the notification
 // stays PENDING and is retried) instead of sending from a wrong address.
 export function getMailSender(): string {
-  return parseSender(process.env.EMAIL_FROM);
+  return parseSender(process.env.EMAIL_FROM ?? legacyGmailAccount()?.user);
 }
 
 // Everything wrong with the e-mail configuration, as readable messages, for a
@@ -159,6 +177,9 @@ export function emailConfigProblems(
   env: NodeJS.ProcessEnv = process.env
 ): string[] {
   const problems: string[] = [];
+
+  // The existing Gmail setup is complete on its own.
+  if (legacyGmailAccount(env) && !env.EMAIL_FROM) return problems;
 
   for (const check of [
     () => buildSmtpOptions(env),
@@ -277,14 +298,36 @@ ${
 }
 
 function renderSeries(
-  { title, roomName, organizerName, kind = "scheduled" }: MeetingEmailFields,
+  {
+    title,
+    roomName,
+    organizerName,
+    meetingDate,
+    startTime,
+    endTime,
+    kind = "scheduled",
+  }: MeetingEmailFields,
   series: MeetingEmailSeries
 ) {
   const heading = SERIES_HEADINGS[kind];
   const count = series.occurrences.length;
+  // A reminder carries only the invite for its own meeting, so the other
+  // occurrences are not duplicated in the recipient's calendar.
+  const inviteNote =
+    kind === "reminder"
+      ? "Calendar invite attached (this meeting)."
+      : "Calendar invite attached (one event per occurrence).";
 
   const details: [string, string][] = [
     ["Title", title],
+    ...(kind === "reminder"
+      ? ([
+          [
+            "This meeting",
+            `${withWeekday(meetingDate)}, ${startTime} - ${endTime}`,
+          ],
+        ] as [string, string][])
+      : []),
     ...(roomName ? ([["Room", roomName]] as [string, string][]) : []),
     ...(organizerName
       ? ([["Organizer", organizerName]] as [string, string][])
@@ -339,7 +382,7 @@ function renderSeries(
           : ""
       }
       <p>
-        Calendar invite attached (one event per occurrence).
+        ${inviteNote}
       </p>
     `;
 
@@ -365,7 +408,7 @@ function renderSeries(
         ]
       : []),
     "",
-    "Calendar invite attached (one event per occurrence).",
+    inviteNote,
   ].join("\n");
 
   return {
@@ -396,7 +439,7 @@ export async function sendMeetingEmail(
   const calendarInvite =
     kind === "cancelled"
       ? null
-      : extras.series
+      : extras.series && kind !== "reminder"
         ? await generateSeriesCalendarInvite(
             title,
             extras.series.occurrences,

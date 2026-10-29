@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { parseIdParam } from "@/lib/api";
-import { ROLE_ADMIN } from "@/lib/constants";
+import { MEETING_STATUS_LABEL, ROLE_ADMIN } from "@/lib/constants";
 import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
 
@@ -77,6 +77,8 @@ const meetingData = await db
 
     meetingStatus:
       meetingStatuses.meetingStatusName,
+
+      meetingStatusId: meeting.meetingStatusId,
 
     organizerEmployeeId:
       meeting.organizerEmployeeId,
@@ -195,7 +197,10 @@ const meetingDetails = {
 
   meetingType: meetingData[0].meetingType ?? "N/A",
 
-  meetingStatus: meetingData[0].meetingStatus ?? "N/A",
+  meetingStatus:
+    MEETING_STATUS_LABEL[meetingData[0].meetingStatusId] ??
+    meetingData[0].meetingStatus ??
+    "N/A",
 
   organizer: organizerDetails[0] ?? {
     employeeId: meetingData[0].organizerEmployeeId,

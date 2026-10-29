@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "node:test";
 import { MEETING_STATUS } from "@/lib/constants";
 import { computeOccurrenceDates } from "@/lib/recurrence";
 import {
+  emailConfigProblems,
   getMailSender,
   renderMeetingEmail,
   sendMeetingEmail,
@@ -361,5 +362,61 @@ describe("cancellation e-mail", () => {
     assert.ok(m.text.includes("Date: 2026-12-01"));
     assert.ok(!m.text.includes("Calendar invite"));
     assert.equal(m.ics, "", "no .ics attachment");
+  });
+});
+
+describe("reminder for an occurrence of a series", () => {
+  it("names this meeting, lists the whole series and attaches only its own invite", async () => {
+    const mail = captureMail();
+
+    await sendMeetingEmail(
+      ["a@example.test"],
+      "Standup",
+      "2026-12-16",
+      "10:00:00",
+      "10:30:00",
+      "reminder",
+      {
+        roomName: "Alpha",
+        series: {
+          frequency: "Weekly",
+          startDate: "2026-12-02",
+          endDate: "2026-12-23",
+          occurrences: ["2026-12-02", "2026-12-16", "2026-12-23"].map((date) => ({
+            date,
+            startTime: "10:00:00",
+            endTime: "10:30:00",
+          })),
+          skippedDates: [],
+          cancelledDates: [],
+        },
+      }
+    );
+
+    const [m] = mail.sent;
+    assert.equal(m.subject, "Recurring Meeting Reminder - Standup");
+    assert.ok(m.text.includes("This meeting: 2026-12-16 (Wed), 10:00:00 - 10:30:00"));
+    assert.ok(m.text.includes("3. 2026-12-23 (Wed)"));
+    assert.equal((m.ics.match(/BEGIN:VEVENT/g) ?? []).length, 1);
+  });
+});
+
+describe("existing Gmail sender (until the company relay is integrated)", () => {
+  it("uses EMAIL_USER as the sender when only EMAIL_USER / EMAIL_PASSWORD are set", () => {
+    const keep = { ...process.env };
+    delete process.env.EMAIL_FROM;
+    delete process.env.SMTP_HOST;
+    process.env.EMAIL_USER = "existing@example.invalid";
+    process.env.EMAIL_PASSWORD = "not-a-real-password";
+
+    try {
+      assert.equal(getMailSender(), "existing@example.invalid");
+      assert.deepEqual(emailConfigProblems(), []);
+    } finally {
+      for (const k of ["EMAIL_FROM", "SMTP_HOST", "EMAIL_USER", "EMAIL_PASSWORD"]) {
+        if (keep[k] === undefined) delete process.env[k];
+        else process.env[k] = keep[k];
+      }
+    }
   });
 });

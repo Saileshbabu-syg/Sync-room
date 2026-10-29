@@ -18,6 +18,7 @@ import { isMeetingEnded } from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
 import { sendMeetingEmail } from "./email.service";
+import { loadSeriesEmailContext } from "./meeting-series.service";
 
 // Reminders are event-driven rows: one `reminder_logs` row is written for every
 // meeting in the same transaction that creates it (see booking.service), and
@@ -145,6 +146,13 @@ export async function processDueReminders(now: Date = new Date()) {
         .map((a) => a.email)
         .filter((email): email is string => Boolean(email));
 
+      // A reminder for one occurrence of a recurring series also tells the
+      // attendees about the whole series.
+      const series =
+        details.recurringMeetingId !== null
+          ? await loadSeriesEmailContext(tx, details.recurringMeetingId)
+          : null;
+
       try {
         if (recipients.length > 0) {
           await sendMeetingEmail(
@@ -153,7 +161,8 @@ export async function processDueReminders(now: Date = new Date()) {
             String(details.meeting_date),
             String(details.start_time),
             String(details.end_time),
-            "reminder"
+            "reminder",
+            series ?? {}
           );
         }
 

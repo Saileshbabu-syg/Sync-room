@@ -4,6 +4,7 @@ import { nowInAppTimezone } from "@/lib/time";
 import { meeting } from "@/db/schema";
 import { room } from "@/db/schema";
 import { meetingStatuses } from "@/db/schema";
+import { MEETING_STATUS } from "@/lib/constants";
 
 import {
   and,
@@ -74,8 +75,8 @@ export async function getUpcomingMeeting(
         ),
 
         eq(
-          meetingStatuses.meetingStatusName,
-          "Scheduled"
+          meeting.meetingStatusId,
+          MEETING_STATUS.SCHEDULED
         ),
 
         sql`
@@ -180,8 +181,8 @@ export async function getTodayMeetings(
         ),
 
         eq(
-          meetingStatuses.meetingStatusName,
-          "Scheduled"
+          meeting.meetingStatusId,
+          MEETING_STATUS.SCHEDULED
         )
 
       )

@@ -199,15 +199,22 @@ describe("emailConfigProblems", () => {
     );
   });
 
-  it("reports missing settings and the legacy EMAIL_USER names, without values", () => {
+  it("accepts the existing Gmail EMAIL_USER / EMAIL_PASSWORD setup on its own", () => {
+    assert.deepEqual(
+      emailConfigProblems(
+        env({ EMAIL_USER: "u@example.com", EMAIL_PASSWORD: "hunter2-secret" })
+      ),
+      []
+    );
+  });
+
+  it("reports missing settings by name, without values", () => {
     const problems = emailConfigProblems(
-      env({ EMAIL_USER: "u@example.com", EMAIL_PASSWORD: "hunter2-secret" })
+      env({ EMAIL_PASSWORD: "hunter2-secret" })
     );
 
-    assert.equal(problems.length, 3);
     assert.ok(problems.some((p) => /SMTP_HOST/.test(p)));
     assert.ok(problems.some((p) => /EMAIL_FROM/.test(p)));
-    assert.ok(problems.some((p) => /SMTP_USER/.test(p)));
     assert.ok(!problems.join(" ").includes("hunter2-secret"));
   });
 });

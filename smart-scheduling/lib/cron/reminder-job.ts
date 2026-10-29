@@ -41,12 +41,18 @@ export function startReminderScheduler({
   tick = runReminderTick,
   env = process.env,
 }: { schedule?: Schedule; tick?: Tick; env?: Record<string, string | undefined> } = {}) {
-  if (env.REMINDER_CRON_ENABLED === "false") return false;
+  if (env.REMINDER_CRON_ENABLED === "false") {
+    console.log("Reminder scheduler is disabled (REMINDER_CRON_ENABLED=false).");
+    return false;
+  }
+
   if (globalForCron.__reminderCronStarted) return false;
 
   globalForCron.__reminderCronStarted = true;
 
   let running = false;
+
+  console.log("Reminder scheduler started: running every minute.");
 
   schedule("* * * * *", async () => {
     if (running) return;

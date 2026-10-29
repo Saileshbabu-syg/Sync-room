@@ -3,6 +3,7 @@ import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db";
+import { MEETING_STATUS_LABEL } from "@/lib/constants";
 
 import { meeting } from "@/db/schema";
 import { room } from "@/db/schema";
@@ -35,7 +36,7 @@ export default async function MyBookingsPage() {
 
   const userProfile = [currentUser];
 
-  const meetings = await db
+  const rows = await db
     .select({
       meetingId: meeting.meeting_id,
 
@@ -57,6 +58,8 @@ export default async function MyBookingsPage() {
 
       meetingStatus:
         meetingStatuses.meetingStatusName,
+
+      meetingStatusId: meeting.meetingStatusId,
     })
 
     .from(meeting)
@@ -93,6 +96,14 @@ export default async function MyBookingsPage() {
       desc(meeting.meeting_date),
       desc(meeting.start_time)
     );
+
+  // The label comes from the status id, not from how the name is spelled or
+  // cased in the database.
+  const meetings = rows.map((row) => ({
+    ...row,
+    meetingStatus:
+      MEETING_STATUS_LABEL[row.meetingStatusId] ?? row.meetingStatus,
+  }));
 
   return (
     <BookingLayout
