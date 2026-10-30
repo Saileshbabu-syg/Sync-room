@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 
 import { Button } from "@/components/ui/button";
+import EmployeeMultiSelect from "@/components/EmployeeMultiSelect";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -101,7 +102,7 @@ export default function MeetingDetailsForm({
     useState("");
 
   const [attendeeIds, setAttendeeIds] =
-    useState("");
+    useState<number[]>([]);
 
   const [isRecurring, setIsRecurring] =
     useState(false);
@@ -219,22 +220,6 @@ const handleSubmit = async () => {
     return;
   }
 
-  // Validate Attendee Employee IDs
-const attendeeInput = attendeeIds.trim();
-
-if (attendeeInput !== "") {
-
-  const pattern = /^\d+(,\d+)*$/;
-
-  if (!pattern.test(attendeeInput)) {
-    toast.warning(
-      "Employee ID is invalid"
-    );
-    return;
-  }
-
-}
-
   if (!meetingDate || !startTime || !endTime) {
     toast.warning("Date, start time and end time are required.");
     return;
@@ -275,29 +260,7 @@ if (attendeeInput !== "") {
   setLoading(true);
 
   try {
-    const participantEmployeeIds =
-      attendeeInput === ""
-        ? []
-        : attendeeInput
-            .split(",")
-            .map((id) => Number(id));
-    const uniqueIds = new Set(participantEmployeeIds);
-
-if (uniqueIds.size !== participantEmployeeIds.length) {
-  toast.warning("Duplicate employee IDs are not allowed.");
-  return;
-}
-
-if (
-  participantEmployeeIds.includes(
-    organizerEmployeeId
-  )
-) {
-  toast.warning(
-    "Organizer cannot be added as an attendee."
-  );
-  return;
-}
+    const participantEmployeeIds = attendeeIds;
 
     const recurringPayload = {
       title: meetingTitle,
@@ -541,15 +504,13 @@ finishBooking();
         <div>
 
           <Label>
-            Attendee Employee IDs
+            Attendees
           </Label>
 
-          <Input
-            placeholder="Example : 2,5,7"
+          <EmployeeMultiSelect
             value={attendeeIds}
-            onChange={(e) =>
-              setAttendeeIds(e.target.value)
-            }
+            onChange={setAttendeeIds}
+            excludeIds={[organizerEmployeeId]}
           />
 
           <p className="mt-2 text-sm text-gray-500">
