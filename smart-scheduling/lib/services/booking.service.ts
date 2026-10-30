@@ -18,6 +18,9 @@ import { dbErrorCode, PG_EXCLUSION_VIOLATION } from "@/lib/api";
 import { isSlotStartInPast, normalizeTime, timeToSeconds } from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
+import { BookingError } from "./booking-error";
+import { findOverlappingMeetings } from "./bump.service";
+import { classifySlot } from "./priority.service";
 import { findConflictingDates } from "./conflict-check.service";
 import { isMeetingTypeAllowedForRole } from "./meeting-type-access.service";
 import {
@@ -39,26 +42,7 @@ import { createRemindersForMeetings } from "./reminder.service";
 //    availability check sees the current status and a concurrent
 //    "set room to maintenance" update waits for the booking (and vice versa).
 
-export class BookingError extends Error {
-  status: number;
-  conflicts?: string[];
-  // Every date the series would have used, so the caller can show which
-  // occurrences are free and which are taken.
-  occurrenceDates?: string[];
-
-  constructor(
-    message: string,
-    status: number,
-    conflicts?: string[],
-    occurrenceDates?: string[]
-  ) {
-    super(message);
-    this.name = "BookingError";
-    this.status = status;
-    this.conflicts = conflicts;
-    this.occurrenceDates = occurrenceDates;
-  }
-}
+export { BookingError };
 
 // Namespace for the per-room advisory lock (first key of the two-int form).
 const ROOM_LOCK_NAMESPACE = 7001;
@@ -158,7 +142,10 @@ export async function createBooking(input: BookingInput) {
       }
 
       const [meetingTypeRow] = await tx
-        .select({ id: meetingTypes.meetingTypeId })
+        .select({
+          id: meetingTypes.meetingTypeId,
+          rank: meetingTypes.priorityRank,
+        })
         .from(meetingTypes)
         .where(eq(meetingTypes.meetingTypeId, input.meetingTypeId));
 
@@ -202,6 +189,31 @@ export async function createBooking(input: BookingInput) {
 
       if (existingAttendees.length !== attendeeIds.length) {
         throw new BookingError("One or more attendees not found", 404);
+      }
+
+      // Priority bumping applies to single bookings only; a series that hits an
+      // occupied occurrence is still rejected below.
+      if (!isSeries) {
+        const slot = classifySlot(
+          meetingTypeRow.rank,
+          await findOverlappingMeetings(tx, {
+            roomId: input.roomId,
+            meetingDate: input.occurrenceDates[0],
+            startTime,
+            endTime,
+          }),
+          input.now ?? new Date()
+        );
+
+        if (slot.state === "BUMPABLE") {
+          throw new BookingError(
+            "This room is held by a lower-priority meeting. Confirm to ask its organizer to reschedule.",
+            409,
+            undefined,
+            undefined,
+            { code: "BUMP_CONFIRMATION_REQUIRED", victims: slot.victims }
+          );
+        }
       }
 
       const conflictingDates = await findConflictingDates(

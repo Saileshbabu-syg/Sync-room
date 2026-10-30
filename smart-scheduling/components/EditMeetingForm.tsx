@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 
 import { Button } from "@/components/ui/button";
+import EmployeeMultiSelect from "@/components/EmployeeMultiSelect";
 import { toast } from "sonner";
 
 type MeetingType = {
@@ -49,7 +50,7 @@ export default function EditMeetingForm({
     useState(String(meetingTypeId));
 
   const [attendees, setAttendees] =
-    useState(attendeeIds.join(","));
+    useState<number[]>(attendeeIds);
 
   const [loading, setLoading] =
     useState(false);
@@ -65,28 +66,7 @@ export default function EditMeetingForm({
 
     try {
 
-      // Validate attendee IDs
-const attendeeText = attendees.trim();
-
-if (attendeeText !== "") {
-
-  const pattern = /^\d+(,\d+)*$/;
-
-  if (!pattern.test(attendeeText)) {
-    toast.warning(
-      "Employee ID is invalid"
-    );
-    setLoading(false);
-    return;
-  }
-}
-
-const participantEmployeeIds =
-  attendeeText === ""
-    ? []
-    : attendeeText
-        .split(",")
-        .map((id) => Number(id.trim()));
+const participantEmployeeIds = attendees;
 
               console.log({
   title: meetingTitle,
@@ -247,21 +227,15 @@ const participantEmployeeIds =
         <div>
 
           <Label>
-            Attendee Employee IDs
+            Attendees
           </Label>
 
-          <Input
+          <EmployeeMultiSelect
             value={attendees}
-            placeholder="Example : 2,5,7"
-            onChange={(e) =>
-              setAttendees(
-                e.target.value
-              )
-            }
+            onChange={setAttendees}
           />
 
           <p className="mt-2 text-sm text-gray-500">
-            Enter employee IDs separated by commas.
             Organizer is added automatically.
           </p>
 

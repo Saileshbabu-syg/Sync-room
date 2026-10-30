@@ -41,6 +41,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
 # audit / remediation artefacts and local test config (internal-confidential)
 /AUDIT_REPORT.md
 /REMEDIATION_REPORT.md
