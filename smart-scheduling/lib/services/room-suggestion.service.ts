@@ -139,8 +139,11 @@ export async function isRoomAvailable(
 
   if (conflictingMeeting) {
 
+    // `conflict` lets the caller tell "taken" apart from "cannot be booked":
+    // a taken slot can still be requested from its organizer.
     return {
       success: false,
+      conflict: true,
       message:
         "Room is already booked for the selected time slot.",
     };

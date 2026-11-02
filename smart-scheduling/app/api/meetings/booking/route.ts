@@ -3,9 +3,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { createMeetingSchema } from "@/lib/validations/meeting.validator";
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import { guardMutation, jsonError, rateLimit, readJson } from "@/lib/api";
-import { BookingError, createBooking } from "@/lib/services/booking.service";
+import {
+  BookingError,
+  createBooking,
+  SLOT_TAKEN_MESSAGE,
+} from "@/lib/services/booking.service";
+import { describeConflict } from "@/lib/services/room-request.service";
 
 export async function POST(req: NextRequest) {
+  // Remembered so a "slot taken" answer can say what is in the way.
+  let slot:
+    | { roomId: number; date: string; start: string; end: string }
+    | undefined;
+  let viewer: { employeeId: number; role: string } | undefined;
+
   try {
     const organizer = await getCurrentOrganizer();
 
@@ -41,6 +52,14 @@ export async function POST(req: NextRequest) {
 
     const validatedData = result.data;
 
+    slot = {
+      roomId: validatedData.room_id,
+      date: validatedData.meeting_date,
+      start: validatedData.start_time,
+      end: validatedData.end_time,
+    };
+    viewer = { employeeId: organizer.employeeId, role: organizer.role };
+
     // The organizer (and their role) is always the signed-in user, never
     // whatever the client sends — otherwise any caller could book meetings as
     // any employee. Conflicts, room availability, capacity, role→meeting-type
@@ -68,10 +87,27 @@ export async function POST(req: NextRequest) {
     );
   } catch (error) {
     if (error instanceof BookingError) {
+      // The slot is taken: say by whom (as far as this user may see), and
+      // whether they can ask for it. Nothing is booked either way.
+      const conflict =
+        error.status === 409 &&
+        error.message === SLOT_TAKEN_MESSAGE &&
+        slot &&
+        viewer
+          ? await describeConflict(
+              slot.roomId,
+              slot.date,
+              slot.start,
+              slot.end,
+              viewer
+            ).catch(() => undefined)
+          : undefined;
+
       return NextResponse.json(
         {
           message: error.message,
           ...(error.conflicts ? { conflicts: error.conflicts } : {}),
+          ...(conflict ? { conflict } : {}),
         },
         { status: error.status }
       );

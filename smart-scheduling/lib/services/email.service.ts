@@ -206,13 +206,15 @@ export type MeetingEmailKind =
   | "scheduled"
   | "updated"
   | "reminder"
-  | "cancelled";
+  | "cancelled"
+  | "bumped";
 
 const HEADINGS: Record<MeetingEmailKind, string> = {
   scheduled: "Meeting Scheduled",
   updated: "Meeting Updated",
   reminder: "Meeting Reminder",
   cancelled: "Meeting Cancelled",
+  bumped: "Meeting Room Reassigned",
 };
 
 const SERIES_HEADINGS: Record<MeetingEmailKind, string> = {
@@ -220,6 +222,18 @@ const SERIES_HEADINGS: Record<MeetingEmailKind, string> = {
   updated: "Recurring Meeting Updated",
   reminder: "Recurring Meeting Reminder",
   cancelled: "Recurring Meeting Cancelled",
+  bumped: "Meeting Room Reassigned",
+};
+
+// Set on a "bumped" e-mail: a higher-priority booking took this meeting's room.
+export type MeetingBumpInfo = {
+  // e.g. "Interview booked by Priya HR"
+  claimedBy: string;
+  oldRoomName: string;
+  // The room the meeting was moved to; undefined when it had to be cancelled.
+  newRoomName?: string;
+  // Link to start a new booking, when the app URL is configured.
+  rebookUrl?: string;
 };
 
 // Extra details used for a recurring series. Without `series` the message is
@@ -228,6 +242,7 @@ export type MeetingEmailExtras = {
   roomName?: string;
   organizerName?: string;
   series?: MeetingEmailSeries;
+  bump?: MeetingBumpInfo;
 };
 
 type MeetingEmailFields = {
@@ -254,14 +269,28 @@ function renderSingle({
   startTime,
   endTime,
   kind = "scheduled",
+  bump,
 }: MeetingEmailFields) {
-  const heading = HEADINGS[kind];
+  // A bumped meeting that could not be moved is effectively cancelled.
+  const lostSlot = kind === "bumped" && !bump?.newRoomName;
+  const heading = lostSlot ? HEADINGS.cancelled : HEADINGS[kind];
   // A cancellation carries no invite: a new .ics would add a stray event
   // instead of removing the original one.
-  const hasInvite = kind !== "cancelled";
+  const hasInvite = kind !== "cancelled" && !lostSlot;
+
+  const bumpLines: string[] = bump
+    ? [
+        `Your meeting room was needed for a higher-priority meeting (${bump.claimedBy}).`,
+        bump.newRoomName
+          ? `Your meeting has been moved from ${bump.oldRoomName} to ${bump.newRoomName}. The date and time are unchanged.`
+          : `No other room is free at that time, so your meeting in ${bump.oldRoomName} has been cancelled. Please book another available slot${bump.rebookUrl ? `: ${bump.rebookUrl}` : "."}`,
+      ]
+    : [];
 
   const html = `
       <h2>${escapeHtml(heading)}</h2>
+${bumpLines.map((l) => `
+      <p>${escapeHtml(l)}</p>`).join("")}
 
       <p><strong>Title:</strong> ${escapeHtml(title)}</p>
 
@@ -283,6 +312,7 @@ ${
   const text = [
     heading,
     "",
+    ...(bumpLines.length > 0 ? [...bumpLines, ""] : []),
     `Title: ${title}`,
     `Date: ${meetingDate}`,
     `Start Time: ${startTime}`,
@@ -427,6 +457,40 @@ export function renderMeetingEmail(fields: MeetingEmailFields) {
     : renderSingle(fields);
 }
 
+// A short text message (no calendar invite) for events that are not about one
+// meeting's attendees, e.g. room requests. Every line is escaped once, here.
+export async function sendNoticeEmail(
+  to: string | string[],
+  subject: string,
+  lines: string[],
+  links: { label: string; url: string }[] = []
+) {
+  const linkHtml = links
+    .map(
+      (l) =>
+        `<p><a href="${escapeHtml(l.url)}">${escapeHtml(l.label)}</a></p>`
+    )
+    .join("\n");
+
+  const html = `${lines
+    .map((l) => `<p>${escapeHtml(l)}</p>`)
+    .join("\n")}${linkHtml}`;
+
+  const text = [
+    ...lines,
+    ...(links.length > 0 ? [""] : []),
+    ...links.map((l) => `${l.label}: ${l.url}`),
+  ].join("\n");
+
+  return getTransporter().sendMail({
+    from: getMailSender(),
+    to,
+    subject: sanitizeHeaderValue(subject),
+    html,
+    text,
+  });
+}
+
 export async function sendMeetingEmail(
   to: string | string[],
   title: string,
@@ -437,7 +501,7 @@ export async function sendMeetingEmail(
   extras: MeetingEmailExtras = {}
 ) {
   const calendarInvite =
-    kind === "cancelled"
+    kind === "cancelled" || (kind === "bumped" && !extras.bump?.newRoomName)
       ? null
       : extras.series && kind !== "reminder"
         ? await generateSeriesCalendarInvite(

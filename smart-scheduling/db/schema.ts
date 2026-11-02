@@ -402,6 +402,173 @@ export const reschedule_requests = pgTable(
   ]
 );
 
+// An employee asks the organizer of a booked meeting (the holder) for its room.
+// The request is NOT a booking: nothing is booked until the slot is actually
+// free. status:
+//   PENDING        waiting for the organizer
+//   AWAITING_SLOT  the organizer agreed, but the original booking still holds
+//                  the room; it is booked as soon as the room is free
+//   APPROVED       the requested meeting was booked (resulting_meeting_id)
+//   REJECTED       the organizer said no (rejection_reason)
+//   CANCELLED      the requester took it back
+//   EXPIRED        the requested slot started before it was completed
+//   FAILED         agreed and the room was free, but booking was refused
+//                  (e.g. room out of service)
+export const room_requests = pgTable(
+  "room_requests",
+  {
+    room_request_id: serial("room_request_id").primaryKey(),
+    // The exact meeting row in the way (a recurring series has one row per
+    // occurrence, so this is the single occurrence, not the series).
+    holder_meeting_id: integer("holder_meeting_id")
+      .notNull()
+      .references(() => meeting.meeting_id),
+    holder_organizer_employee_id: integer("holder_organizer_employee_id")
+      .notNull()
+      .references(() => employee.employee_id),
+    requester_employee_id: integer("requester_employee_id")
+      .notNull()
+      .references(() => employee.employee_id),
+    room_id: integer("room_id")
+      .notNull()
+      .references(() => room.room_id),
+    meeting_date: date("meeting_date").notNull(),
+    start_time: time("start_time").notNull(),
+    end_time: time("end_time").notNull(),
+    // Details of the meeting to book once approved.
+    title: varchar("title", { length: 200 }).notNull(),
+    participant_count: integer("participant_count").notNull(),
+    meeting_type_id: integer("meeting_type_id")
+      .notNull()
+      .references(() => meetingTypes.meetingTypeId),
+    participant_employee_ids: integer("participant_employee_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::integer[]`),
+    // The requester's own words, kept exactly as sent (trimmed).
+    message: text("message").notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+    rejection_reason: varchar("rejection_reason", { length: 500 }),
+    // Set when the organizer agreed (also for AWAITING_SLOT).
+    organizer_approved_at: timestamp("organizer_approved_at", {
+      withTimezone: true,
+    }),
+    // Final decision: who and when (approve/reject/cancel/expiry).
+    decided_by_employee_id: integer("decided_by_employee_id").references(
+      () => employee.employee_id
+    ),
+    responded_at: timestamp("responded_at", { withTimezone: true }),
+    // The meeting booked when the request was completed.
+    resulting_meeting_id: integer("resulting_meeting_id").references(
+      () => meeting.meeting_id
+    ),
+    // Sent by the browser with each submit, so a double click or a network
+    // retry returns the same request instead of creating another.
+    client_request_id: varchar("client_request_id", { length: 64 }),
+    created_at: timestamp("created_at").defaultNow(),
+    updated_at: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [
+    // A person has at most one open request per booked meeting.
+    uniqueIndex("room_requests_one_open_per_requester_idx")
+      .on(t.holder_meeting_id, t.requester_employee_id)
+      .where(sql`${t.status} IN ('PENDING', 'AWAITING_SLOT')`),
+    uniqueIndex("room_requests_client_request_id_uq")
+      .on(t.requester_employee_id, t.client_request_id)
+      .where(sql`${t.client_request_id} IS NOT NULL`),
+    index("room_requests_holder_idx").on(t.holder_meeting_id),
+    index("room_requests_holder_organizer_idx").on(t.holder_organizer_employee_id),
+    index("room_requests_requester_idx").on(t.requester_employee_id),
+    // Expiry / fulfilment scans: open requests by the date they are for.
+    index("room_requests_status_date_idx").on(t.status, t.meeting_date),
+    check(
+      "room_requests_status_valid",
+      sql`${t.status} IN ('PENDING', 'AWAITING_SLOT', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'FAILED')`
+    ),
+    check("room_requests_end_after_start", sql`${t.end_time} > ${t.start_time}`),
+    check("room_requests_participant_count_positive", sql`${t.participant_count} >= 1`),
+    check(
+      "room_requests_message_length",
+      sql`char_length(btrim(${t.message})) BETWEEN 1 AND 1000`
+    ),
+  ]
+);
+
+// One row per booked meeting that is in the way of a request. Every one of
+// them must agree before the room is booked, so each organizer decides on
+// their own meeting(s). (room_requests.holder_* is the earliest of them.)
+// status: PENDING | APPROVED | REJECTED
+export const room_request_holders = pgTable(
+  "room_request_holders",
+  {
+    room_request_holder_id: serial("room_request_holder_id").primaryKey(),
+    room_request_id: integer("room_request_id")
+      .notNull()
+      .references(() => room_requests.room_request_id, { onDelete: "cascade" }),
+    holder_meeting_id: integer("holder_meeting_id")
+      .notNull()
+      .references(() => meeting.meeting_id),
+    organizer_employee_id: integer("organizer_employee_id")
+      .notNull()
+      .references(() => employee.employee_id),
+    status: varchar("status", { length: 10 }).notNull().default("PENDING"),
+    decided_at: timestamp("decided_at", { withTimezone: true }),
+    created_at: timestamp("created_at").defaultNow(),
+  },
+  (t) => [
+    unique("room_request_holders_request_meeting_uq").on(
+      t.room_request_id,
+      t.holder_meeting_id
+    ),
+    index("room_request_holders_organizer_idx").on(t.organizer_employee_id),
+    index("room_request_holders_meeting_idx").on(t.holder_meeting_id),
+    check(
+      "room_request_holders_status_valid",
+      sql`${t.status} IN ('PENDING', 'APPROVED', 'REJECTED')`
+    ),
+  ]
+);
+
+// E-mail outbox for room requests. One row per (request, kind): the unique
+// constraint is what stops a retry or a double click from mailing twice. The
+// recipient and the text are worked out when the mail is sent, from the
+// database - never from anything the client supplied.
+export const room_request_emails = pgTable(
+  "room_request_emails",
+  {
+    room_request_email_id: serial("room_request_email_id").primaryKey(),
+    room_request_id: integer("room_request_id")
+      .notNull()
+      .references(() => room_requests.room_request_id, { onDelete: "cascade" }),
+    // SUBMITTED | AWAITING_RELEASE | APPROVAL_PENDING | APPROVED | REJECTED |
+    // CANCELLED | EXPIRED | FAILED
+    kind: varchar("kind", { length: 30 }).notNull(),
+    // Who it is for. A request can concern several organizers, so one kind is
+    // mailed once per recipient.
+    recipient_employee_id: integer("recipient_employee_id")
+      .notNull()
+      .references(() => employee.employee_id),
+    status: varchar("status", { length: 20 }).notNull().default("PENDING"),
+    attempts: integer("attempts").notNull().default(0),
+    // Short, safe reason for the last failure (never credentials).
+    last_error: varchar("last_error", { length: 200 }),
+    sent_at: timestamp("sent_at"),
+    created_at: timestamp("created_at").defaultNow(),
+  },
+  (t) => [
+    unique("room_request_emails_request_kind_recipient_uq").on(
+      t.room_request_id,
+      t.kind,
+      t.recipient_employee_id
+    ),
+    index("room_request_emails_status_idx").on(t.status),
+    check(
+      "room_request_emails_status_valid",
+      sql`${t.status} IN ('PENDING', 'SENT', 'FAILED')`
+    ),
+  ]
+);
+
 /* -------------------------------------------------------------------------- */
 /* 4. Relations                                                             */
 /* -------------------------------------------------------------------------- */
@@ -444,6 +611,27 @@ export const rescheduleRequestsRelations = relations(
     }),
   })
 );
+
+export const roomRequestsRelations = relations(room_requests, ({ one }) => ({
+  holderMeeting: one(meeting, {
+    fields: [room_requests.holder_meeting_id],
+    references: [meeting.meeting_id],
+    relationName: "roomRequestHolder",
+  }),
+  resultingMeeting: one(meeting, {
+    fields: [room_requests.resulting_meeting_id],
+    references: [meeting.meeting_id],
+    relationName: "roomRequestResult",
+  }),
+  requester: one(employee, {
+    fields: [room_requests.requester_employee_id],
+    references: [employee.employee_id],
+  }),
+  room: one(room, {
+    fields: [room_requests.room_id],
+    references: [room.room_id],
+  }),
+}));
 
 export const employeeRelations = relations(employee, ({ one, many }) => ({
   role: one(roles, {
@@ -513,6 +701,7 @@ export const meetingRelations = relations(meeting, ({ one, many }) => ({
   auditLogs: many(meeting_audit_logs),
   bumpRequests: many(reschedule_requests, { relationName: "bumpedMeeting" }),
   claimRequests: many(reschedule_requests, { relationName: "claimantMeeting" }),
+  roomRequests: many(room_requests, { relationName: "roomRequestHolder" }),
 }));
 
 export const meetingAttendeesRelations = relations(
@@ -592,3 +781,7 @@ export type MeetingType = typeof meetingTypes.$inferSelect;
 export type RoleMeetingType = typeof roleMeetingTypes.$inferSelect;
 export type RescheduleRequest = typeof reschedule_requests.$inferSelect;
 export type NewRescheduleRequest = typeof reschedule_requests.$inferInsert;
+export type RoomRequest = typeof room_requests.$inferSelect;
+export type NewRoomRequest = typeof room_requests.$inferInsert;
+export type RoomRequestEmail = typeof room_request_emails.$inferSelect;
+export type RoomRequestHolder = typeof room_request_holders.$inferSelect;

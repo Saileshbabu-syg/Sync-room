@@ -44,4 +44,7 @@ export const NOTIFICATION_TYPE = {
   BOOKED: "MEETING_BOOKED",
   UPDATED: "MEETING_UPDATED",
   CANCELLED: "MEETING_CANCELLED",
+  // Seeded by db/seed-priority.ts: sent when a higher-priority booking takes
+  // over the slot of a lower-priority meeting.
+  BUMPED: "BUMP_REQUEST",
 } as const;

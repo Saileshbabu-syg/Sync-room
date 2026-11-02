@@ -26,7 +26,6 @@ const DATE = () => dateFromToday(5);
 const API: [string, string, unknown?][] = [
   ["GET", "/api/rooms"],
   ["POST", "/api/rooms", { roomName: "x", roomCapacity: 3, availabilityStatusId: 1 }],
-  ["GET", "/api/rooms/1"],
   ["PATCH", "/api/rooms/1", { roomName: "x", roomCapacity: 3, availabilityStatusId: 1 }],
   ["DELETE", "/api/rooms/1"],
   ["PATCH", "/api/rooms/1/edit", { room_name: "x", room_capacity: 3, roomLocation: "l", availabilityStatusId: 1 }],
@@ -42,7 +41,7 @@ const API: [string, string, unknown?][] = [
 ];
 
 const PAGES = [
-  "/home", "/rooms", "/rooms/1", "/rooms/1/edit", "/rooms/1/book", "/booking",
+  "/home", "/rooms", "/rooms/1/edit", "/rooms/1/book", "/booking",
   "/booking/details?roomId=1", "/booking/available-rooms?date=2030-01-01&start=10:00&end=11:00&participants=2",
   "/bookings", "/bookings/1", "/bookings/1/edit",
 ];
@@ -254,8 +253,6 @@ describe("transport hardening (F-12, F-22)", () => {
       ["PATCH", "/api/meetings/cancel/99999999999"],
       ["PATCH", "/api/meetings/edit/abc"],
       ["PATCH", "/api/meetings/edit/99999999999"],
-      ["GET", "/api/rooms/abc"],
-      ["GET", "/api/rooms/99999999999"],
       ["GET", "/api/rooms/1/schedule?date=garbage"],
     ] as const) {
       const res = await app.call(p[0], p[1], { as: f.users.admin, body: p[0] === "PATCH" && p[1].includes("/edit/") ? { title: "x" } : undefined });
@@ -263,7 +260,6 @@ describe("transport hardening (F-12, F-22)", () => {
       assert.ok(!/stack|\.ts:|pg|select /i.test(res.text), "no internals leaked");
     }
 
-    assert.equal((await app.call("GET", "/api/rooms/99999", { as: bob })).status, 404);
     assert.equal((await app.call("PATCH", "/api/meetings/cancel/99999", { as: bob })).status, 404);
 
     const nul = await app.call("POST", "/api/meetings/booking", {
@@ -275,7 +271,7 @@ describe("transport hardening (F-12, F-22)", () => {
     });
     assert.equal(nul.status, 400);
 
-    for (const page of ["/bookings/abc", "/bookings/99999999999", "/rooms/abc", "/bookings/abc/edit"]) {
+    for (const page of ["/bookings/abc", "/bookings/99999999999","/bookings/abc/edit"]) {
       const res = await app.call("GET", page, { as: bob });
       assert.ok(isRedirect(res.status), `${page} -> ${res.status}`);
     }

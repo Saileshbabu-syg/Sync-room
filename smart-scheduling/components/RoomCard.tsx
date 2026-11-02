@@ -30,11 +30,19 @@ type Props = {
     end: string;
     participants: string;
   };
+  // The room is booked by a lower-priority meeting; a higher-priority meeting
+  // type can take it over.
+  priorityClaim?: boolean;
+  // The room is booked for this time. It can still be chosen: at confirmation
+  // the user sees the existing booking and can ask its organizer for the room.
+  occupied?: boolean;
 };
 
 export default function RoomCard({
   room,
   bookingData,
+  priorityClaim = false,
+  occupied = false,
 }: Props) {
   const router = useRouter();
 
@@ -84,6 +92,30 @@ console.log(room);
         <h2 className="text-2xl font-bold">
           {room.room_name}
         </h2>
+
+        {occupied && (
+          <p
+            className="rounded-lg bg-red-50 p-3 text-sm text-red-800"
+            data-testid="occupied-room-note"
+          >
+            <span className="font-semibold">Occupied.</span> This room is
+            already booked for this time. You can still select it; when you
+            confirm, you will see the existing booking and can request the room
+            from its organizer.
+          </p>
+        )}
+
+        {priorityClaim && (
+          <p
+            className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800"
+            data-testid="priority-claim-note"
+          >
+            Booked by a lower-priority meeting. Choose a higher-priority
+            meeting type (for example Interview) to take this room; the
+            current organizer is notified and moved to another room or asked
+            to rebook.
+          </p>
+        )}
 
         <div className="flex items-center gap-3 text-gray-600">
 

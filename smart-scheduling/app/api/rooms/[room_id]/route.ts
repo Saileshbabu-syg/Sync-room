@@ -17,47 +17,6 @@ import { roomBodySchema } from "@/lib/validations/room.validator";
 
 type Context = { params: Promise<{ room_id: string }> };
 
-export async function GET(request: Request, { params }: Context) {
-  try {
-    const organizer = await getCurrentOrganizer();
-
-    if (!organizer) {
-      return NextResponse.json(
-        { message: "Unauthorized" },
-        { status: 401 }
-      );
-    }
-
-    const roomId = parseIdParam((await params).room_id);
-
-    if (roomId === null) {
-      return jsonError(400, "Invalid room id.");
-    }
-
-    const roomData = await db
-      .select()
-      .from(room)
-      .where(eq(room.room_id, roomId));
-
-    if (roomData.length === 0) {
-      return jsonError(404, "Room not found.");
-    }
-
-    return NextResponse.json(roomData[0]);
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      {
-        message: "Failed to fetch room",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
-}
-
 export async function PATCH(request: Request, { params }: Context) {
   try {
     const organizer = await getCurrentOrganizer();

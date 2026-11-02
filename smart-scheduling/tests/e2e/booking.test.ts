@@ -79,15 +79,17 @@ describe("/booking/available-rooms (F-02: used to 500 for every user)", () => {
     assert.ok(res.text.includes("No rooms available"));
   });
 
-  it("does not offer a room that is already booked for the slot, but does offer back-to-back", async () => {
+  it("lists a room that is booked for the slot as occupied (still selectable), and back-to-back as free", async () => {
     assert.equal((await book(f.users.bob, { start_time: "09:00", end_time: "10:00", meeting_date: dateFromToday(6) })).status, 201);
 
     const overlapping = await app.call("GET", url({ start: "09:30", end: "10:30" }), { as: f.users.carol });
-    assert.ok(!overlapping.text.includes("Alpha"));
+    assert.ok(overlapping.text.includes("Alpha"), "the booked room is shown, not hidden");
+    assert.ok(overlapping.text.includes("occupied-room-note"), "and marked as occupied");
     assert.ok(overlapping.text.includes("Beta"));
 
     const adjacent = await app.call("GET", url({ start: "10:00", end: "11:00" }), { as: f.users.carol });
     assert.ok(adjacent.text.includes("Alpha"), "starts exactly when the other meeting ends");
+    assert.ok(!adjacent.text.includes("occupied-room-note"), "nothing is in the way");
   });
 
   it("redirects anonymous users to /login with a real 3xx (no data, no fake 200)", async () => {

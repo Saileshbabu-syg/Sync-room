@@ -268,6 +268,12 @@ export default function RoomBookingForm({
         return;
       }
 
+      if (result.occupied) {
+        toast.info(
+          "This room is already booked for that time. You can continue and request it from the organizer."
+        );
+      }
+
       const query =
         new URLSearchParams({
           roomId:

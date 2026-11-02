@@ -19,6 +19,7 @@ import {
   dispatchNotification,
   queueMeetingNotification,
 } from "@/lib/services/notification.service";
+import { fulfilAwaitingRequests } from "@/lib/services/room-request.service";
 
 class CancelError extends Error {
   status: number;
@@ -126,6 +127,15 @@ export async function PATCH(
     });
 
     dispatchNotification(notificationId);
+
+    // The room is free now: complete any approved room request waiting for it
+    // (the cron job would do it within a minute anyway).
+    void fulfilAwaitingRequests().catch((error) =>
+      console.error(
+        "Completing waiting room requests failed:",
+        error instanceof Error ? error.message : error
+      )
+    );
 
     return NextResponse.json(
       {

@@ -38,6 +38,9 @@ type Meeting = {
   };
 
   attendees: Attendee[];
+
+  // Organizer or Admin; participants only view.
+  canManage: boolean;
 };
 
 type Props = {
@@ -291,15 +294,7 @@ export default function BookingDetailsCard({
 
       <div className="flex gap-4">
 
-        <Link href="/bookings">
-
-          <Button variant="outline">
-            Back
-          </Button>
-
-        </Link>
-
-        {meeting.meetingStatus === "Scheduled" && (
+        {meeting.canManage && meeting.meetingStatus === "Scheduled" && (
           <>
             <Link
               href={`/bookings/${meeting.meetingId}/edit`}

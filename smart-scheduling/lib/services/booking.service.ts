@@ -3,6 +3,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   employee,
+  type Meeting,
   meeting,
   meeting_attendees,
   meetingTypes,
@@ -15,6 +16,7 @@ import {
   MEETING_STATUS,
 } from "@/lib/constants";
 import { dbErrorCode, PG_EXCLUSION_VIOLATION } from "@/lib/api";
+import type { Tx } from "@/lib/db-types";
 import { isSlotStartInPast, normalizeTime, timeToSeconds } from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
@@ -24,6 +26,14 @@ import {
   dispatchNotification,
   queueMeetingNotification,
 } from "./notification.service";
+import {
+  cancelYielded,
+  canBumpAll,
+  findSlotHolders,
+  recordBumps,
+  releaseSlots,
+  type ReleasedSlot,
+} from "./priority.service";
 import { createRemindersForMeetings } from "./reminder.service";
 
 // The single place meetings are created — one-off and recurring bookings both
@@ -38,6 +48,13 @@ import { createRemindersForMeetings } from "./reminder.service";
 //  * The room row is read with FOR SHARE inside that transaction, so the
 //    availability check sees the current status and a concurrent
 //    "set room to maintenance" update waits for the booking (and vice versa).
+//  * Priority: a slot held only by meetings of strictly lower priority (see
+//    priority.service) is taken over instead of rejected - those meetings are
+//    moved to another room or cancelled, and their organizers are e-mailed.
+
+// The message for "this single slot is taken"; the booking route recognises it
+// to offer a room request instead of a bare error.
+export const SLOT_TAKEN_MESSAGE = "Room is already booked for the selected time slot";
 
 export class BookingError extends Error {
   status: number;
@@ -77,6 +94,15 @@ export type BookingInput = {
   meetingTypeId: number;
   participantEmployeeIds?: number[];
   recurrence?: { frequencyId: number; occurrenceCount: number };
+  // Meetings whose organizer has agreed to give the slot up (an approved room
+  // request): they are cancelled whatever their priority.
+  yieldMeetingIds?: number[];
+  // Never take a slot from another meeting, whatever the priority (used when a
+  // request is completed for an approved room request).
+  noBump?: boolean;
+  // Runs inside the booking transaction, after the meetings are inserted; if
+  // it throws, the whole booking rolls back.
+  inTransaction?: (tx: Tx, meetings: Meeting[]) => Promise<void>;
   // Test hooks.
   now?: Date;
   notify?: boolean;
@@ -158,7 +184,10 @@ export async function createBooking(input: BookingInput) {
       }
 
       const [meetingTypeRow] = await tx
-        .select({ id: meetingTypes.meetingTypeId })
+        .select({
+          id: meetingTypes.meetingTypeId,
+          priorityRank: meetingTypes.priorityRank,
+        })
         .from(meetingTypes)
         .where(eq(meetingTypes.meetingTypeId, input.meetingTypeId));
 
@@ -212,15 +241,44 @@ export async function createBooking(input: BookingInput) {
         endTime
       );
 
+      let released: ReleasedSlot[] = [];
+      let yieldedNotificationIds: number[] = [];
+
       if (conflictingDates.length > 0) {
-        throw new BookingError(
-          isSeries
-            ? "Room is already booked for one or more occurrences"
-            : "Room is already booked for the selected time slot",
-          409,
-          isSeries ? conflictingDates : undefined,
-          isSeries ? input.occurrenceDates : undefined
+        const holders = await findSlotHolders(
+          tx,
+          input.roomId,
+          input.occurrenceDates,
+          startTime,
+          endTime
         );
+
+        const yielded = new Set(input.yieldMeetingIds ?? []);
+        const yieldedHolders = holders.filter((h) => yielded.has(h.meetingId));
+        const others = holders.filter((h) => !yielded.has(h.meetingId));
+
+        // Only a booking that outranks EVERY other meeting in the way may
+        // proceed; meetings whose organizer agreed to leave need no rank.
+        if (
+          (input.noBump && others.length > 0) ||
+          !canBumpAll(others, meetingTypeRow.priorityRank, input.now)
+        ) {
+          throw new BookingError(
+            isSeries
+              ? "Room is already booked for one or more occurrences"
+              : SLOT_TAKEN_MESSAGE,
+            409,
+            isSeries ? conflictingDates : undefined,
+            isSeries ? input.occurrenceDates : undefined
+          );
+        }
+
+        yieldedNotificationIds = await cancelYielded(
+          tx,
+          yieldedHolders,
+          input.organizerEmployeeId
+        );
+        released = await releaseSlots(tx, others);
       }
 
       let recurringMeetingId: number | null = null;
@@ -263,6 +321,16 @@ export async function createBooking(input: BookingInput) {
         a.meeting_date.localeCompare(b.meeting_date)
       );
 
+      const bumpNotificationIds = await recordBumps(
+        tx,
+        released,
+        insertedMeetings.map((m) => ({
+          meetingId: m.meeting_id,
+          meetingDate: m.meeting_date,
+        })),
+        input.organizerEmployeeId
+      );
+
       await tx.insert(meeting_attendees).values(
         insertedMeetings.flatMap((m) =>
           attendeeIds.map((employeeId) => ({
@@ -271,6 +339,10 @@ export async function createBooking(input: BookingInput) {
           }))
         )
       );
+
+      if (input.inTransaction) {
+        await input.inTransaction(tx, insertedMeetings);
+      }
 
       await createRemindersForMeetings(
         tx,
@@ -297,7 +369,16 @@ export async function createBooking(input: BookingInput) {
         "BOOKED"
       );
 
-      return { meetings: insertedMeetings, recurringMeetingId, notificationId };
+      return {
+        meetings: insertedMeetings,
+        recurringMeetingId,
+        notificationId,
+        // Side e-mails to organizers who lost their slot (bumped or yielded).
+        otherNotificationIds: [
+          ...bumpNotificationIds,
+          ...yieldedNotificationIds,
+        ],
+      };
     });
   } catch (error) {
     if (error instanceof BookingError) throw error;
@@ -320,7 +401,7 @@ export async function createBooking(input: BookingInput) {
       throw new BookingError(
         isSeries
           ? "Room is already booked for one or more occurrences"
-          : "Room is already booked for the selected time slot",
+          : SLOT_TAKEN_MESSAGE,
         409,
         conflicts && conflicts.length > 0 ? conflicts : undefined,
         isSeries ? input.occurrenceDates : undefined
@@ -340,6 +421,8 @@ export async function createBooking(input: BookingInput) {
 
   if (input.notify !== false) {
     dispatchNotification(result.notificationId);
+
+    for (const id of result.otherNotificationIds) dispatchNotification(id);
   }
 
   return result;

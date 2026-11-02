@@ -24,10 +24,12 @@ type Room = {
 
 type Props = {
   room: Room;
+  isAdmin?: boolean;
 };
 
 export default function RoomListCard({
   room,
+  isAdmin = false,
 }: Props) {
   return (
     <div className="overflow-hidden rounded-3xl bg-white shadow-md transition hover:shadow-xl">
@@ -106,15 +108,32 @@ export default function RoomListCard({
 
         </div>
 
-        <Link href={`/rooms/${room.roomId}`}>
+        <div className="flex gap-3">
 
-          <Button className="w-full">
+          {isAdmin && (
+            <Link href={`/rooms/${room.roomId}/edit`}>
+              <Button variant="secondary">
+                Edit Room
+              </Button>
+            </Link>
+          )}
 
-            View Room
+          {room.status === "AVAILABLE" ? (
+            <Link
+              href={`/rooms/${room.roomId}/book`}
+              className="flex-1"
+            >
+              <Button className="w-full">
+                Book Room
+              </Button>
+            </Link>
+          ) : (
+            <Button className="flex-1" disabled>
+              Book Room
+            </Button>
+          )}
 
-          </Button>
-
-        </Link>
+        </div>
 
       </div>
 

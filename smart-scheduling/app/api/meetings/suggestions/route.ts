@@ -74,6 +74,17 @@ export async function POST(
           participant_count
         );
 
+      // Taken for that time: not an error. The user may continue; at
+      // confirmation they see the existing booking and can request the room.
+      // The booking itself is still refused by the server if they try to
+      // confirm it.
+      if (!available.success && "conflict" in available && available.conflict) {
+        return NextResponse.json(
+          { success: true, occupied: true, message: available.message },
+          { status: 200 }
+        );
+      }
+
       if (!available.success) {
 
         return NextResponse.json(

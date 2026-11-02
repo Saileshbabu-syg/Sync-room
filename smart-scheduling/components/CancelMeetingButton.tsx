@@ -83,7 +83,7 @@ export default function CancelMeetingButton({
 
       </AlertDialogTrigger>
 
-      <AlertDialogContent>
+      <AlertDialogContent compact>
 
         <AlertDialogHeader>
 

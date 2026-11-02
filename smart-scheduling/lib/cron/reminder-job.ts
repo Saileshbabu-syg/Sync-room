@@ -3,9 +3,11 @@ import cron from "node-cron";
 import { updateCompletedMeetings } from "@/lib/services/meeting-status.service";
 import { processPendingNotifications } from "@/lib/services/notification.service";
 import { processDueReminders } from "@/lib/services/reminder.service";
+import { processRoomRequests } from "@/lib/services/room-request.service";
 
 // One tick: mark finished meetings, send due reminders, retry undelivered
-// booking e-mails. Exported so it can be run (and tested) without the timer.
+// booking e-mails, then room requests: expire the ones that ran out of time,
+// book approved ones whose room became free, retry their e-mail. Exported so it can be run (and tested) without the timer.
 //
 // Every step claims its rows with FOR UPDATE SKIP LOCKED, so several server
 // instances (or Next.js workers) each running this job do not send anything
@@ -14,8 +16,9 @@ export async function runReminderTick() {
   const completed = await updateCompletedMeetings();
   const reminders = await processDueReminders();
   const notifications = await processPendingNotifications();
+  const roomRequests = await processRoomRequests();
 
-  return { completed, reminders, notifications };
+  return { completed, reminders, notifications, roomRequests };
 }
 
 type Tick = typeof runReminderTick;

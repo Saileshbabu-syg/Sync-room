@@ -8,6 +8,9 @@ import {
   CalendarPlus,
   Building2,
   ClipboardList,
+  Inbox,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -33,49 +36,92 @@ const menus = [
     href: "/bookings",
     icon: ClipboardList,
   },
+  {
+    title: "Room Requests",
+    href: "/requests",
+    icon: Inbox,
+  },
 ];
 
-export default function BookingSidebar() {
+type Props = {
+  // Icons only, to give the page more room.
+  collapsed?: boolean;
+  onToggle: () => void;
+};
+
+export default function BookingSidebar({ collapsed = false, onToggle }: Props) {
   const pathname = usePathname();
 
   return (
-    <aside className="sticky top-0 flex h-full w-64 flex-col border-r bg-white">
+    <aside
+      className={`flex h-full shrink-0 flex-col border-r bg-white transition-[width] duration-200 ${
+        collapsed ? "w-16" : "w-64"
+      }`}
+      aria-label="Navigation"
+    >
 
-      {/* Sidebar Header */}
+      {/* Collapse / expand, at the top of the sidebar. */}
 
-      <div className="flex items-center justify-between border-b p-5">
-
-        <h2 className="text-lg font-bold text-blue-700">
-          Navigation
-        </h2>
-
+      <div
+        className={`flex border-b p-3 ${
+          collapsed ? "justify-center" : "justify-end"
+        }`}
+      >
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggle}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          data-testid="sidebar-toggle"
+        >
+          {collapsed ? (
+            <PanelLeftOpen className="h-5 w-5" />
+          ) : (
+            <PanelLeftClose className="h-5 w-5" />
+          )}
+        </Button>
       </div>
 
       {/* Menu */}
 
-      <nav className="flex-1 space-y-2 p-4">
+      <nav className="flex-1 space-y-2 overflow-y-auto p-3">
+
+        {!collapsed && (
+          <h2 className="px-2 pb-2 pt-1 text-lg font-bold text-blue-700">
+            Navigation
+          </h2>
+        )}
 
         {menus.map((menu) => {
 
           const Icon = menu.icon;
 
-          const active = pathname === menu.href;
+          // Nested pages (/bookings/5) keep their section highlighted.
+          const active =
+            pathname === menu.href || pathname.startsWith(`${menu.href}/`);
 
           return (
 
             <Link
               key={menu.title}
               href={menu.href}
+              title={collapsed ? menu.title : undefined}
+              aria-label={menu.title}
+              aria-current={active ? "page" : undefined}
             >
 
               <Button
                 variant={active ? "default" : "ghost"}
-                className="mb-2 h-12 w-full justify-start"
+                className={`mb-2 h-12 w-full ${
+                  collapsed ? "justify-center px-0" : "justify-start"
+                }`}
+                tabIndex={-1}
               >
 
-                <Icon className="mr-3 h-5 w-5" />
+                <Icon className={collapsed ? "h-5 w-5" : "mr-3 h-5 w-5"} />
 
-                {menu.title}
+                {!collapsed && menu.title}
 
               </Button>
 
@@ -88,13 +134,15 @@ export default function BookingSidebar() {
 
       {/* Footer */}
 
-      <div className="border-t p-4">
+      {!collapsed && (
+        <div className="border-t p-4">
 
-        <p className="text-center text-xs text-gray-500">
-          Smart Scheduling
-        </p>
+          <p className="text-center text-xs text-gray-500">
+            Smart Scheduling
+          </p>
 
-      </div>
+        </div>
+      )}
 
     </aside>
   );

@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { nowInAppTimezone } from "@/lib/time";
 
 import { meeting } from "@/db/schema";
+import { involvesEmployee } from "@/lib/services/my-bookings.service";
 import { room } from "@/db/schema";
 import { meetingStatuses } from "@/db/schema";
 import { MEETING_STATUS } from "@/lib/constants";
@@ -69,10 +70,7 @@ export async function getUpcomingMeeting(
 
       and(
 
-        eq(
-          meeting.organizerEmployeeId,
-          employeeId
-        ),
+        involvesEmployee(employeeId),
 
         eq(
           meeting.meetingStatusId,
@@ -170,10 +168,7 @@ export async function getTodayMeetings(
 
       and(
 
-        eq(
-          meeting.organizerEmployeeId,
-          employeeId
-        ),
+        involvesEmployee(employeeId),
 
         eq(
           meeting.meeting_date,

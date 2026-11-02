@@ -23,6 +23,7 @@ type Meeting = {
   roomName: string | null;
   meetingType: string | null;
   meetingStatus: string | null;
+  canManage: boolean;
 };
 
 type Props = {
@@ -118,7 +119,7 @@ export default function BookingCard({
 
   {/* Edit & Cancel Only for Scheduled */}
 
-  {meeting.meetingStatus === "Scheduled" && (
+  {meeting.canManage && meeting.meetingStatus === "Scheduled" && (
     <>
       <Link
         href={`/bookings/${meeting.meetingId}/edit`}

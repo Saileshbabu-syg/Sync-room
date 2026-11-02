@@ -1,12 +1,24 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { notification_type_master, notifications } from "@/db/schema";
+import {
+  employee,
+  meeting,
+  meetingTypes,
+  notification_type_master,
+  notifications,
+  reschedule_requests,
+  room,
+} from "@/db/schema";
 import { MAX_DELIVERY_ATTEMPTS, NOTIFICATION_TYPE } from "@/lib/constants";
 import type { DbExecutor } from "@/lib/db-types";
 
 import { getMeetingAttendees, getMeetingDetails } from "./reminder.service";
-import { sendMeetingEmail, type MeetingEmailKind } from "./email.service";
+import {
+  sendMeetingEmail,
+  type MeetingBumpInfo,
+  type MeetingEmailKind,
+} from "./email.service";
 import {
   loadSeriesEmailContext,
   type SeriesEmailContext,
@@ -23,6 +35,51 @@ import {
 //      then are parked as FAILED.
 
 type NotificationKind = keyof typeof NOTIFICATION_TYPE;
+
+// Who took the slot of a bumped meeting, and where the meeting ended up. The
+// claiming meeting sits in the room the bumped one used to have.
+async function loadBumpInfo(
+  executor: DbExecutor,
+  bumpedMeetingId: number,
+  currentRoomId: number
+): Promise<MeetingBumpInfo | undefined> {
+  const [request] = await executor
+    .select({
+      claimantRoomId: meeting.room_id,
+      claimantType: meetingTypes.meetingTypeName,
+      claimantOrganizer: employee.employee_name,
+    })
+    .from(reschedule_requests)
+    .innerJoin(
+      meeting,
+      eq(meeting.meeting_id, reschedule_requests.claimant_meeting_id)
+    )
+    .innerJoin(meetingTypes, eq(meetingTypes.meetingTypeId, meeting.meetingTypeId))
+    .innerJoin(employee, eq(employee.employee_id, meeting.organizerEmployeeId))
+    .where(eq(reschedule_requests.bumped_meeting_id, bumpedMeetingId))
+    .orderBy(desc(reschedule_requests.reschedule_request_id))
+    .limit(1);
+
+  if (!request) return undefined;
+
+  const roomName = async (roomId: number) =>
+    (
+      await executor
+        .select({ name: room.room_name })
+        .from(room)
+        .where(eq(room.room_id, roomId))
+    )[0]?.name ?? "the room";
+
+  const relocated = currentRoomId !== request.claimantRoomId;
+  const appUrl = process.env.NEXTAUTH_URL?.replace(/\/+$/, "");
+
+  return {
+    claimedBy: `${request.claimantType} booked by ${request.claimantOrganizer}`,
+    oldRoomName: await roomName(request.claimantRoomId),
+    newRoomName: relocated ? await roomName(currentRoomId) : undefined,
+    rebookUrl: appUrl ? `${appUrl}/booking` : undefined,
+  };
+}
 
 async function ensureNotificationTypeId(executor: DbExecutor, name: string) {
   await executor
@@ -113,7 +170,14 @@ export async function deliverNotification(
         ? "updated"
         : type?.name === NOTIFICATION_TYPE.CANCELLED
           ? "cancelled"
-          : "scheduled";
+          : type?.name === NOTIFICATION_TYPE.BUMPED
+            ? "bumped"
+            : "scheduled";
+
+    const bump =
+      kind === "bumped"
+        ? await loadBumpInfo(tx, row.meeting_id, details.room_id)
+        : undefined;
 
     // A booking confirmation for a recurring series lists every saved
     // occurrence, not just the meeting this row points at (the first one). An
@@ -146,7 +210,7 @@ export async function deliverNotification(
           String(details.start_time),
           String(details.end_time),
           kind,
-          series ?? {}
+          series ?? { bump }
         );
       }
 

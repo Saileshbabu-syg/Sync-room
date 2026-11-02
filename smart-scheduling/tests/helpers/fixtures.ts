@@ -32,7 +32,7 @@ export async function ensureMigrated() {
 export async function resetData() {
   await db.execute(sql`
     TRUNCATE
-      meeting_audit_logs, reminder_logs, notifications, reschedule_requests,
+      meeting_audit_logs, reminder_logs, notifications, reschedule_requests, room_requests,
       meeting_attendees, meeting, recurring_meetings,
       "Session", "Account", "Organizer", "Employee",
       role_meeting_types, meeting_types, rooms,

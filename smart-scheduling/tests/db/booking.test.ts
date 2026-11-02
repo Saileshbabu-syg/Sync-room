@@ -24,6 +24,7 @@ import {
 } from "@/lib/services/room-suggestion.service";
 import { getAllowedMeetingTypes } from "@/lib/services/meeting-type-access.service";
 import { MEETING_STATUS } from "@/lib/constants";
+import { listMyBookings } from "@/lib/services/my-bookings.service";
 
 import {
   dateFromToday,
@@ -662,5 +663,38 @@ describe("other booking rules", () => {
       attendees.map((a) => a.employee_id).sort(),
       [f.users.bob.employeeId, f.users.carol.employeeId].sort()
     );
+  });
+});
+
+describe("booking visibility", () => {
+  const visibleTo = async (employeeId: number) =>
+    (await listMyBookings(employeeId)).map((m) => m.meetingId);
+
+  it("shows a booking to its organizer and participants only, for every occurrence and status", async () => {
+    const series = await createBooking(
+      input({
+        occurrenceDates: [dateFromToday(7), dateFromToday(14)],
+        participantEmployeeIds: [f.users.carol.employeeId],
+      })
+    );
+    const ids = series.meetings.map((m) => m.meeting_id);
+
+    await db
+      .update(meeting)
+      .set({ meetingStatusId: MEETING_STATUS.CANCELLED })
+      .where(eq(meeting.meeting_id, ids[1]));
+
+    assert.deepEqual((await visibleTo(f.users.bob.employeeId)).sort(), [...ids].sort());
+    assert.deepEqual((await visibleTo(f.users.carol.employeeId)).sort(), [...ids].sort());
+
+    const others = Object.values(f.users).filter(
+      (u) =>
+        u.employeeId !== f.users.bob.employeeId &&
+        u.employeeId !== f.users.carol.employeeId
+    );
+    assert.ok(others.length > 0);
+    for (const other of others) {
+      assert.deepEqual(await visibleTo(other.employeeId), []);
+    }
   });
 });

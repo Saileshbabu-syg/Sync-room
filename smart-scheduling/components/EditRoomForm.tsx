@@ -145,9 +145,7 @@ export default function EditRoomForm({
           "Room updated successfully."
         );
 
-        router.push(
-          `/rooms/${room.room_id}`
-        );
+        router.push("/rooms");
 
         router.refresh();
 
@@ -297,9 +295,7 @@ export default function EditRoomForm({
             type="button"
             variant="outline"
             onClick={() =>
-              router.push(
-                `/rooms/${room.room_id}`
-              )
+              router.push("/rooms")
             }
           >
 

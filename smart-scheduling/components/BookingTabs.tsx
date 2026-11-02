@@ -26,6 +26,7 @@ type Meeting = {
   roomName: string | null;
   meetingType: string | null;
   meetingStatus: string | null;
+  canManage: boolean;
 };
 
 type Props = {

@@ -170,17 +170,22 @@ useEffect(() => {
 
       <AlertDialog
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={(next) => {
+          setOpen(next);
+
+          // X, Escape and OK all dismiss it the same way.
+          if (!next) window.history.replaceState({}, "", "/login");
+        }}
       >
-        <AlertDialogContent className="sm:max-w-md">
+        <AlertDialogContent compact>
 
           <AlertDialogHeader>
 
-            <AlertDialogTitle className="text-center text-red-600 text-2xl">
+            <AlertDialogTitle className="text-red-600">
               Access Denied
             </AlertDialogTitle>
 
-            <AlertDialogDescription className="pt-3 text-center text-base">
+            <AlertDialogDescription>
               You do not belong to this organization.
               <br />
               Please contact your administrator if you
@@ -191,20 +196,7 @@ useEffect(() => {
 
           <AlertDialogFooter>
 
-            <AlertDialogAction
-              className="w-full"
-              onClick={() => {
-                setOpen(false);
-
-                window.history.replaceState(
-                  {},
-                  "",
-                  "/login"
-                );
-              }}
-            >
-              OK
-            </AlertDialogAction>
+            <AlertDialogAction>OK</AlertDialogAction>
 
           </AlertDialogFooter>
 
