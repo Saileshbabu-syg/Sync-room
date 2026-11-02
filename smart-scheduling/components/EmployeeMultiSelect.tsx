@@ -123,6 +123,9 @@ export default function EmployeeMultiSelect({
               ? `${selected.length} attendee${selected.length === 1 ? "" : "s"} selected - search to add more`
               : "Select attendees (search by name, role or ID)"
           }
+          role="combobox"
+          aria-expanded={open}
+          aria-label="Attendees"
           className="pr-9"
         />
         <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-gray-500" />
@@ -139,6 +142,7 @@ export default function EmployeeMultiSelect({
               <button
                 type="button"
                 aria-label={`Remove ${e.name}`}
+                className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => toggle(e.employeeId)}
               >
                 <XIcon className="size-3" />

@@ -35,7 +35,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import TimeSelect from "@/components/TimeSelect";
-import { focusNextOnEnter } from "@/lib/focusNextOnEnter";
+import { formKeyNavigation } from "@/lib/focusNextOnEnter";
 import { toast } from "sonner";
 import { isSlotStartInPast, nowInAppTimezone } from "@/lib/time";
 
@@ -121,7 +121,6 @@ type Props = {
   meetingDate: string;
   startTime: string;
   endTime: string;
-  participantCount: string;
 };
 
 export default function MeetingDetailsForm({
@@ -131,7 +130,6 @@ export default function MeetingDetailsForm({
   meetingDate: initialDate,
   startTime: initialStart,
   endTime: initialEnd,
-  participantCount: initialCount,
 }: Props) {
 
     const router = useRouter();
@@ -139,12 +137,12 @@ export default function MeetingDetailsForm({
   const [meetingDate, setMeetingDate] = useState(initialDate);
   const [startTime, setStartTime] = useState(initialStart);
   const [endTime, setEndTime] = useState(initialEnd);
-  const [participantCount, setParticipantCount] = useState(initialCount);
 
   // The room's bookings on the chosen date, shown so the user can see what is
   // free before confirming.
   const [bookedSlots, setBookedSlots] = useState<BookedSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsOpen, setSlotsOpen] = useState(false);
 
   // Asked before taking a slot from lower-priority meetings.
   const [confirmTakeover, setConfirmTakeover] = useState(false);
@@ -262,7 +260,9 @@ export default function MeetingDetailsForm({
         ? "The start time has already passed. Choose a later time."
         : null;
 
-  const participantNumber = Number(participantCount);
+  // The headcount is the attendees plus the organizer, who is added
+  // automatically.
+  const participantNumber = attendeeIds.length + 1;
 
   const selectedType = meetingTypes.find(
     (type) => String(type.meetingTypeId) === meetingTypeId
@@ -705,13 +705,10 @@ const handleSubmit = async (takeoverConfirmed = false) => {
     return;
   }
 
-  if (!Number.isInteger(participantNumber) || participantNumber < 1) {
-    toast.warning("Participant count must be at least 1.");
-    return;
-  }
-
   if (participantNumber > roomCapacity) {
-    toast.warning(`Room capacity is only ${roomCapacity}.`);
+    toast.warning(
+      `Room capacity is ${roomCapacity} including you, so add at most ${roomCapacity - 1} attendee(s).`
+    );
     return;
   }
 
@@ -864,7 +861,7 @@ finishBooking();
   return (
     <div
       className="rounded-xl border bg-white p-8 shadow"
-      onKeyDown={focusNextOnEnter}
+      onKeyDown={formKeyNavigation}
     >
 
       <h2 className="mb-8 text-2xl font-bold">
@@ -929,22 +926,30 @@ finishBooking();
 
         </div>
 
-        {/* Participant */}
+        {/* Attendees */}
 
         <div>
 
           <Label>
-            Participant Count (room capacity {roomCapacity})
+            Attendees (room capacity {roomCapacity})
           </Label>
 
-          <Input
-            type="number"
-            min={1}
-            max={roomCapacity}
-            step={1}
-            value={participantCount}
-            onChange={(e) => setParticipantCount(e.target.value)}
+          <EmployeeMultiSelect
+            value={attendeeIds}
+            onChange={setAttendeeIds}
+            excludeIds={[organizerEmployeeId]}
           />
+
+          <p
+            className={`mt-2 text-sm ${
+              participantNumber > roomCapacity
+                ? "font-medium text-red-600"
+                : "text-gray-500"
+            }`}
+          >
+            You are included automatically: {participantNumber} of{" "}
+            {roomCapacity} seats.
+          </p>
 
         </div>
 
@@ -1018,7 +1023,31 @@ finishBooking();
 
         ) : (
 
-          <div className="mt-3 space-y-4">
+          <>
+
+          <button
+            type="button"
+            onClick={() => setSlotsOpen((open) => !open)}
+            aria-expanded={slotsOpen}
+            aria-controls="booked-slots-list"
+            className="mt-2 flex w-full items-center justify-between rounded-lg border bg-red-50 px-4 py-2 text-left text-sm font-medium text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span>
+              {bookedSlots.length} booked slot
+              {bookedSlots.length === 1 ? "" : "s"} on this date
+            </span>
+            <ChevronDown
+              className={`size-4 shrink-0 transition-transform ${
+                slotsOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+
+          <div
+            id="booked-slots-list"
+            hidden={!slotsOpen}
+            className="mt-2 max-h-60 space-y-4 overflow-y-auto overscroll-contain rounded-lg border p-2"
+          >
 
             {fixedSlots.length > 0 && (
               <div className="space-y-2">
@@ -1062,6 +1091,8 @@ finishBooking();
 
           </div>
 
+          </>
+
         )}
 
       </div>
@@ -1083,26 +1114,6 @@ finishBooking();
               setMeetingTitle(e.target.value)
             }
           />
-
-        </div>
-
-        {/* Attendees */}
-
-        <div>
-
-          <Label>
-            Attendees
-          </Label>
-
-          <EmployeeMultiSelect
-            value={attendeeIds}
-            onChange={setAttendeeIds}
-            excludeIds={[organizerEmployeeId]}
-          />
-
-          <p className="mt-2 text-sm text-gray-500">
-            The organizer is automatically included as an attendee.
-          </p>
 
         </div>
 
@@ -1185,6 +1196,9 @@ finishBooking();
                   max={MAX_OCCURRENCES}
                   step={1}
                   value={occurrenceCount}
+                  // A wheel over a focused number input changes its value;
+                  // drop focus first so scrolling the page never does.
+                  onWheel={(e) => e.currentTarget.blur()}
                   onChange={(e) =>
                     setOccurrenceCount(e.target.value)
                   }

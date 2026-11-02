@@ -70,7 +70,6 @@ export default async function BookingDetailsPage({
       meetingDate={params.date ?? ""}
       startTime={params.start ?? ""}
       endTime={params.end ?? ""}
-      participantCount={params.participants ?? ""}
     />
 
   </div>
