@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select";
 
 import { Button } from "@/components/ui/button";
+import EmployeeMultiSelect from "@/components/EmployeeMultiSelect";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -33,6 +34,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import TimeSelect from "@/components/TimeSelect";
+import { focusNextOnEnter } from "@/lib/focusNextOnEnter";
 import { toast } from "sonner";
 import { isSlotStartInPast, nowInAppTimezone } from "@/lib/time";
 
@@ -86,6 +89,19 @@ const REQUEST_MESSAGE_MAX = 1000;
 type MeetingType = {
   meetingTypeId: number;
   meetingTypeName: string;
+  // 1 = highest ... 5 = lowest.
+  priorityRank: number;
+};
+
+// One booking already in the room on the chosen date.
+type BookedSlot = {
+  title: string;
+  startTime: string;
+  endTime: string;
+  status: string | null;
+  priorityRank: number;
+  meetingTypeName: string;
+  isOwn: boolean;
 };
 
 type RecurrenceFrequency = {
@@ -98,32 +114,40 @@ const MAX_OCCURRENCES = 12;
 type Props = {
   roomId: number;
   organizerEmployeeId: number;
+  roomCapacity: number;
 
+  // Prefilled when the user arrives from the available-rooms list; empty when
+  // they open the room directly.
   meetingDate: string;
   startTime: string;
   endTime: string;
-  participantCount: number;
+  participantCount: string;
 };
-
-
 
 export default function MeetingDetailsForm({
   roomId,
   organizerEmployeeId,
+  roomCapacity,
   meetingDate: initialDate,
   startTime: initialStart,
   endTime: initialEnd,
-  participantCount,
+  participantCount: initialCount,
 }: Props) {
 
     const router = useRouter();
 
-  // Date and time arrive from the previous step and are read-only until the
-  // user chooses "Change date or time" in the conflict dialog.
-  const [editingSlot, setEditingSlot] = useState(false);
   const [meetingDate, setMeetingDate] = useState(initialDate);
   const [startTime, setStartTime] = useState(initialStart);
   const [endTime, setEndTime] = useState(initialEnd);
+  const [participantCount, setParticipantCount] = useState(initialCount);
+
+  // The room's bookings on the chosen date, shown so the user can see what is
+  // free before confirming.
+  const [bookedSlots, setBookedSlots] = useState<BookedSlot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+
+  // Asked before taking a slot from lower-priority meetings.
+  const [confirmTakeover, setConfirmTakeover] = useState(false);
 
   const [meetingTypes, setMeetingTypes] = useState<
     MeetingType[]
@@ -136,7 +160,7 @@ export default function MeetingDetailsForm({
     useState("");
 
   const [attendeeIds, setAttendeeIds] =
-    useState("");
+    useState<number[]>([]);
 
   const [isRecurring, setIsRecurring] =
     useState(false);
@@ -163,6 +187,33 @@ export default function MeetingDetailsForm({
         setFrequencies(data.data ?? []);
       });
   }, []);
+
+  useEffect(() => {
+    if (!meetingDate || !/^\d{4}-\d{2}-\d{2}$/.test(meetingDate)) {
+      setBookedSlots([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    setSlotsLoading(true);
+
+    fetch(`/api/rooms/${roomId}/schedule?date=${meetingDate}`)
+      .then((res) => res.json())
+      .then((result) => {
+        if (!cancelled) setBookedSlots(result.success ? result.data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setBookedSlots([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSlotsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId, meetingDate]);
 
   const [loading, setLoading] = useState(false);
 
@@ -206,14 +257,38 @@ export default function MeetingDetailsForm({
       ? "The date cannot be earlier than today."
       : meetingDate &&
           startTime &&
-          /^d{2}:d{2}/.test(startTime) &&
+          /^\d{2}:\d{2}/.test(startTime) &&
           isSlotStartInPast(meetingDate, startTime.slice(0, 5))
         ? "The start time has already passed. Choose a later time."
         : null;
 
-  const slotFieldClass = editingSlot
-    ? ""
-    : "bg-gray-100 text-gray-600 cursor-not-allowed";
+  const participantNumber = Number(participantCount);
+
+  const selectedType = meetingTypes.find(
+    (type) => String(type.meetingTypeId) === meetingTypeId
+  );
+
+  // Bookings that overlap the chosen time (half-open, like the server).
+  const overlapping =
+    startTime && endTime && startTime < endTime
+      ? bookedSlots.filter(
+          (slot) =>
+            slot.startTime.slice(0, 5) < endTime &&
+            slot.endTime.slice(0, 5) > startTime
+        )
+      : [];
+
+  // The chosen type outranks a booking when its rank number is lower. Those
+  // bookings are listed apart: the room can be taken over from them.
+  const isLowerPriority = (slot: BookedSlot) =>
+    selectedType !== undefined && slot.priorityRank > selectedType.priorityRank;
+
+  const takeoverSlots = bookedSlots.filter(isLowerPriority);
+  const fixedSlots = bookedSlots.filter((slot) => !isLowerPriority(slot));
+
+  // Every overlapping booking could be taken over, so confirming bumps them.
+  const willTakeOver =
+    overlapping.length > 0 && overlapping.every(isLowerPriority);
 
 // Recurring series. Each booked date is checked as soon as the dialog opens
 // (who holds it, or why it cannot be requested) and shown as a dropdown; only
@@ -377,9 +452,7 @@ const sendSeriesRequests = async () => {
     return;
   }
 
-  const participantEmployeeIds = attendeeIds.trim()
-    ? attendeeIds.split(",").map((id) => Number(id))
-    : [];
+  const participantEmployeeIds = attendeeIds;
 
   sendingSeries.current = true;
   setLoading(true);
@@ -401,7 +474,7 @@ const sendSeriesRequests = async () => {
             title: meetingTitle,
             meeting_date: date,
             room_id: roomId,
-            participant_count: participantCount,
+            participant_count: participantNumber,
             meeting_type_id: Number(meetingTypeId),
             start_time: startTime,
             end_time: endTime,
@@ -488,9 +561,7 @@ const sendRoomRequest = async () => {
     return;
   }
 
-  const participantEmployeeIds = attendeeIds.trim()
-    ? attendeeIds.split(",").map((id) => Number(id))
-    : [];
+  const participantEmployeeIds = attendeeIds;
 
   setLoading(true);
 
@@ -502,7 +573,7 @@ const sendRoomRequest = async () => {
         title: meetingTitle,
         meeting_date: meetingDate,
         room_id: roomId,
-        participant_count: participantCount,
+        participant_count: participantNumber,
         meeting_type_id: Number(meetingTypeId),
         start_time: startTime,
         end_time: endTime,
@@ -608,7 +679,7 @@ const bookAvailableDates = async () => {
   }
 };
 
-const handleSubmit = async () => {
+const handleSubmit = async (takeoverConfirmed = false) => {
   if (!meetingTypeId) {
     toast.warning("Please select a meeting type.");
     return;
@@ -618,22 +689,6 @@ const handleSubmit = async () => {
     toast.warning("Meeting title is required.");
     return;
   }
-
-  // Validate Attendee Employee IDs
-const attendeeInput = attendeeIds.trim();
-
-if (attendeeInput !== "") {
-
-  const pattern = /^\d+(,\d+)*$/;
-
-  if (!pattern.test(attendeeInput)) {
-    toast.warning(
-      "Employee ID is invalid"
-    );
-    return;
-  }
-
-}
 
   if (!meetingDate || !startTime || !endTime) {
     toast.warning("Date, start time and end time are required.");
@@ -647,6 +702,16 @@ if (attendeeInput !== "") {
 
   if (startTime >= endTime) {
     toast.warning("End time must be after start time.");
+    return;
+  }
+
+  if (!Number.isInteger(participantNumber) || participantNumber < 1) {
+    toast.warning("Participant count must be at least 1.");
+    return;
+  }
+
+  if (participantNumber > roomCapacity) {
+    toast.warning(`Room capacity is only ${roomCapacity}.`);
     return;
   }
 
@@ -677,39 +742,24 @@ if (attendeeInput !== "") {
     }
   }
 
+  // The room is held by lower-priority meetings that this booking would move
+  // or cancel: say so and wait for a yes instead of booking silently.
+  if (willTakeOver && !takeoverConfirmed) {
+    setConfirmTakeover(true);
+    return;
+  }
+
   setLoading(true);
 
   try {
-    const participantEmployeeIds =
-      attendeeInput === ""
-        ? []
-        : attendeeInput
-            .split(",")
-            .map((id) => Number(id));
-    const uniqueIds = new Set(participantEmployeeIds);
-
-if (uniqueIds.size !== participantEmployeeIds.length) {
-  toast.warning("Duplicate employee IDs are not allowed.");
-  return;
-}
-
-if (
-  participantEmployeeIds.includes(
-    organizerEmployeeId
-  )
-) {
-  toast.warning(
-    "Organizer cannot be added as an attendee."
-  );
-  return;
-}
+    const participantEmployeeIds = attendeeIds;
 
     const recurringPayload = {
       title: meetingTitle,
       meeting_date: meetingDate,
       organizerEmployeeId,
       room_id: roomId,
-      participantCount,
+      participantCount: participantNumber,
       meetingTypeId: Number(meetingTypeId),
       meetingStatusId: 1,
       start_time: startTime,
@@ -743,7 +793,7 @@ if (
             room_id: roomId,
 
             participant_count:
-              participantCount,
+              participantNumber,
 
             meeting_type_id:
               Number(meetingTypeId),
@@ -812,11 +862,52 @@ finishBooking();
 };
 
   return (
-    <div className="rounded-xl border bg-white p-8 shadow">
+    <div
+      className="rounded-xl border bg-white p-8 shadow"
+      onKeyDown={focusNextOnEnter}
+    >
 
       <h2 className="mb-8 text-2xl font-bold">
         Meeting Information
       </h2>
+
+      {/* Meeting Type: first, because it decides which bookings can be taken over. */}
+
+      <div className="mb-6">
+
+        <Label>
+          Meeting Type
+        </Label>
+
+        <Select
+          value={meetingTypeId}
+          onValueChange={setMeetingTypeId}
+        >
+
+          <SelectTrigger>
+
+            <SelectValue placeholder="Select Meeting Type" />
+
+          </SelectTrigger>
+
+          <SelectContent>
+
+            {meetingTypes.map((type) => (
+
+              <SelectItem
+                key={type.meetingTypeId}
+                value={String(type.meetingTypeId)}
+              >
+                {type.meetingTypeName}
+              </SelectItem>
+
+            ))}
+
+          </SelectContent>
+
+        </Select>
+
+      </div>
 
       <div className="grid gap-6 md:grid-cols-2">
 
@@ -829,13 +920,11 @@ finishBooking();
           </Label>
 
           <Input
-            type={editingSlot ? "date" : "text"}
+            type="date"
             value={meetingDate}
             onChange={(e) => setMeetingDate(e.target.value)}
-            readOnly={!editingSlot}
-            min={editingSlot ? todayDate : undefined}
-            aria-invalid={editingSlot && slotError ? true : undefined}
-            className={slotFieldClass}
+            min={todayDate}
+            aria-invalid={slotError ? true : undefined}
           />
 
         </div>
@@ -845,13 +934,16 @@ finishBooking();
         <div>
 
           <Label>
-            Participant Count
+            Participant Count (room capacity {roomCapacity})
           </Label>
 
           <Input
+            type="number"
+            min={1}
+            max={roomCapacity}
+            step={1}
             value={participantCount}
-            readOnly
-            className="bg-gray-100 text-gray-600 cursor-not-allowed"
+            onChange={(e) => setParticipantCount(e.target.value)}
           />
 
         </div>
@@ -864,12 +956,10 @@ finishBooking();
             Start Time
           </Label>
 
-          <Input
-            type={editingSlot ? "time" : "text"}
+          <TimeSelect
             value={startTime}
-            onChange={(e) => setStartTime(e.target.value)}
-            readOnly={!editingSlot}
-            className={slotFieldClass}
+            onChange={setStartTime}
+            placeholder="Select start time"
           />
 
         </div>
@@ -882,69 +972,101 @@ finishBooking();
             End Time
           </Label>
 
-          <Input
-            type={editingSlot ? "time" : "text"}
+          <TimeSelect
             value={endTime}
-            onChange={(e) => setEndTime(e.target.value)}
-            readOnly={!editingSlot}
-            className={slotFieldClass}
+            onChange={setEndTime}
+            after={startTime || undefined}
+            placeholder="Select end time"
           />
 
-          {editingSlot && slotError && (
-            <p className="mt-2 text-sm font-medium text-red-600" role="alert" data-testid="slot-error">
-              {slotError}
-            </p>
-          )}
-
-          {editingSlot && !slotError && (
-            <p className="mt-2 text-sm text-gray-500">
-              You can now change the date and time. The room stays the same.
-            </p>
-          )}
-
         </div>
+
+        {slotError && (
+          <p className="text-sm font-medium text-red-600 md:col-span-2" role="alert" data-testid="slot-error">
+            {slotError}
+          </p>
+        )}
+
+      </div>
+
+      {/* Booked slots for the chosen date. Bookings the chosen meeting type
+          outranks are listed apart: the room can be taken over from them. */}
+
+      <div className="mt-6" data-testid="booked-slots">
+
+        <Label>
+          Booked Time Slots
+        </Label>
+
+        {meetingDate === "" ? (
+
+          <p className="mt-2 text-sm text-gray-500">
+            Select a date to view booked slots.
+          </p>
+
+        ) : slotsLoading ? (
+
+          <p className="mt-2 text-sm text-gray-500">
+            Checking the room...
+          </p>
+
+        ) : bookedSlots.length === 0 ? (
+
+          <p className="mt-2 rounded-lg bg-green-50 p-3 text-green-700">
+            Room is available for the entire day.
+          </p>
+
+        ) : (
+
+          <div className="mt-3 space-y-4">
+
+            {fixedSlots.length > 0 && (
+              <div className="space-y-2">
+                {fixedSlots.map((slot, index) => (
+                  <div
+                    key={index}
+                    className="rounded-lg bg-red-50 px-4 py-3 text-red-700"
+                  >
+                    <p className="font-semibold">
+                      {slot.startTime.slice(0, 5)} - {slot.endTime.slice(0, 5)}
+                    </p>
+                    <p className="text-sm">
+                      {slot.title} · {slot.meetingTypeName}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {takeoverSlots.length > 0 && (
+              <div className="space-y-2" data-testid="takeover-slots">
+                <p className="text-sm font-medium text-amber-800">
+                  Lower priority than {selectedType?.meetingTypeName} - you can
+                  take these slots
+                </p>
+                {takeoverSlots.map((slot, index) => (
+                  <div
+                    key={index}
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900"
+                  >
+                    <p className="font-semibold">
+                      {slot.startTime.slice(0, 5)} - {slot.endTime.slice(0, 5)}
+                    </p>
+                    <p className="text-sm">
+                      {slot.title} · {slot.meetingTypeName}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+          </div>
+
+        )}
 
       </div>
 
       <div className="mt-10 space-y-6">
-
-        {/* Meeting Type */}
-
-        <div>
-
-          <Label>
-            Meeting Type
-          </Label>
-
-          <Select
-            value={meetingTypeId}
-            onValueChange={setMeetingTypeId}
-          >
-
-            <SelectTrigger>
-
-              <SelectValue placeholder="Select Meeting Type" />
-
-            </SelectTrigger>
-
-            <SelectContent>
-
-              {meetingTypes.map((type) => (
-
-                <SelectItem
-                  key={type.meetingTypeId}
-                  value={String(type.meetingTypeId)}
-                >
-                  {type.meetingTypeName}
-                </SelectItem>
-
-              ))}
-
-            </SelectContent>
-
-          </Select>
-
-        </div>
 
         {/* Meeting Title */}
 
@@ -969,15 +1091,13 @@ finishBooking();
         <div>
 
           <Label>
-            Attendee Employee IDs
+            Attendees
           </Label>
 
-          <Input
-            placeholder="Example : 2,5,7"
+          <EmployeeMultiSelect
             value={attendeeIds}
-            onChange={(e) =>
-              setAttendeeIds(e.target.value)
-            }
+            onChange={setAttendeeIds}
+            excludeIds={[organizerEmployeeId]}
           />
 
           <p className="mt-2 text-sm text-gray-500">
@@ -1086,13 +1206,62 @@ finishBooking();
 
       <Button
   className="mt-10 w-full"
-  onClick={handleSubmit}
+  onClick={() => handleSubmit()}
   disabled={loading}
 >
   {loading
     ? "Scheduling..."
     : "Confirm Booking"}
 </Button>
+
+      {/* The chosen meeting type outranks everything in the way: confirm before
+          those meetings are moved to another room or cancelled. */}
+      <AlertDialog open={confirmTakeover} onOpenChange={setConfirmTakeover}>
+        <AlertDialogContent data-testid="takeover-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Take this room from lower-priority meetings?
+            </AlertDialogTitle>
+
+            <AlertDialogDescription>
+              {selectedType?.meetingTypeName} has a higher priority than the
+              booking{overlapping.length === 1 ? "" : "s"} below. Confirming
+              moves {overlapping.length === 1 ? "it" : "them"} to another free
+              room, or cancels {overlapping.length === 1 ? "it" : "them"} if
+              none is free, and the organizer
+              {overlapping.length === 1 ? " is" : "s are"} e-mailed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="space-y-2">
+            {overlapping.map((slot, index) => (
+              <div
+                key={index}
+                className="rounded-lg border bg-slate-50 p-3 text-sm"
+              >
+                <p className="font-semibold">
+                  {slot.startTime.slice(0, 5)} - {slot.endTime.slice(0, 5)}
+                </p>
+                <p>{slot.title} · {slot.meetingTypeName}</p>
+              </div>
+            ))}
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+
+            <Button
+              onClick={() => {
+                setConfirmTakeover(false);
+                void handleSubmit(true);
+              }}
+              data-testid="confirm-takeover"
+            >
+              Take the room and book
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* The room is taken: show the existing booking, offer to ask for it. */}
       <AlertDialog
@@ -1467,8 +1636,7 @@ finishBooking();
                     size="sm"
                     disabled={loading}
                     onClick={() => {
-                      setEditingSlot(true);
-                      toast.info("You can now edit the date and time.");
+                      toast.info("Change the date or time above.");
                     }}
                     className="justify-start text-gray-600 sm:justify-center"
                   >

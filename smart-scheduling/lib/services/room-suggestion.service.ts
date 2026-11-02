@@ -6,6 +6,7 @@ import { room } from "@/db/schema";
 import { meeting } from "@/db/schema";
 import { meetingStatuses } from "@/db/schema";
 import { meeting_attendees } from "@/db/schema";
+import { meetingTypes } from "@/db/schema";
 
 import {
   AVAILABILITY_STATUS,
@@ -179,6 +180,8 @@ export async function getRoomSchedule(
       startTime: meeting.start_time,
       endTime: meeting.end_time,
       status: meetingStatuses.meetingStatusName,
+      priorityRank: meetingTypes.priorityRank,
+      meetingTypeName: meetingTypes.meetingTypeName,
       organizerEmployeeId: meeting.organizerEmployeeId,
       isAttendee: exists(
         db
@@ -199,6 +202,10 @@ export async function getRoomSchedule(
         meeting.meetingStatusId,
         meetingStatuses.meetingStatusId
       )
+    )
+    .innerJoin(
+      meetingTypes,
+      eq(meeting.meetingTypeId, meetingTypes.meetingTypeId)
     )
     .where(
       and(
@@ -229,5 +236,8 @@ export async function getRoomSchedule(
     startTime: m.startTime,
     endTime: m.endTime,
     status: m.status,
+    priorityRank: m.priorityRank,
+    meetingTypeName: m.meetingTypeName,
+    isOwn: m.organizerEmployeeId === viewer.employeeId,
   }));
 }

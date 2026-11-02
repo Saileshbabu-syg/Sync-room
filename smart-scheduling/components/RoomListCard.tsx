@@ -120,7 +120,7 @@ export default function RoomListCard({
 
           {room.status === "AVAILABLE" ? (
             <Link
-              href={`/rooms/${room.roomId}/book`}
+              href={`/booking/details?roomId=${room.roomId}`}
               className="flex-1"
             >
               <Button className="w-full">

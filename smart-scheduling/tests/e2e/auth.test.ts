@@ -41,7 +41,7 @@ const API: [string, string, unknown?][] = [
 ];
 
 const PAGES = [
-  "/home", "/rooms", "/rooms/1/edit", "/rooms/1/book", "/booking",
+  "/home", "/rooms", "/rooms/1/edit", "/booking",
   "/booking/details?roomId=1", "/booking/available-rooms?date=2030-01-01&start=10:00&end=11:00&participants=2",
   "/bookings", "/bookings/1", "/bookings/1/edit",
 ];

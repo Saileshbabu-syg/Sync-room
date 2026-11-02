@@ -9,6 +9,8 @@ import { CalendarSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import TimeSelect from "@/components/TimeSelect";
+import { focusNextOnEnter } from "@/lib/focusNextOnEnter";
 import { usePersistedForm } from "@/lib/hooks/usePersistedForm";
 
 const EMPTY_FORM = {
@@ -186,7 +188,7 @@ router.push(
   };
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-10" onKeyDown={focusNextOnEnter}>
 
       {/* Heading */}
 
@@ -248,11 +250,10 @@ router.push(
 
           <Label>Start Time *</Label>
 
-          <Input
-            type="time"
-            name="startTime"
+          <TimeSelect
             value={formData.startTime}
-            onChange={handleChange}
+            onChange={(v) => setFormData((prev) => ({ ...prev, startTime: v }))}
+            placeholder="Select start time"
           />
 
         </div>
@@ -263,11 +264,11 @@ router.push(
 
           <Label>End Time *</Label>
 
-          <Input
-            type="time"
-            name="endTime"
+          <TimeSelect
             value={formData.endTime}
-            onChange={handleChange}
+            onChange={(v) => setFormData((prev) => ({ ...prev, endTime: v }))}
+            after={formData.startTime || undefined}
+            placeholder="Select end time"
           />
 
         </div>

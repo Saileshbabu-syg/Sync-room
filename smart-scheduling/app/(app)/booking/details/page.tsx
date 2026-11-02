@@ -14,11 +14,11 @@ import { room } from "@/db/schema";
 type Props = {
   searchParams: Promise<{
     roomId: string;
-    roomName: string;
-    date: string;
-    start: string;
-    end: string;
-    participants: string;
+    roomName?: string;
+    date?: string;
+    start?: string;
+    end?: string;
+    participants?: string;
   }>;
 };
 
@@ -66,12 +66,11 @@ export default async function BookingDetailsPage({
       organizerEmployeeId={
         userProfile[0].employeeId!
       }
-      meetingDate={params.date}
-      startTime={params.start}
-      endTime={params.end}
-      participantCount={Number(
-        params.participants
-      )}
+      roomCapacity={roomData[0].room_capacity}
+      meetingDate={params.date ?? ""}
+      startTime={params.start ?? ""}
+      endTime={params.end ?? ""}
+      participantCount={params.participants ?? ""}
     />
 
   </div>
