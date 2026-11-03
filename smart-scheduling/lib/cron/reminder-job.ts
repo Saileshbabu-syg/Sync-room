@@ -2,10 +2,11 @@ import cron from "node-cron";
 
 import { updateCompletedMeetings } from "@/lib/services/meeting-status.service";
 import { processPendingNotifications } from "@/lib/services/notification.service";
+import { processExpiredBumps } from "@/lib/services/priority.service";
 import { processDueReminders } from "@/lib/services/reminder.service";
 import { processRoomRequests } from "@/lib/services/room-request.service";
 
-// One tick: mark finished meetings, send due reminders, retry undelivered
+// One tick: cancel bumped meetings nobody rescheduled in time, mark finished meetings, send due reminders, retry undelivered
 // booking e-mails, then room requests: expire the ones that ran out of time,
 // book approved ones whose room became free, retry their e-mail. Exported so it can be run (and tested) without the timer.
 //
@@ -13,12 +14,13 @@ import { processRoomRequests } from "@/lib/services/room-request.service";
 // instances (or Next.js workers) each running this job do not send anything
 // twice.
 export async function runReminderTick() {
+  const expiredBumps = await processExpiredBumps();
   const completed = await updateCompletedMeetings();
   const reminders = await processDueReminders();
   const notifications = await processPendingNotifications();
   const roomRequests = await processRoomRequests();
 
-  return { completed, reminders, notifications, roomRequests };
+  return { expiredBumps, completed, reminders, notifications, roomRequests };
 }
 
 type Tick = typeof runReminderTick;
@@ -66,6 +68,7 @@ export function startReminderScheduler({
       const result = await tick();
 
       if (
+        result.expiredBumps > 0 ||
         result.completed > 0 ||
         result.reminders.sent > 0 ||
         result.notifications.SENT > 0

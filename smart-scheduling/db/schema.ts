@@ -38,11 +38,21 @@ import {
 /* 1. Lookup / master tables                                                  */
 /* -------------------------------------------------------------------------- */
 
-export const roles = pgTable("roles", {
-  roleId: serial("role_id").primaryKey(),
-  roleName: varchar("role_name", { length: 50 }).notNull().unique(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+export const roles = pgTable(
+  "roles",
+  {
+    roleId: serial("role_id").primaryKey(),
+    roleName: varchar("role_name", { length: 50 }).notNull().unique(),
+    // Priority tier. A meeting whose organizer or attendees include a role with
+    // a higher boost outranks every meeting with a lower boost, whatever the
+    // meeting type (see lib/priority-rank). 0 = no boost; Manager = 1.
+    priorityBoost: integer("priority_boost").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (t) => [
+    check("roles_priority_boost_range", sql`${t.priorityBoost} BETWEEN 0 AND 4`),
+  ]
+);
 
 export const availabilityMaster = pgTable("availability_master", {
   availabilityStatusId: serial("availability_status_id").primaryKey(),

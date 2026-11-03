@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
@@ -12,7 +12,11 @@ import {
   room_request_holders,
   room_requests,
 } from "@/db/schema";
-import { AVAILABILITY_STATUS, MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
+import {
+  AVAILABILITY_STATUS,
+  ROLE_ADMIN,
+  SLOT_FREE_STATUSES,
+} from "@/lib/constants";
 import { dbErrorCode, PG_UNIQUE_VIOLATION } from "@/lib/api";
 import type { Tx } from "@/lib/db-types";
 import { isSlotStartInPast, normalizeTime } from "@/lib/time";
@@ -179,7 +183,7 @@ export async function describeConflict(
       and(
         eq(meeting.room_id, roomId),
         eq(meeting.meeting_date, meetingDate),
-        ne(meeting.meetingStatusId, MEETING_STATUS.CANCELLED),
+        notInArray(meeting.meetingStatusId, SLOT_FREE_STATUSES),
         sql`${meeting.start_time} < ${end}::time`,
         sql`${meeting.end_time} > ${start}::time`
       )
@@ -550,7 +554,7 @@ async function loadHolders(requestId: number): Promise<HolderRow[]> {
 
 // The booked meeting still sits in the requested room.
 const holds = (h: HolderRow, request: RequestRow) =>
-  h.meetingStatusId !== MEETING_STATUS.CANCELLED &&
+  !SLOT_FREE_STATUSES.includes(h.meetingStatusId) &&
   h.meetingRoomId === request.room_id;
 
 async function loadRequest(requestId: number) {
@@ -1376,7 +1380,7 @@ export async function getRoomRequestFor(requestId: number, viewerEmployeeId: num
       startTime: own ? h.startTime : null,
       endTime: own ? h.endTime : null,
       holdsRoom:
-        h.meetingStatusId !== MEETING_STATUS.CANCELLED &&
+        !SLOT_FREE_STATUSES.includes(h.meetingStatusId) &&
         h.meetingRoomId === row.roomId,
     };
   });
@@ -1445,7 +1449,7 @@ export async function getOccupiedRoomIds(
     .where(
       and(
         eq(meeting.meeting_date, meetingDate),
-        ne(meeting.meetingStatusId, MEETING_STATUS.CANCELLED),
+        notInArray(meeting.meetingStatusId, SLOT_FREE_STATUSES),
         sql`${meeting.start_time} < ${normalizeTime(endTime)}::time`,
         sql`${meeting.end_time} > ${normalizeTime(startTime)}::time`
       )

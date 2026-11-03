@@ -214,7 +214,7 @@ const HEADINGS: Record<MeetingEmailKind, string> = {
   updated: "Meeting Updated",
   reminder: "Meeting Reminder",
   cancelled: "Meeting Cancelled",
-  bumped: "Meeting Room Reassigned",
+  bumped: "Meeting Room Needed - Action Required",
 };
 
 const SERIES_HEADINGS: Record<MeetingEmailKind, string> = {
@@ -222,16 +222,20 @@ const SERIES_HEADINGS: Record<MeetingEmailKind, string> = {
   updated: "Recurring Meeting Updated",
   reminder: "Recurring Meeting Reminder",
   cancelled: "Recurring Meeting Cancelled",
-  bumped: "Meeting Room Reassigned",
+  bumped: "Meeting Room Needed - Action Required",
 };
 
 // Set on a "bumped" e-mail: a higher-priority booking took this meeting's room.
 export type MeetingBumpInfo = {
-  // e.g. "Interview booked by Priya HR"
+  // e.g. "Interview organized by Priya HR"
   claimedBy: string;
-  oldRoomName: string;
-  // The room the meeting was moved to; undefined when it had to be cancelled.
-  newRoomName?: string;
+  // The room the meeting had (now held by the higher-priority meeting).
+  roomName: string;
+  // While the meeting is pending: the last moment its organizer can change the
+  // room or time ("YYYY-MM-DD HH:mm"). Undefined once it has been cancelled.
+  deadline?: string;
+  // Link to change the room or time, when the app URL is configured.
+  changeUrl?: string;
   // Link to start a new booking, when the app URL is configured.
   rebookUrl?: string;
 };
@@ -271,20 +275,24 @@ function renderSingle({
   kind = "scheduled",
   bump,
 }: MeetingEmailFields) {
-  // A bumped meeting that could not be moved is effectively cancelled.
-  const lostSlot = kind === "bumped" && !bump?.newRoomName;
-  const heading = lostSlot ? HEADINGS.cancelled : HEADINGS[kind];
-  // A cancellation carries no invite: a new .ics would add a stray event
-  // instead of removing the original one.
-  const hasInvite = kind !== "cancelled" && !lostSlot;
+  // A bumped meeting is either waiting for its organizer to change it (it has
+  // a deadline) or already cancelled.
+  const cancelledByBump = kind === "bumped" && !bump?.deadline;
+  const heading = cancelledByBump ? HEADINGS.cancelled : HEADINGS[kind];
+  // Neither a cancellation nor a pending meeting carries an invite: a new .ics
+  // would add a stray event for a slot the meeting no longer holds.
+  const hasInvite = kind !== "cancelled" && kind !== "bumped";
 
   const bumpLines: string[] = bump
-    ? [
-        `Your meeting room was needed for a higher-priority meeting (${bump.claimedBy}).`,
-        bump.newRoomName
-          ? `Your meeting has been moved from ${bump.oldRoomName} to ${bump.newRoomName}. The date and time are unchanged.`
-          : `No other room is free at that time, so your meeting in ${bump.oldRoomName} has been cancelled. Please book another available slot${bump.rebookUrl ? `: ${bump.rebookUrl}` : "."}`,
-      ]
+    ? bump.deadline
+      ? [
+          `The meeting room (${bump.roomName}) is required for a high-priority meeting: ${bump.claimedBy}.`,
+          `The organizer can change the room or time${bump.changeUrl ? `: ${bump.changeUrl}` : "."} If it is not changed by ${bump.deadline}, the meeting will be cancelled automatically.`,
+        ]
+      : [
+          `The meeting room (${bump.roomName}) was required for a high-priority meeting: ${bump.claimedBy}.`,
+          `The meeting has been cancelled because its room or time was not changed in time. Please book another available slot${bump.rebookUrl ? `: ${bump.rebookUrl}` : "."}`,
+        ]
     : [];
 
   const html = `
@@ -501,7 +509,7 @@ export async function sendMeetingEmail(
   extras: MeetingEmailExtras = {}
 ) {
   const calendarInvite =
-    kind === "cancelled" || (kind === "bumped" && !extras.bump?.newRoomName)
+    kind === "cancelled" || kind === "bumped"
       ? null
       : extras.series && kind !== "reminder"
         ? await generateSeriesCalendarInvite(

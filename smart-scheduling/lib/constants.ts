@@ -8,7 +8,21 @@ export const MEETING_STATUS = {
   SCHEDULED: 1,
   COMPLETED: 2,
   CANCELLED: 3,
+  // A meeting whose room was taken by a higher-priority one. It waits for its
+  // organizer to pick another room or time and is cancelled automatically
+  // BUMP_RESPONSE_CUTOFF_MINUTES before it starts. It does not hold its slot.
+  PENDING_RESCHEDULE: 4,
 } as const;
+
+// Statuses whose meeting no longer occupies its room slot.
+export const SLOT_FREE_STATUSES: number[] = [
+  MEETING_STATUS.CANCELLED,
+  MEETING_STATUS.PENDING_RESCHEDULE,
+];
+
+// A bumped meeting that is still pending this long before it starts is
+// cancelled.
+export const BUMP_RESPONSE_CUTOFF_MINUTES = 30;
 
 // Display names for MEETING_STATUS ids. The UI derives the label from the id,
 // so it does not depend on how the status names are cased in the database.
@@ -16,6 +30,7 @@ export const MEETING_STATUS_LABEL: Record<number, string> = {
   [MEETING_STATUS.SCHEDULED]: "Scheduled",
   [MEETING_STATUS.COMPLETED]: "Completed",
   [MEETING_STATUS.CANCELLED]: "Cancelled",
+  [MEETING_STATUS.PENDING_RESCHEDULE]: "Pending reschedule",
 };
 
 export const AVAILABILITY_STATUS = {

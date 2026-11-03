@@ -58,7 +58,13 @@ const ROLE_TYPES: Record<string, string[]> = {
   Employee: ["Team Meeting", "One-on-One", "Others"],
 };
 
-const STATUSES = ["PENDING_RESCHEDULE", "PENDING_ROOM"];
+// How many ranks a meeting moves up when someone with this role organizes or
+// attends it (largest boost wins, never above rank 1). Roles not listed keep 0.
+const ROLE_BOOST: Record<string, number> = {
+  Manager: 1,
+};
+
+const STATUSES =["PENDING_RESCHEDULE", "PENDING_ROOM"];
 const NOTIFICATION_TYPES = ["BUMP_REQUEST", "BUMP_RESOLVED"];
 
 async function main() {
@@ -87,6 +93,18 @@ async function main() {
 
     // Role -> allowed meeting types (existing roles only)
     const existingRoles = await tx.select().from(roles);
+
+    for (const [roleName, boost] of Object.entries(ROLE_BOOST)) {
+      const role = existingRoles.find(
+        (r) => normalize(r.roleName) === normalize(roleName)
+      );
+      if (!role) continue;
+      await tx
+        .update(roles)
+        .set({ priorityBoost: boost })
+        .where(eq(roles.roleId, role.roleId));
+    }
+
     for (const [roleName, typeNames] of Object.entries(ROLE_TYPES)) {
       const role = existingRoles.find(
         (r) => normalize(r.roleName) === normalize(roleName)

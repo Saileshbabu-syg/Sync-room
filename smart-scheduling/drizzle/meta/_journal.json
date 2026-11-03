@@ -176,6 +176,20 @@
       "when": 1793352106508,
       "tag": "0024_room_request_multiple_holders",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793618918452,
+      "tag": "0025_role_priority_boost",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793684439250,
+      "tag": "0026_pending_reschedule_status",
+      "breakpoints": true
     }
   ]
 }

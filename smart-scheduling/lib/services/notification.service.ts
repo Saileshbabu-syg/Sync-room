@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { MAX_DELIVERY_ATTEMPTS, NOTIFICATION_TYPE } from "@/lib/constants";
 import type { DbExecutor } from "@/lib/db-types";
+import { nowInAppTimezone } from "@/lib/time";
 
 import { getMeetingAttendees, getMeetingDetails } from "./reminder.service";
 import {
@@ -36,8 +37,9 @@ import {
 
 type NotificationKind = keyof typeof NOTIFICATION_TYPE;
 
-// Who took the slot of a bumped meeting, and where the meeting ended up. The
-// claiming meeting sits in the room the bumped one used to have.
+// Who took the slot of a bumped meeting and whether it is still waiting for its
+// organizer (deadline) or already cancelled. The claiming meeting sits in the
+// room the bumped one used to have.
 async function loadBumpInfo(
   executor: DbExecutor,
   bumpedMeetingId: number,
@@ -45,7 +47,8 @@ async function loadBumpInfo(
 ): Promise<MeetingBumpInfo | undefined> {
   const [request] = await executor
     .select({
-      claimantRoomId: meeting.room_id,
+      requestStatus: reschedule_requests.status,
+      deadline: reschedule_requests.deadline,
       claimantType: meetingTypes.meetingTypeName,
       claimantOrganizer: employee.employee_name,
     })
@@ -70,13 +73,15 @@ async function loadBumpInfo(
         .where(eq(room.room_id, roomId))
     )[0]?.name ?? "the room";
 
-  const relocated = currentRoomId !== request.claimantRoomId;
   const appUrl = process.env.NEXTAUTH_URL?.replace(/\/+$/, "");
+  const pending = request.requestStatus === "PENDING";
+  const due = nowInAppTimezone(request.deadline);
 
   return {
-    claimedBy: `${request.claimantType} booked by ${request.claimantOrganizer}`,
-    oldRoomName: await roomName(request.claimantRoomId),
-    newRoomName: relocated ? await roomName(currentRoomId) : undefined,
+    claimedBy: `${request.claimantType} organized by ${request.claimantOrganizer}`,
+    roomName: await roomName(currentRoomId),
+    deadline: pending ? `${due.date} ${due.time.slice(0, 5)}` : undefined,
+    changeUrl: appUrl ? `${appUrl}/bookings/${bumpedMeetingId}/edit` : undefined,
     rebookUrl: appUrl ? `${appUrl}/booking` : undefined,
   };
 }
@@ -160,7 +165,7 @@ export async function deliverNotification(
         )
       );
 
-    const recipients = (await getMeetingAttendees(row.meeting_id, tx))
+    let recipients = (await getMeetingAttendees(row.meeting_id, tx))
       .map((a) => a.email)
       .filter((email): email is string => Boolean(email));
 
@@ -178,6 +183,18 @@ export async function deliverNotification(
       kind === "bumped"
         ? await loadBumpInfo(tx, row.meeting_id, details.room_id)
         : undefined;
+
+    // While a bumped meeting is pending, only its organizer is asked to act.
+    // The attendees hear about the outcome later: an update if the organizer
+    // reschedules, a cancellation if they do not.
+    if (kind === "bumped" && bump?.deadline) {
+      const [organizer] = await tx
+        .select({ email: employee.email })
+        .from(employee)
+        .where(eq(employee.employee_id, details.organizerEmployeeId));
+
+      recipients = organizer?.email ? [organizer.email] : [];
+    }
 
     // A booking confirmation for a recurring series lists every saved
     // occurrence, not just the meeting this row points at (the first one). An

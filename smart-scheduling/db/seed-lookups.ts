@@ -28,6 +28,8 @@ export const MEETING_STATUS_ROWS = [
   { id: MEETING_STATUS.SCHEDULED, name: "Scheduled" },
   { id: MEETING_STATUS.COMPLETED, name: "Completed" },
   { id: MEETING_STATUS.CANCELLED, name: "Cancelled" },
+  // Same spelling db/seed-priority.ts and migration 0026 use.
+  { id: MEETING_STATUS.PENDING_RESCHEDULE, name: "PENDING_RESCHEDULE" },
 ] as const;
 
 export const AVAILABILITY_ROWS = [

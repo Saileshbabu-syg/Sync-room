@@ -1,4 +1,4 @@
-import { and, eq, exists, ne, sql } from "drizzle-orm";
+import { and, eq, exists, notInArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 
@@ -10,12 +10,13 @@ import { meetingTypes } from "@/db/schema";
 
 import {
   AVAILABILITY_STATUS,
-  MEETING_STATUS,
+  SLOT_FREE_STATUSES,
   ROLE_ADMIN,
 } from "@/lib/constants";
 import { nowInAppTimezone } from "@/lib/time";
 
 import { holdsSlot, overlapsSlot } from "./conflict-check.service";
+import { bookedEffectiveRank } from "./priority.service";
 
 export async function getAvailableRooms(
   meetingDate: string,
@@ -180,7 +181,8 @@ export async function getRoomSchedule(
       startTime: meeting.start_time,
       endTime: meeting.end_time,
       status: meetingStatuses.meetingStatusName,
-      priorityRank: meetingTypes.priorityRank,
+      // Effective rank: includes the roles of the organizer and attendees.
+      priorityRank: bookedEffectiveRank,
       meetingTypeName: meetingTypes.meetingTypeName,
       organizerEmployeeId: meeting.organizerEmployeeId,
       isAttendee: exists(
@@ -212,10 +214,11 @@ export async function getRoomSchedule(
         eq(meeting.room_id, roomId),
         eq(meeting.meeting_date, meetingDate),
 
-        // Hide cancelled meetings
-        ne(
+        // Hide cancelled meetings and bumped ones waiting to be rescheduled:
+        // neither holds the room any more.
+        notInArray(
           meeting.meetingStatusId,
-          MEETING_STATUS.CANCELLED
+          SLOT_FREE_STATUSES
         )
       )
     );

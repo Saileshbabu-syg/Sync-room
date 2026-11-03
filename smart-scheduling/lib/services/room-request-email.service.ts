@@ -13,7 +13,7 @@ import {
 import {
   APP_TIMEZONE,
   MAX_DELIVERY_ATTEMPTS,
-  MEETING_STATUS,
+  SLOT_FREE_STATUSES,
 } from "@/lib/constants";
 import type { DbExecutor } from "@/lib/db-types";
 
@@ -176,7 +176,7 @@ export async function deliverRoomRequestEmail(
     const mine = holders.filter((h) => h.organizerId === row.recipient_employee_id);
     // Still holding the requested room.
     const stillHolding = mine.filter(
-      (h) => h.meetingStatusId !== MEETING_STATUS.CANCELLED && h.roomId === r.roomId
+      (h) => !SLOT_FREE_STATUSES.includes(h.meetingStatusId) && h.roomId === r.roomId
     );
 
     const meetingLines = (list: typeof mine) =>

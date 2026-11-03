@@ -11,11 +11,13 @@ import { db } from "@/db";
 import { meeting } from "@/db/schema";
 import { meetingTypes } from "@/db/schema";
 import { meeting_attendees } from "@/db/schema";
-import { employee, roles } from "@/db/schema";
+import { employee, reschedule_requests, roles, room } from "@/db/schema";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { nowInAppTimezone } from "@/lib/time";
 
 import EditMeetingForm from "@/components/EditMeetingForm";
+import RescheduleMeetingForm from "@/components/RescheduleMeetingForm";
 
 type Props = {
   params: Promise<{
@@ -81,13 +83,61 @@ export default async function EditMeetingPage({
     redirect("/bookings");
   }
 
-  // Only Scheduled meetings can be edited
+  // Only Scheduled meetings can be edited, and meetings waiting to be
+  // rescheduled after a bump can be moved.
+
+  const isPending =
+    meetingData[0].meetingStatusId === MEETING_STATUS.PENDING_RESCHEDULE;
 
   if (
-    meetingData[0].meetingStatusId !== MEETING_STATUS.SCHEDULED ||
+    (meetingData[0].meetingStatusId !== MEETING_STATUS.SCHEDULED &&
+      !isPending) ||
     isMeetingEnded(meetingData[0].meeting_date, meetingData[0].end_time)
   ) {
     redirect("/bookings");
+  }
+
+  if (isPending) {
+    const rooms = await db
+      .select({
+        roomId: room.room_id,
+        roomName: room.room_name,
+        capacity: room.room_capacity,
+        availabilityStatusId: room.availabilityStatusId,
+      })
+      .from(room);
+
+    const [request] = await db
+      .select({ deadline: reschedule_requests.deadline })
+      .from(reschedule_requests)
+      .where(
+        and(
+          eq(reschedule_requests.bumped_meeting_id, meetingId),
+          eq(reschedule_requests.status, "PENDING")
+        )
+      );
+
+    const due = request ? nowInAppTimezone(request.deadline) : null;
+
+    return (
+      <RescheduleMeetingForm
+        meetingId={meetingData[0].meeting_id}
+        title={meetingData[0].title}
+        roomId={meetingData[0].room_id}
+        meetingDate={meetingData[0].meeting_date}
+        startTime={meetingData[0].start_time}
+        endTime={meetingData[0].end_time}
+        participantCount={meetingData[0].participantCount}
+        deadline={due ? `${due.date} ${due.time.slice(0, 5)}` : null}
+        rooms={rooms
+          .filter((r) => r.availabilityStatusId === 1)
+          .map(({ roomId, roomName, capacity }) => ({
+            roomId,
+            roomName,
+            capacity,
+          }))}
+      />
+    );
   }
 
   // Meeting Types

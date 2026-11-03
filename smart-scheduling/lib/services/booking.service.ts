@@ -17,6 +17,7 @@ import {
 } from "@/lib/constants";
 import { dbErrorCode, PG_EXCLUSION_VIOLATION } from "@/lib/api";
 import type { Tx } from "@/lib/db-types";
+import { effectiveRank } from "@/lib/priority-rank";
 import { isSlotStartInPast, normalizeTime, timeToSeconds } from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
@@ -30,6 +31,7 @@ import {
   cancelYielded,
   canBumpAll,
   findSlotHolders,
+  maxPriorityBoost,
   recordBumps,
   releaseSlots,
   type ReleasedSlot,
@@ -50,7 +52,9 @@ import { createRemindersForMeetings } from "./reminder.service";
 //    "set room to maintenance" update waits for the booking (and vice versa).
 //  * Priority: a slot held only by meetings of strictly lower priority (see
 //    priority.service) is taken over instead of rejected - those meetings are
-//    moved to another room or cancelled, and their organizers are e-mailed.
+//    put on hold (PENDING_RESCHEDULE) for their organizers to move, and
+//    cancelled automatically if they do not; their attendees are e-mailed.
+//    Rank = meeting type rank adjusted by the roles of organizer and attendees.
 
 // The message for "this single slot is taken"; the booking route recognises it
 // to offer a room request instead of a bare error.
@@ -245,6 +249,13 @@ export async function createBooking(input: BookingInput) {
       let yieldedNotificationIds: number[] = [];
 
       if (conflictingDates.length > 0) {
+        // The booking's rank counts the roles of everyone in it (organizer
+        // included), so a manager in the meeting lifts it.
+        const claimantRank = effectiveRank(
+          meetingTypeRow.priorityRank,
+          await maxPriorityBoost(tx, attendeeIds)
+        );
+
         const holders = await findSlotHolders(
           tx,
           input.roomId,
@@ -261,7 +272,7 @@ export async function createBooking(input: BookingInput) {
         // proceed; meetings whose organizer agreed to leave need no rank.
         if (
           (input.noBump && others.length > 0) ||
-          !canBumpAll(others, meetingTypeRow.priorityRank, input.now)
+          !canBumpAll(others, claimantRank, input.now)
         ) {
           throw new BookingError(
             isSeries
@@ -278,7 +289,7 @@ export async function createBooking(input: BookingInput) {
           yieldedHolders,
           input.organizerEmployeeId
         );
-        released = await releaseSlots(tx, others);
+        released = await releaseSlots(tx, others, input.now);
       }
 
       let recurringMeetingId: number | null = null;

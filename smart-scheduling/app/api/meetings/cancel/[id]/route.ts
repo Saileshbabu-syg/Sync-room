@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { meeting } from "@/db/schema";
+import { meeting, reschedule_requests } from "@/db/schema";
 
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import {
@@ -114,6 +114,17 @@ export async function PATCH(
           updated_at: new Date(),
         })
         .where(eq(meeting.meeting_id, meetingId));
+
+      // A bumped meeting that its organizer cancels no longer waits for them.
+      await tx
+        .update(reschedule_requests)
+        .set({ status: "CANCELLED", resolved_at: new Date() })
+        .where(
+          and(
+            eq(reschedule_requests.bumped_meeting_id, meetingId),
+            eq(reschedule_requests.status, "PENDING")
+          )
+        );
 
       await createAuditLog(
         meetingId,

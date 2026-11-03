@@ -1229,7 +1229,8 @@ finishBooking();
 </Button>
 
       {/* The chosen meeting type outranks everything in the way: confirm before
-          those meetings are moved to another room or cancelled. */}
+          those meetings are put on hold for their organizers to reschedule (and
+          cancelled automatically if they do not). */}
       <AlertDialog open={confirmTakeover} onOpenChange={setConfirmTakeover}>
         <AlertDialogContent data-testid="takeover-dialog">
           <AlertDialogHeader>
@@ -1240,10 +1241,11 @@ finishBooking();
             <AlertDialogDescription>
               {selectedType?.meetingTypeName} has a higher priority than the
               booking{overlapping.length === 1 ? "" : "s"} below. Confirming
-              moves {overlapping.length === 1 ? "it" : "them"} to another free
-              room, or cancels {overlapping.length === 1 ? "it" : "them"} if
-              none is free, and the organizer
-              {overlapping.length === 1 ? " is" : "s are"} e-mailed.
+              takes the room now. The organizer
+              {overlapping.length === 1 ? " is" : "s are"} e-mailed to change
+              the room or time; otherwise the meeting
+              {overlapping.length === 1 ? " is" : "s are"} cancelled
+              automatically 30 minutes before {overlapping.length === 1 ? "it starts" : "they start"}.
             </AlertDialogDescription>
           </AlertDialogHeader>
 

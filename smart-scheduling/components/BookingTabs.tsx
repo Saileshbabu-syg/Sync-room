@@ -63,7 +63,9 @@ export default function BookingTabs({
   meetings.filter(
     (meeting) =>
       meeting.meetingStatus ===
-      "Scheduled"
+        "Scheduled" ||
+      meeting.meetingStatus ===
+        "Pending reschedule"
   )
 );
 

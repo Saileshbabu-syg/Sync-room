@@ -1,0 +1,2 @@
+ALTER TABLE "roles" ADD COLUMN "priority_boost" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "roles" ADD CONSTRAINT "roles_priority_boost_range" CHECK ("roles"."priority_boost" BETWEEN 0 AND 4);

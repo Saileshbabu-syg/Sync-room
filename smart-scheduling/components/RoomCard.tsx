@@ -112,8 +112,8 @@ console.log(room);
           >
             Booked by a lower-priority meeting. Choose a higher-priority
             meeting type (for example Interview) to take this room; the
-            current organizer is notified and moved to another room or asked
-            to rebook.
+            current organizer is notified and asked to change the room or time,
+            or the meeting is cancelled automatically before it starts.
           </p>
         )}
 

@@ -1,8 +1,8 @@
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { meeting } from "@/db/schema";
-import { MEETING_STATUS } from "@/lib/constants";
+import { SLOT_FREE_STATUSES } from "@/lib/constants";
 import type { DbExecutor } from "@/lib/db-types";
 import { normalizeTime } from "@/lib/time";
 
@@ -16,8 +16,12 @@ export function overlapsSlot(startTime: string, endTime: string) {
   );
 }
 
-// Cancelled meetings no longer hold their slot.
-export const holdsSlot = ne(meeting.meetingStatusId, MEETING_STATUS.CANCELLED);
+// Cancelled meetings, and meetings waiting to be rescheduled after a bump, no
+// longer hold their slot.
+export const holdsSlot = notInArray(
+  meeting.meetingStatusId,
+  SLOT_FREE_STATUSES
+);
 
 export async function checkMeetingConflict(
   roomId: number,

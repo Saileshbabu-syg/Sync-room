@@ -55,6 +55,8 @@ export default function BookingCard({
             ${
               meeting.meetingStatus === "Scheduled"
                 ? "bg-green-100 text-green-700"
+                : meeting.meetingStatus === "Pending reschedule"
+                ? "bg-amber-100 text-amber-700"
                 : meeting.meetingStatus === "Completed"
                 ? "bg-blue-100 text-blue-700"
                 : "bg-red-100 text-red-700"
@@ -116,6 +118,24 @@ export default function BookingCard({
       View
     </Button>
   </Link>
+
+  {/* Reschedule & Cancel for a meeting whose room was taken */}
+
+  {meeting.canManage && meeting.meetingStatus === "Pending reschedule" && (
+    <>
+      <Link
+        href={`/bookings/${meeting.meetingId}/edit`}
+      >
+        <Button variant="outline">
+          Reschedule
+        </Button>
+      </Link>
+
+      <CancelMeetingButton
+        meetingId={meeting.meetingId}
+      />
+    </>
+  )}
 
   {/* Edit & Cancel Only for Scheduled */}
 

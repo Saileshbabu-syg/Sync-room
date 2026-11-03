@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { seedLookups } from "@/db/seed-lookups";
@@ -79,6 +79,9 @@ export async function seedFixtures() {
   await ensureMigrated();
   await resetData();
   await seedLookups(db);
+
+  // Mirrors ROLE_BOOST in db/seed-priority.ts.
+  await db.update(roles).set({ priorityBoost: 1 }).where(eq(roles.roleName, "Manager"));
 
   const roleRows = await db.select().from(roles);
   const roleId = (name: string) =>
