@@ -48,7 +48,7 @@ export default async function EditRoomPage({
 
     if (
   userProfile.length === 0 ||
-  userProfile[0].role !== "Admin"
+  !userProfile[0].canManageRooms
 ) {
   redirect("/rooms");
 }

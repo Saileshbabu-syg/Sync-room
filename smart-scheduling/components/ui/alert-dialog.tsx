@@ -70,7 +70,7 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 flex w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white text-popover-foreground shadow-2xl ring-1 ring-black/10 duration-100 outline-none sm:w-[34rem] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          compact ? "max-h-[90vh]" : "h-[min(32rem,90vh)]",
+          compact ? "max-h-[90dvh]" : "h-[min(32rem,90dvh)]",
           className
         )}
         {...props}

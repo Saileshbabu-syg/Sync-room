@@ -1,88 +1,62 @@
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
-  employee,
+  bookingPriorityHistory,
+  groups,
   meeting,
-  meeting_attendees,
-  meetingTypes,
   reschedule_requests,
-  roles,
   room,
 } from "@/db/schema";
 import {
   AVAILABILITY_STATUS,
   BUMP_RESPONSE_CUTOFF_MINUTES,
+  FALLBACK_PRIORITY,
   MEETING_STATUS,
 } from "@/lib/constants";
 import type { DbExecutor, Tx } from "@/lib/db-types";
-import { RANK_SPAN } from "@/lib/priority-rank";
 import { appWallClockToUtc, isSlotStartInPast } from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
 import { holdsSlot, overlapsSlot } from "./conflict-check.service";
-import { getAllowedMeetingTypes } from "./meeting-type-access.service";
+import {
+  getPriorityContext,
+  type PriorityContext,
+} from "./group-context.service";
 import {
   dispatchNotification,
   queueMeetingNotification,
 } from "./notification.service";
 
-// Priority-based scheduling.
+// Group-based booking priority.
 //
-// Every meeting type has a `priority_rank` (1 = highest ... 5 = lowest). When a
-// booking asks for a slot that is held by meetings of strictly LOWER priority,
-// those meetings are bumped instead of the booking being rejected:
+// Every booking stores a snapshot of its organizer's group and priority at the
+// moment it was made (meeting.group_id_at_booking / priority_at_booking).
+// Priority 1 is the highest. When a booking asks for a slot that is held by
+// confirmed meetings:
 //
-//  * the higher-priority booking takes the room straight away;
-//  * the bumped meeting becomes PENDING_RESCHEDULE: it no longer holds the slot
-//    and only its organizer is e-mailed (meeting type and organizer of the
-//    booking that needed the room). They can move it to another room or time
-//    (reschedule.service, which mails every attendee); if they have not by
-//    BUMP_RESPONSE_CUTOFF_MINUTES before it starts, processExpiredBumps cancels
-//    it and mails every attendee;
-//  * a meeting that starts within that window is cancelled on the spot.
+//  * every overlapping meeting (partial overlaps included) is found and locked
+//    before anything is changed;
+//  * the booking may proceed only if its organizer's group may preempt
+//    (booking.priority) AND every holder has a STRICTLY lower priority (a
+//    larger number) AND none has started. Equal priority is
+//    first-confirmed-wins; a lower group never preempts a higher one;
+//  * each holder is set to PREEMPTED in the same transaction that inserts the
+//    new booking, with an append-only booking_priority_history row, an audit
+//    log entry and an e-mail to the preempted meeting's attendees.
 //
-// Equal or higher ranks are never bumped, and neither is a meeting that has
-// already started. Each bump is recorded in `reschedule_requests` and in the
-// audit log, and e-mailed through the normal notification outbox.
+// Holders are compared on their STORED snapshot, so later group or priority
+// edits never rewrite the past. Meetings that pre-date groups have no snapshot
+// and rank as the default policy (the lowest active group).
 //
-// Roles come first. Each role has a `priority_boost` (a tier; Manager = 1): a
-// meeting's EFFECTIVE rank is its type's rank lifted by the largest boost among
-// its organizer and attendees (see lib/priority-rank). A meeting with a manager
-// in it therefore outranks every meeting without one, client meetings included;
-// the meeting type only decides between meetings of the same tier.
-// Everything below compares effective ranks.
+// PREEMPTED is final. Meetings already waiting in PENDING_RESCHEDULE from the
+// earlier meeting-type engine still use the reschedule flow below until they
+// are resolved.
 
-// Largest boost among the given employees (0 when none are found).
-export async function maxPriorityBoost(
-  executor: DbExecutor,
-  employeeIds: number[]
-) {
-  if (employeeIds.length === 0) return 0;
-
-  const [row] = await executor
-    .select({ boost: sql<number>`coalesce(max(${roles.priorityBoost}), 0)::int` })
-    .from(employee)
-    .innerJoin(roles, eq(roles.roleId, employee.role_id))
-    .where(inArray(employee.employee_id, employeeIds));
-
-  return row?.boost ?? 0;
-}
-
-// SQL for the effective rank of a booked `meeting` row joined to its
-// `meeting_types` row. The meeting's people are its organizer and attendees.
-export const bookedEffectiveRank = sql<number>`(
-  ${meetingTypes.priorityRank} - ${RANK_SPAN}::int * coalesce((
-    select max(${roles.priorityBoost})
-    from ${employee}
-    inner join ${roles} on ${roles.roleId} = ${employee.role_id}
-    where ${employee.employee_id} = ${meeting.organizerEmployeeId}
-      or ${employee.employee_id} in (
-        select ${meeting_attendees.employee_id}
-        from ${meeting_attendees}
-        where ${meeting_attendees.meeting_id} = ${meeting.meeting_id}
-      )
-  ), 0)
+// SQL: a booked meeting's priority (its snapshot, or the default policy).
+export const bookedPriority = sql<number>`coalesce(
+  ${meeting.priorityAtBooking},
+  (select coalesce(max(${groups.priority}), ${FALLBACK_PRIORITY}::int) from ${groups} where ${groups.isActive})
 )::int`;
 
 export type SlotHolder = {
@@ -94,12 +68,13 @@ export type SlotHolder = {
   endTime: string;
   participantCount: number;
   organizerEmployeeId: number;
-  // Effective rank (type rank adjusted for the roles of its people).
-  priorityRank: number;
+  groupId: number | null;
+  // Snapshot priority (default policy for legacy meetings).
+  priority: number;
 };
 
 // Meetings that hold part of the requested slot, locked for the rest of the
-// transaction so two bookings cannot bump the same meeting.
+// transaction so two bookings cannot preempt the same meeting.
 export async function findSlotHolders(
   executor: DbExecutor,
   roomId: number,
@@ -119,13 +94,10 @@ export async function findSlotHolders(
       endTime: meeting.end_time,
       participantCount: meeting.participantCount,
       organizerEmployeeId: meeting.organizerEmployeeId,
-      priorityRank: bookedEffectiveRank,
+      groupId: meeting.groupIdAtBooking,
+      priority: bookedPriority,
     })
     .from(meeting)
-    .innerJoin(
-      meetingTypes,
-      eq(meetingTypes.meetingTypeId, meeting.meetingTypeId)
-    )
     .where(
       and(
         eq(meeting.room_id, roomId),
@@ -138,30 +110,30 @@ export async function findSlotHolders(
     .for("update", { of: meeting });
 }
 
-// True when every holder may be bumped by a meeting of `claimantRank`.
+// True when the claimant may take the slot from EVERY holder.
 export function canBumpAll(
   holders: SlotHolder[],
-  claimantRank: number,
+  claimant: Pick<PriorityContext, "priority" | "canPreempt">,
   now?: Date
 ) {
-  return holders.every(
-    (h) =>
-      h.priorityRank > claimantRank &&
-      !isSlotStartInPast(h.meetingDate, h.startTime, now)
+  if (holders.length === 0) return true;
+
+  return (
+    claimant.canPreempt &&
+    holders.every(
+      (h) =>
+        h.priority > claimant.priority &&
+        !isSlotStartInPast(h.meetingDate, h.startTime, now)
+    )
   );
 }
 
 export type ReleasedSlot = {
   holder: SlotHolder;
-  // True when the meeting could not wait (it starts within the response
-  // window) and was cancelled on the spot; otherwise it is pending.
-  cancelled: boolean;
-  // Last moment its organizer can still change it.
-  deadline: Date;
 };
 
-// The moment a pending bumped meeting is cancelled if nothing was changed:
-// BUMP_RESPONSE_CUTOFF_MINUTES before it starts.
+// The moment a legacy pending bumped meeting is cancelled if nothing was
+// changed: BUMP_RESPONSE_CUTOFF_MINUTES before it starts.
 export function bumpDeadline(meetingDate: string, startTime: string) {
   const [y, mo, d, h, mi] = appWallClockToUtc(meetingDate, startTime);
 
@@ -170,85 +142,42 @@ export function bumpDeadline(meetingDate: string, startTime: string) {
   );
 }
 
-// Cancels meetings whose organizer agreed to give the slot up (no relocation:
-// they asked for it to be freed). Returns the cancellation e-mails to send.
-export async function cancelYielded(
-  tx: Tx,
-  holders: { meetingId: number }[],
-  actorEmployeeId: number
-): Promise<number[]> {
-  const notificationIds: number[] = [];
-
-  for (const holder of holders) {
-    await tx
-      .update(meeting)
-      .set({
-        meetingStatusId: MEETING_STATUS.CANCELLED,
-        updated_at: new Date(),
-      })
-      .where(eq(meeting.meeting_id, holder.meetingId));
-
-    await createAuditLog(
-      holder.meetingId,
-      AUDIT_ACTION.CANCELLED,
-      "Cancelled: organizer approved a room request for this slot",
-      actorEmployeeId,
-      tx
-    );
-
-    notificationIds.push(
-      await queueMeetingNotification(tx, holder.meetingId, "CANCELLED")
-    );
-  }
-
-  return notificationIds;
-}
-
-// Takes the slot away from every holder. The higher-priority meeting gets the
-// room straight away; each bumped meeting keeps its room, date and time on
-// record but is set to PENDING_RESCHEDULE (no longer holding the slot) until its
-// organizer picks another room or time. A meeting that starts within the
-// response window has no time to wait and is cancelled. Call before inserting
-// the claiming meeting, so the room-overlap constraint is satisfied.
+// Sets every holder to PREEMPTED. Call before inserting the claiming meeting,
+// so the room-overlap constraint is satisfied.
 export async function releaseSlots(
   tx: Tx,
-  holders: SlotHolder[],
-  now: Date = new Date()
+  holders: SlotHolder[]
 ): Promise<ReleasedSlot[]> {
-  const released: ReleasedSlot[] = [];
-
   for (const holder of holders) {
-    const deadline = bumpDeadline(holder.meetingDate, holder.startTime);
-    const cancelled = deadline.getTime() <= now.getTime();
-
     await tx
       .update(meeting)
       .set({
-        meetingStatusId: cancelled
-          ? MEETING_STATUS.CANCELLED
-          : MEETING_STATUS.PENDING_RESCHEDULE,
+        meetingStatusId: MEETING_STATUS.PREEMPTED,
         updated_at: new Date(),
       })
       .where(eq(meeting.meeting_id, holder.meetingId));
-
-    released.push({ holder, cancelled, deadline });
   }
 
-  return released;
+  return holders.map((holder) => ({ holder }));
 }
 
-// Records each bump against the meeting that took the slot and queues the
-// e-mail to the bumped meeting's attendees. Returns the notification ids to
-// dispatch after commit.
+// Records each preemption (append-only history + audit log) against the
+// meeting that took the slot and queues the e-mail to the preempted meeting's
+// attendees. Returns the notification ids to dispatch after commit.
 export async function recordBumps(
   tx: Tx,
   released: ReleasedSlot[],
   claimants: { meetingId: number; meetingDate: string }[],
-  actorEmployeeId: number
+  incoming: {
+    actorEmployeeId: number;
+    groupId: number | null;
+    groupName: string | null;
+    priority: number;
+  }
 ): Promise<number[]> {
   const notificationIds: number[] = [];
 
-  for (const { holder, cancelled, deadline } of released) {
+  for (const { holder } of released) {
     const claimant = claimants.find(
       (c) => c.meetingDate === holder.meetingDate
     );
@@ -256,36 +185,39 @@ export async function recordBumps(
     // Every released slot belongs to one of the requested dates.
     if (!claimant) continue;
 
-    await tx.insert(reschedule_requests).values({
-      bumped_meeting_id: holder.meetingId,
-      claimant_meeting_id: claimant.meetingId,
-      status: cancelled ? "AUTO_CANCELLED" : "PENDING",
-      deadline,
-      resolved_at: cancelled ? new Date() : null,
+    const reason = `Preempted by ${incoming.groupName ?? "default-policy"} booking #${claimant.meetingId}: priority ${incoming.priority} outranks ${holder.priority}`;
+
+    await tx.insert(bookingPriorityHistory).values({
+      incomingBookingId: claimant.meetingId,
+      affectedBookingId: holder.meetingId,
+      previousGroupId: holder.groupId,
+      previousPriority: holder.priority,
+      incomingGroupId: incoming.groupId,
+      incomingPriority: incoming.priority,
+      reason,
+      actorEmployeeId: incoming.actorEmployeeId,
     });
 
     await createAuditLog(
       holder.meetingId,
-      cancelled ? AUDIT_ACTION.BUMPED_CANCELLED : AUDIT_ACTION.BUMPED_PENDING,
-      cancelled
-        ? `Cancelled: slot claimed by higher-priority meeting #${claimant.meetingId} and too close to the start to reschedule`
-        : `Slot claimed by higher-priority meeting #${claimant.meetingId}: waiting for the organizer to change the room or time`,
-      actorEmployeeId,
+      AUDIT_ACTION.PREEMPTED,
+      reason,
+      incoming.actorEmployeeId,
       tx
     );
 
     notificationIds.push(
-      await queueMeetingNotification(tx, holder.meetingId, "BUMPED")
+      await queueMeetingNotification(tx, holder.meetingId, "PREEMPTED")
     );
   }
 
   return notificationIds;
 }
 
-// Cancels every pending bumped meeting whose organizer did not change it in
-// time (BUMP_RESPONSE_CUTOFF_MINUTES before it starts) and e-mails its
-// attendees. Run by the cron tick; rows are claimed with SKIP LOCKED so several
-// instances never cancel (or mail) the same meeting twice.
+// Legacy: cancels every pending bumped meeting (from the earlier engine) whose
+// organizer did not change it in time and e-mails its attendees. Run by the
+// cron tick; rows are claimed with SKIP LOCKED so several instances never
+// cancel (or mail) the same meeting twice.
 export async function processExpiredBumps(now: Date = new Date()) {
   const notificationIds: number[] = [];
 
@@ -342,37 +274,30 @@ export async function processExpiredBumps(now: Date = new Date()) {
   return notificationIds.length;
 }
 
-// Rooms that look busy for the slot but could be claimed by `role`: every
-// meeting in them is of lower priority than the best type the role may book
-// (its rank already includes the role's boost, see getAllowedMeetingTypes).
-// Used only to show those rooms in the picker - the booking itself re-checks
-// everything for the type actually chosen.
+// Rooms that look busy for the slot but that this employee's group could take:
+// every confirmed meeting in them has a strictly lower priority and has not
+// started. Used only to show those rooms in the picker - the booking itself
+// re-checks everything under lock.
 export async function getClaimableRooms(
-  role: string,
+  employeeId: number,
   meetingDate: string,
   startTime: string,
   endTime: string,
   participantCount: number,
   now?: Date
 ) {
-  const allowed = await getAllowedMeetingTypes(role);
+  const claimant = await getPriorityContext(employeeId);
 
-  if (allowed.length === 0) return [];
-
-  const bestRank = Math.min(...allowed.map((t) => t.priorityRank));
+  if (!claimant.canPreempt) return [];
 
   const holders = await db
     .select({
       roomId: meeting.room_id,
       meetingDate: meeting.meeting_date,
       startTime: meeting.start_time,
-      priorityRank: bookedEffectiveRank,
+      priority: bookedPriority,
     })
     .from(meeting)
-    .innerJoin(
-      meetingTypes,
-      eq(meetingTypes.meetingTypeId, meeting.meetingTypeId)
-    )
     .where(
       and(
         eq(meeting.meeting_date, meetingDate),
@@ -391,7 +316,7 @@ export async function getClaimableRooms(
     .filter(([, list]) =>
       list.every(
         (h) =>
-          h.priorityRank > bestRank &&
+          h.priority > claimant.priority &&
           !isSlotStartInPast(h.meetingDate, h.startTime, now)
       )
     )
@@ -399,16 +324,13 @@ export async function getClaimableRooms(
 
   if (claimableIds.length === 0) return [];
 
-  const rooms = await db
+  return db
     .select()
     .from(room)
     .where(
       and(
         inArray(room.room_id, claimableIds),
-        eq(room.availabilityStatusId, AVAILABILITY_STATUS.AVAILABLE),
-        gte(room.room_capacity, participantCount)
+        eq(room.availabilityStatusId, AVAILABILITY_STATUS.AVAILABLE)
       )
     );
-
-  return rooms;
 }

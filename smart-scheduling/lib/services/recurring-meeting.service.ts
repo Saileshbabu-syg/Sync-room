@@ -21,6 +21,7 @@ type CreateRecurringMeetingInput = {
   frequency_id: number;
   occurrence_count: number;
   participantEmployeeIds?: number[];
+  optionalParticipantEmployeeIds?: number[];
   // Occurrences to leave out (must be dates of the generated series).
   skip_dates?: string[];
   notify?: boolean;
@@ -76,6 +77,8 @@ export async function createRecurringMeeting(data: CreateRecurringMeetingInput) 
     participantCount: data.participantCount,
     meetingTypeId: data.meetingTypeId,
     participantEmployeeIds: data.participantEmployeeIds,
+    optionalParticipantEmployeeIds: data.optionalParticipantEmployeeIds,
+    requestedOccurrences: data.occurrence_count,
     recurrence: {
       frequencyId: data.frequency_id,
       // What is actually booked, which is less than requested when dates were

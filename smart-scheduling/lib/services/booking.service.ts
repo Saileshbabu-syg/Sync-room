@@ -14,24 +14,29 @@ import {
 import {
   AVAILABILITY_STATUS,
   MEETING_STATUS,
+  PERMISSION,
 } from "@/lib/constants";
 import { dbErrorCode, PG_EXCLUSION_VIOLATION } from "@/lib/api";
 import type { Tx } from "@/lib/db-types";
-import { effectiveRank } from "@/lib/priority-rank";
-import { isSlotStartInPast, normalizeTime, timeToSeconds } from "@/lib/time";
+import {
+  isSlotStartInPast,
+  normalizeTime,
+  nowInAppTimezone,
+  timeToSeconds,
+} from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
 import { findConflictingDates } from "./conflict-check.service";
-import { isMeetingTypeAllowedForRole } from "./meeting-type-access.service";
+import { isMeetingTypeAllowed } from "./meeting-type-access.service";
 import {
   dispatchNotification,
   queueMeetingNotification,
 } from "./notification.service";
+import { getPriorityContext } from "./group-context.service";
+import { checkBookingPolicy, getBookingPolicy } from "./booking-policy.service";
 import {
-  cancelYielded,
   canBumpAll,
   findSlotHolders,
-  maxPriorityBoost,
   recordBumps,
   releaseSlots,
   type ReleasedSlot,
@@ -50,14 +55,14 @@ import { createRemindersForMeetings } from "./reminder.service";
 //  * The room row is read with FOR SHARE inside that transaction, so the
 //    availability check sees the current status and a concurrent
 //    "set room to maintenance" update waits for the booking (and vice versa).
-//  * Priority: a slot held only by meetings of strictly lower priority (see
-//    priority.service) is taken over instead of rejected - those meetings are
-//    put on hold (PENDING_RESCHEDULE) for their organizers to move, and
-//    cancelled automatically if they do not; their attendees are e-mailed.
-//    Rank = meeting type rank adjusted by the roles of organizer and attendees.
+//  * Priority: the organizer's CURRENT group and permissions are read from the
+//    database under the room lock (never from the client). A slot held only by
+//    confirmed, not-yet-started meetings of strictly lower group priority (see
+//    priority.service) is taken over instead of rejected: those meetings become
+//    PREEMPTED in the same transaction, with history rows, and their attendees
+//    are e-mailed. The group and priority used are stored on the new meetings.
 
-// The message for "this single slot is taken"; the booking route recognises it
-// to offer a room request instead of a bare error.
+// The message for "this single slot is taken".
 export const SLOT_TAKEN_MESSAGE = "Room is already booked for the selected time slot";
 
 export class BookingError extends Error {
@@ -97,13 +102,13 @@ export type BookingInput = {
   participantCount: number;
   meetingTypeId: number;
   participantEmployeeIds?: number[];
+  // Invited, but not essential: they get the same invitation (marked optional)
+  // and their answer never affects the booking.
+  optionalParticipantEmployeeIds?: number[];
   recurrence?: { frequencyId: number; occurrenceCount: number };
-  // Meetings whose organizer has agreed to give the slot up (an approved room
-  // request): they are cancelled whatever their priority.
-  yieldMeetingIds?: number[];
-  // Never take a slot from another meeting, whatever the priority (used when a
-  // request is completed for an approved room request).
-  noBump?: boolean;
+  // How many occurrences the user asked for (some may be skipped later), for
+  // the group's series-length limit.
+  requestedOccurrences?: number;
   // Runs inside the booking transaction, after the meetings are inserted; if
   // it throws, the whole booking rolls back.
   inTransaction?: (tx: Tx, meetings: Meeting[]) => Promise<void>;
@@ -137,12 +142,29 @@ export async function createBooking(input: BookingInput) {
     throw new BookingError("Meetings cannot be booked in the past", 400);
   }
 
-  const requestedAttendees = input.participantEmployeeIds ?? [];
+  const requestedAttendees = [...new Set(input.participantEmployeeIds ?? [])];
+  const optionalAttendees = [
+    ...new Set(input.optionalParticipantEmployeeIds ?? []),
+  ];
   const maximumAttendees = input.participantCount - 1;
 
-  // Organizer is counted as one participant, so attendees can only be
-  // participant_count - 1.
-  if (requestedAttendees.length > maximumAttendees) {
+  // One person, one list: never both, and never the organizer (who is always
+  // included).
+  if (
+    optionalAttendees.some(
+      (id) =>
+        id === input.organizerEmployeeId || requestedAttendees.includes(id)
+    )
+  ) {
+    throw new BookingError(
+      "An employee cannot be both a participant and an optional participant.",
+      400
+    );
+  }
+
+  // Organizer is counted as one participant, so everyone else (mandatory and
+  // optional together) can only be participant_count - 1.
+  if (requestedAttendees.length + optionalAttendees.length > maximumAttendees) {
     throw new BookingError(
       `You can add only ${maximumAttendees} attendee(s). The organizer is counted automatically.`,
       400
@@ -150,8 +172,13 @@ export async function createBooking(input: BookingInput) {
   }
 
   const attendeeIds = [
-    ...new Set([input.organizerEmployeeId, ...requestedAttendees]),
+    ...new Set([
+      input.organizerEmployeeId,
+      ...requestedAttendees,
+      ...optionalAttendees,
+    ]),
   ];
+  const optionalSet = new Set(optionalAttendees);
 
   let result;
 
@@ -180,17 +207,41 @@ export async function createBooking(input: BookingInput) {
         );
       }
 
-      if (input.participantCount > roomDetails.room_capacity) {
+      // Headcount above the room's capacity is allowed on purpose: the booking
+      // screen only warns the organizer, it never blocks the booking.
+
+      // Trusted standing of the organizer, read under the room lock.
+      const claimant = await getPriorityContext(input.organizerEmployeeId, tx);
+
+      if (!claimant.permissions.has(PERMISSION.BOOKING_CREATE)) {
         throw new BookingError(
-          `Room capacity exceeded. Room capacity is ${roomDetails.room_capacity}.`,
-          400
+          "Your group is not allowed to create bookings.",
+          403
         );
+      }
+
+      // The group's own rules: room list, recurring permission, longest
+      // meeting, how far ahead, series length. Read under the room lock.
+      const policyProblem = checkBookingPolicy(
+        await getBookingPolicy(input.organizerEmployeeId, tx, claimant),
+        {
+          roomId: input.roomId,
+          startTime,
+          endTime,
+          occurrenceDates: input.occurrenceDates,
+          isSeries,
+          requestedOccurrences: input.requestedOccurrences,
+        },
+        nowInAppTimezone(input.now).date
+      );
+
+      if (policyProblem) {
+        throw new BookingError(policyProblem.message, policyProblem.status);
       }
 
       const [meetingTypeRow] = await tx
         .select({
           id: meetingTypes.meetingTypeId,
-          priorityRank: meetingTypes.priorityRank,
         })
         .from(meetingTypes)
         .where(eq(meetingTypes.meetingTypeId, input.meetingTypeId));
@@ -200,14 +251,17 @@ export async function createBooking(input: BookingInput) {
       }
 
       if (
-        !(await isMeetingTypeAllowedForRole(
-          input.organizerRole,
+        !(await isMeetingTypeAllowed(
+          {
+            employeeId: input.organizerEmployeeId,
+            roleName: input.organizerRole,
+          },
           input.meetingTypeId,
           tx
         ))
       ) {
         throw new BookingError(
-          "Your role is not allowed to book this meeting type.",
+          "Your group is not allowed to book this meeting type.",
           403
         );
       }
@@ -246,16 +300,8 @@ export async function createBooking(input: BookingInput) {
       );
 
       let released: ReleasedSlot[] = [];
-      let yieldedNotificationIds: number[] = [];
 
       if (conflictingDates.length > 0) {
-        // The booking's rank counts the roles of everyone in it (organizer
-        // included), so a manager in the meeting lifts it.
-        const claimantRank = effectiveRank(
-          meetingTypeRow.priorityRank,
-          await maxPriorityBoost(tx, attendeeIds)
-        );
-
         const holders = await findSlotHolders(
           tx,
           input.roomId,
@@ -264,16 +310,9 @@ export async function createBooking(input: BookingInput) {
           endTime
         );
 
-        const yielded = new Set(input.yieldMeetingIds ?? []);
-        const yieldedHolders = holders.filter((h) => yielded.has(h.meetingId));
-        const others = holders.filter((h) => !yielded.has(h.meetingId));
-
         // Only a booking that outranks EVERY other meeting in the way may
-        // proceed; meetings whose organizer agreed to leave need no rank.
-        if (
-          (input.noBump && others.length > 0) ||
-          !canBumpAll(others, claimantRank, input.now)
-        ) {
+        // proceed.
+        if (!canBumpAll(holders, claimant, input.now)) {
           throw new BookingError(
             isSeries
               ? "Room is already booked for one or more occurrences"
@@ -284,12 +323,7 @@ export async function createBooking(input: BookingInput) {
           );
         }
 
-        yieldedNotificationIds = await cancelYielded(
-          tx,
-          yieldedHolders,
-          input.organizerEmployeeId
-        );
-        released = await releaseSlots(tx, others, input.now);
+        released = await releaseSlots(tx, holders);
       }
 
       let recurringMeetingId: number | null = null;
@@ -324,6 +358,10 @@ export async function createBooking(input: BookingInput) {
             start_time: startTime,
             end_time: endTime,
             recurringMeetingId,
+            // Snapshot of the standing used for this booking; later group or
+            // priority changes never rewrite it.
+            groupIdAtBooking: claimant.groupId,
+            priorityAtBooking: claimant.priority,
           }))
         )
         .returning();
@@ -339,7 +377,12 @@ export async function createBooking(input: BookingInput) {
           meetingId: m.meeting_id,
           meetingDate: m.meeting_date,
         })),
-        input.organizerEmployeeId
+        {
+          actorEmployeeId: input.organizerEmployeeId,
+          groupId: claimant.groupId,
+          groupName: claimant.groupName,
+          priority: claimant.priority,
+        }
       );
 
       await tx.insert(meeting_attendees).values(
@@ -347,6 +390,13 @@ export async function createBooking(input: BookingInput) {
           attendeeIds.map((employeeId) => ({
             meeting_id: m.meeting_id,
             employee_id: employeeId,
+            // The organizer needs no invitation; everyone else starts without
+            // an answer.
+            response_status:
+              employeeId === input.organizerEmployeeId
+                ? "ACCEPTED"
+                : "NO_RESPONSE",
+            is_optional: optionalSet.has(employeeId),
           }))
         )
       );
@@ -380,15 +430,30 @@ export async function createBooking(input: BookingInput) {
         "BOOKED"
       );
 
+      // One invitation per invited participant (anchored on the first
+      // occurrence; their answer covers a whole series).
+      const invitationNotificationIds: number[] = [];
+
+      for (const employeeId of attendeeIds) {
+        if (employeeId === input.organizerEmployeeId) continue;
+
+        invitationNotificationIds.push(
+          await queueMeetingNotification(
+            tx,
+            insertedMeetings[0].meeting_id,
+            "INVITED",
+            employeeId
+          )
+        );
+      }
+
       return {
         meetings: insertedMeetings,
         recurringMeetingId,
         notificationId,
-        // Side e-mails to organizers who lost their slot (bumped or yielded).
-        otherNotificationIds: [
-          ...bumpNotificationIds,
-          ...yieldedNotificationIds,
-        ],
+        invitationNotificationIds,
+        // Side e-mails to organizers who lost their slot (bumped).
+        otherNotificationIds: bumpNotificationIds,
       };
     });
   } catch (error) {
@@ -434,6 +499,9 @@ export async function createBooking(input: BookingInput) {
     dispatchNotification(result.notificationId);
 
     for (const id of result.otherNotificationIds) dispatchNotification(id);
+    for (const id of result.invitationNotificationIds) {
+      dispatchNotification(id);
+    }
   }
 
   return result;

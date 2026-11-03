@@ -118,13 +118,6 @@ export async function rescheduleMeeting(input: RescheduleInput) {
       );
     }
 
-    if (existing.participantCount > roomDetails.room_capacity) {
-      throw new RescheduleError(
-        `Room capacity exceeded. Room capacity is ${roomDetails.room_capacity}.`,
-        400
-      );
-    }
-
     // The meeting itself no longer holds a slot, so it cannot conflict with
     // itself.
     const conflicts = await findConflictingDates(

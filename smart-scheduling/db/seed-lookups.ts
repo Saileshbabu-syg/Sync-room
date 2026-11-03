@@ -30,6 +30,8 @@ export const MEETING_STATUS_ROWS = [
   { id: MEETING_STATUS.CANCELLED, name: "Cancelled" },
   // Same spelling db/seed-priority.ts and migration 0026 use.
   { id: MEETING_STATUS.PENDING_RESCHEDULE, name: "PENDING_RESCHEDULE" },
+  // Same spelling migration 0027 uses.
+  { id: MEETING_STATUS.PREEMPTED, name: "PREEMPTED" },
 ] as const;
 
 export const AVAILABILITY_ROWS = [

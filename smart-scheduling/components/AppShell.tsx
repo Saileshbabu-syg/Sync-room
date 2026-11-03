@@ -15,6 +15,10 @@ type UserProfile = {
   email: string;
   role: string;
   imageUrl: string | null;
+  isAdmin: boolean;
+  canManageGroups: boolean;
+  canManageRooms: boolean;
+  canViewBookingDashboard: boolean;
 };
 
 type Props = {
@@ -30,7 +34,6 @@ const STORAGE_KEY = "sidebarCollapsed";
 // pages and the booking success page have no Back button.
 function backTarget(pathname: string): { href?: string } | null {
   if (/^\/bookings\/[^/]+$/.test(pathname)) return { href: "/bookings" };
-  if (/^\/requests\/[^/]+$/.test(pathname)) return { href: "/requests" };
   if (pathname === "/booking/success") return null;
 
   const depth = pathname.split("/").filter(Boolean).length;
@@ -94,7 +97,12 @@ export default function AppShell({ children, session, userProfile }: Props) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <BookingSidebar collapsed={collapsed} onToggle={toggle} />
+        <BookingSidebar
+          collapsed={collapsed}
+          onToggle={toggle}
+          showGroupManagement={userProfile.canManageGroups}
+          showBookingDashboard={userProfile.canViewBookingDashboard}
+        />
 
         <main className="min-w-0 flex-1 overflow-y-auto">
           {fullWidth ? (

@@ -13,7 +13,8 @@ import {
   parseIdParam,
   readJson,
 } from "@/lib/api";
-import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
+import { MEETING_STATUS } from "@/lib/constants";
+import { canManageRooms } from "@/lib/services/group-context.service";
 import { nowInAppTimezone } from "@/lib/time";
 
 import { and, eq, gt, or, sql } from "drizzle-orm";
@@ -46,11 +47,11 @@ export async function PATCH(
 
     // Admin status is checked against the Employee record on every request,
     // so a demoted admin loses this immediately.
-    if (organizer.role !== ROLE_ADMIN) {
+    if (!(await canManageRooms(organizer.employeeId, organizer.role))) {
       return NextResponse.json(
         {
           success: false,
-          message: "Only Admin can edit rooms.",
+          message: "You do not have permission to edit rooms.",
         },
         {
           status: 403,

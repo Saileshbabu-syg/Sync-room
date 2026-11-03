@@ -3,12 +3,12 @@ import cron from "node-cron";
 import { updateCompletedMeetings } from "@/lib/services/meeting-status.service";
 import { processPendingNotifications } from "@/lib/services/notification.service";
 import { processExpiredBumps } from "@/lib/services/priority.service";
+import { runScheduledSync } from "@/lib/services/entra-sync.service";
 import { processDueReminders } from "@/lib/services/reminder.service";
-import { processRoomRequests } from "@/lib/services/room-request.service";
 
-// One tick: cancel bumped meetings nobody rescheduled in time, mark finished meetings, send due reminders, retry undelivered
-// booking e-mails, then room requests: expire the ones that ran out of time,
-// book approved ones whose room became free, retry their e-mail. Exported so it can be run (and tested) without the timer.
+// One tick: cancel bumped meetings nobody rescheduled in time, mark finished
+// meetings, send due reminders and retry undelivered booking e-mails. Exported
+// so it can be run (and tested) without the timer.
 //
 // Every step claims its rows with FOR UPDATE SKIP LOCKED, so several server
 // instances (or Next.js workers) each running this job do not send anything
@@ -18,9 +18,17 @@ export async function runReminderTick() {
   const completed = await updateCompletedMeetings();
   const reminders = await processDueReminders();
   const notifications = await processPendingNotifications();
-  const roomRequests = await processRoomRequests();
 
-  return { expiredBumps, completed, reminders, notifications, roomRequests };
+  // Automatic Entra ID sync, when an admin turned it on. Not awaited: a long
+  // sync must never delay reminders, and only one sync can run at a time.
+  void runScheduledSync().catch((error) =>
+    console.error(
+      "Scheduled Entra sync error:",
+      error instanceof Error ? error.message : "unknown error"
+    )
+  );
+
+  return { expiredBumps, completed, reminders, notifications };
 }
 
 type Tick = typeof runReminderTick;

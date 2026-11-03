@@ -70,7 +70,7 @@ export default async function RoomsPage() {
             <RoomListCard
               key={room.roomId}
               room={room}
-              isAdmin={currentUser.role === "Admin"}
+              isAdmin={currentUser.canManageRooms}
             />
 
           ))}

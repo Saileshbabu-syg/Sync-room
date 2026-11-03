@@ -5,7 +5,7 @@ import { availabilityMaster, room } from "@/db/schema";
 import { like } from "drizzle-orm";
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import { guardMutation, jsonError, readJson } from "@/lib/api";
-import { ROLE_ADMIN } from "@/lib/constants";
+import { canManageRooms } from "@/lib/services/group-context.service";
 import { roomBodySchema } from "@/lib/validations/room.validator";
 
 export async function GET(request: Request) {
@@ -48,9 +48,9 @@ export async function POST(request: Request) {
     }
 
     // Current role, re-read from the Employee record on every request.
-    if (organizer.role !== ROLE_ADMIN) {
+    if (!(await canManageRooms(organizer.employeeId, organizer.role))) {
       return NextResponse.json(
-        { message: "Only Admin can create rooms." },
+        { message: "You do not have permission to create rooms." },
         { status: 403 }
       );
     }

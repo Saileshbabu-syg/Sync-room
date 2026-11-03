@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import BookingCard from "@/components/BookingCard";
+import type { BumpDetails } from "@/components/BumpedDetails";
 
 import { Label } from "@/components/ui/label";
 
@@ -27,6 +28,7 @@ type Meeting = {
   meetingType: string | null;
   meetingStatus: string | null;
   canManage: boolean;
+  bumped: BumpDetails | null;
 };
 
 type Props = {
@@ -74,6 +76,14 @@ const completedMeetings = filterByDate(
     (meeting) =>
       meeting.meetingStatus ===
       "Completed"
+  )
+);
+
+const bumpedMeetings = filterByDate(
+  meetings.filter(
+    (meeting) =>
+      meeting.meetingStatus ===
+      "Replaced"
   )
 );
 
@@ -149,7 +159,7 @@ const cancelledMeetings = filterByDate(
 
       <div className="space-y-6">
 
-  <TabsList className="grid w-full grid-cols-3">
+  <TabsList className="grid w-full grid-cols-4">
 
     <TabsTrigger value="Scheduled">
       Scheduled ({scheduledMeetings.length})
@@ -157,6 +167,10 @@ const cancelledMeetings = filterByDate(
 
     <TabsTrigger value="Completed">
       Completed ({completedMeetings.length})
+    </TabsTrigger>
+
+    <TabsTrigger value="Replaced">
+      Replaced Bookings ({bumpedMeetings.length})
     </TabsTrigger>
 
     <TabsTrigger value="Cancelled">
@@ -210,6 +224,15 @@ const cancelledMeetings = filterByDate(
   {renderMeetings(
     completedMeetings,
     "Completed"
+  )}
+
+</TabsContent>
+
+<TabsContent value="Replaced">
+
+  {renderMeetings(
+    bumpedMeetings,
+    "Replaced"
   )}
 
 </TabsContent>

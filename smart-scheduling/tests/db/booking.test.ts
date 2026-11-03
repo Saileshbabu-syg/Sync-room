@@ -164,14 +164,14 @@ describe("back-to-back and overlapping slots (F-09)", () => {
     assert.equal(await checkMeetingConflict(f.rooms.alpha.room_id, DAY(), "11:00", "12:00"), false);
     assert.equal(await checkMeetingConflict(f.rooms.alpha.room_id, DAY(), "10:59", "12:00"), true);
 
-    const free = await getAvailableRooms(DAY(), "11:00", "12:00", 2);
+    const free = await getAvailableRooms(DAY(), "11:00", "12:00");
     assert.ok(free.some((r) => r.room_id === f.rooms.alpha.room_id));
 
-    const busy = await getAvailableRooms(DAY(), "10:30", "11:30", 2);
+    const busy = await getAvailableRooms(DAY(), "10:30", "11:30");
     assert.ok(!busy.some((r) => r.room_id === f.rooms.alpha.room_id));
 
     assert.equal(
-      (await isRoomAvailable(f.rooms.alpha.room_id, DAY(), "11:00", "12:00", 2)).success,
+      (await isRoomAvailable(f.rooms.alpha.room_id, DAY(), "11:00", "12:00")).success,
       true
     );
   });
@@ -520,11 +520,11 @@ describe("room under maintenance (F-06)", () => {
   });
 
   it("search APIs also hide rooms under maintenance", async () => {
-    const free = await getAvailableRooms(DAY(), "10:00", "11:00", 2);
+    const free = await getAvailableRooms(DAY(), "10:00", "11:00");
 
     assert.ok(!free.some((r) => r.room_id === f.rooms.gamma.room_id));
     assert.equal(
-      (await isRoomAvailable(f.rooms.gamma.room_id, DAY(), "10:00", "11:00", 2)).success,
+      (await isRoomAvailable(f.rooms.gamma.room_id, DAY(), "10:00", "11:00")).success,
       false
     );
   });
@@ -588,7 +588,42 @@ describe("role -> meeting type rules (F-05)", () => {
 
   it("rejects an unknown meeting type with 404 and an unknown role with 403", async () => {
     assert.equal((await rejection(createBooking(input({ meetingTypeId: 999999 })))).status, 404);
-    assert.equal((await rejection(createBooking(input({ organizerRole: "Intern" })))).status, 403);
+    // Someone with no group falls back to their role's list; an unknown role
+    // has none.
+    assert.equal(
+      (
+        await rejection(
+          createBooking(
+            input({
+              organizerEmployeeId: f.users.dave.employeeId,
+              organizerRole: "Intern",
+              participantEmployeeIds: [],
+              participantCount: 1,
+            })
+          )
+        )
+      ).status,
+      403
+    );
+  });
+
+  it("someone in a group is held to the group's list, whatever their role says", async () => {
+    // Bob's group (Employee) may not book Client Meeting, even if the role
+    // handed in were Manager.
+    const err = await rejection(
+      createBooking(
+        input({
+          organizerEmployeeId: f.users.bob.employeeId,
+          organizerRole: "Manager",
+          meetingTypeId: f.types.client,
+          participantEmployeeIds: [],
+          participantCount: 1,
+        })
+      )
+    );
+
+    assert.equal(err.status, 403);
+    assert.match(err.message, /group/i);
   });
 
   it("recurring series obey the same rule", async () => {
@@ -613,10 +648,29 @@ describe("role -> meeting type rules (F-05)", () => {
   });
 
   it("getAllowedMeetingTypes returns only the role's types (the /api/meeting-types list)", async () => {
-    const names = (await getAllowedMeetingTypes("Employee")).map((t) => t.meetingTypeName);
+    const names = (
+      await getAllowedMeetingTypes({
+        employeeId: f.users.bob.employeeId,
+        roleName: "Employee",
+      })
+    ).map((t) => t.meetingTypeName);
 
     assert.deepEqual(names.sort(), ["One-on-One", "Others", "Team Meeting"]);
-    assert.equal((await getAllowedMeetingTypes("Nobody")).length, 0);
+
+    // Dave has no group: he falls back to his role's list.
+    assert.equal(
+      (
+        await getAllowedMeetingTypes({
+          employeeId: f.users.dave.employeeId,
+          roleName: "Employee",
+        })
+      ).length,
+      3
+    );
+    assert.equal(
+      (await getAllowedMeetingTypes({ employeeId: 0, roleName: "Nobody" })).length,
+      0
+    );
   });
 });
 
@@ -630,11 +684,14 @@ describe("other booking rules", () => {
     assert.match(err.message, /past/i);
   });
 
-  it("enforces capacity and the organizer-counts-as-one attendee rule", async () => {
-    assert.equal(
-      (await rejection(createBooking(input({ roomId: f.rooms.beta.room_id, participantCount: 5 })))).status,
-      400
+  it("does not block a headcount above the room's capacity, but keeps the organizer-counts-as-one rule", async () => {
+    // Beta seats 4: a booking for 5 people is allowed (the screen only warns).
+    const { meetings } = await createBooking(
+      input({ roomId: f.rooms.beta.room_id, participantCount: 5, participantEmployeeIds: [] })
     );
+
+    assert.equal(meetings[0].participantCount, 5);
+
     assert.equal(
       (await rejection(createBooking(input({ participantCount: 2, participantEmployeeIds: [f.users.carol.employeeId, f.users.admin.employeeId] })))).status,
       400

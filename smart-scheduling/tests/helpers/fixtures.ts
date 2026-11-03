@@ -2,14 +2,18 @@ import nodemailer from "nodemailer";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
+import { seedGroups } from "@/db/seed-groups";
 import { seedLookups } from "@/db/seed-lookups";
 import {
   employee,
+  groups,
   meetingTypes,
   organizers,
   roleMeetingTypes,
   roles,
   room,
+  userGroups,
+  groupMeetingTypes,
 } from "@/db/schema";
 import { setMailTransport } from "@/lib/services/email.service";
 import { nowInAppTimezone } from "@/lib/time";
@@ -32,6 +36,7 @@ export async function ensureMigrated() {
 export async function resetData() {
   await db.execute(sql`
     TRUNCATE
+      booking_priority_history, group_audit_logs, user_groups, group_permissions, groups,
       meeting_audit_logs, reminder_logs, notifications, reschedule_requests, room_requests,
       meeting_attendees, meeting, recurring_meetings,
       "Session", "Account", "Organizer", "Employee",
@@ -79,6 +84,7 @@ export async function seedFixtures() {
   await ensureMigrated();
   await resetData();
   await seedLookups(db);
+  await seedGroups(db);
 
   // Mirrors ROLE_BOOST in db/seed-priority.ts.
   await db.update(roles).set({ priorityBoost: 1 }).where(eq(roles.roleName, "Manager"));
@@ -146,8 +152,50 @@ export async function seedFixtures() {
     ])
     .returning();
 
+  // Application groups: Manager and Employee users are placed like the real
+  // migration does. Alice (Admin) and Dave stay unassigned on purpose (default
+  // policy: lowest priority, no preemption).
+  const groupRows = await db.select().from(groups);
+  const groupId = (name: string) => groupRows.find((g) => g.name === name)!.id;
+
+  await db.insert(userGroups).values([
+    { employeeId: users.manager.employeeId, groupId: groupId("Manager") },
+    { employeeId: users.bob.employeeId, groupId: groupId("Employee") },
+    { employeeId: users.carol.employeeId, groupId: groupId("Employee") },
+  ]);
+
+  // What each group may book: the same lists the real migration copies over
+  // from the namesake role (Leadership gets every type).
+  const groupRoles: Record<string, string> = {
+    Manager: "Manager",
+    Employee: "Employee",
+    HR: "HR",
+    TL: "Team Lead",
+    Admin: "Admin",
+  };
+
+  await db.insert(groupMeetingTypes).values([
+    ...typeRows.map((t) => ({
+      groupId: groupId("Leadership"),
+      meetingTypeId: t.meetingTypeId,
+    })),
+    ...Object.entries(groupRoles).flatMap(([group, role]) =>
+      ROLE_TYPES[role].map((n) => ({
+        groupId: groupId(group),
+        meetingTypeId: typeId(n),
+      }))
+    ),
+  ]);
+
   return {
     users,
+    groupIds: {
+      leadership: groupId("Leadership"),
+      hr: groupId("HR"),
+      manager: groupId("Manager"),
+      tl: groupId("TL"),
+      employee: groupId("Employee"),
+    },
     rooms: { alpha, beta, gamma },
     types: {
       client: typeId("Client Meeting"),

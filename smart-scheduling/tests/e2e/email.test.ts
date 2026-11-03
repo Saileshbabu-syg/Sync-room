@@ -61,11 +61,15 @@ describe("outgoing e-mail through the real SMTP path (F-04, F-10)", () => {
 
     assert.equal(res.status, 201);
 
-    const [message] = await waitForMail(1);
+    // Bob (organizer) gets the confirmation, Carol her own invitation.
+    const messages = await waitForMail(2);
+    const message = messages.find((m) => m.to.includes(f.users.bob.email))!;
+    const invitation = messages.find((m) => m.to.includes(f.users.carol.email))!;
 
     assert.ok(message, "a mail reached the sink");
-    assert.ok(message.to.includes(f.users.bob.email));
-    assert.ok(message.to.includes(f.users.carol.email));
+    assert.ok(invitation, "the participant was invited");
+    assert.ok(!htmlPart(invitation.data).includes("<h1"), "invitation is escaped too");
+    assert.ok(htmlPart(invitation.data).includes("/invite?"), "Accept / Decline links");
 
     const html = htmlPart(message.data);
 

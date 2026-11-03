@@ -1,8 +1,14 @@
 import { z } from "zod";
 
 import { NO_CONTROL_CHARS } from "@/lib/validations/date-time";
+import {
+  NOT_BOTH_LISTS_MESSAGE,
+  overlappingParticipant,
+  participantFields,
+} from "@/lib/validations/participants";
 
-export const editMeetingSchema = z.object({
+export const editMeetingSchema = z
+  .object({
   title: z
     .string()
     .trim()
@@ -23,8 +29,9 @@ export const editMeetingSchema = z.object({
     .positive()
     .optional(),
 
-  participantEmployeeIds: z
-    .array(z.number().int().positive())
-    .max(100)
-    .optional(),
-});
+  ...participantFields,
+  })
+  .refine((data) => !overlappingParticipant(data), {
+    message: NOT_BOTH_LISTS_MESSAGE,
+    path: ["optionalParticipantEmployeeIds"],
+  });

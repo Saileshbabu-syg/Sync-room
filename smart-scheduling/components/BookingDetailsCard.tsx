@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { invitationCategory } from "@/lib/constants";
+import BumpedDetails, { type BumpDetails } from "@/components/BumpedDetails";
 import CancelMeetingButton from "@/components/CancelMeetingButton";
 
 import {
@@ -19,6 +21,15 @@ import { Button } from "@/components/ui/button";
 type Attendee = {
   employeeId: number;
   employeeName: string;
+  isOptional: boolean;
+  // ACCEPTED | DECLINED | NO_RESPONSE
+  response: string;
+};
+
+const RESPONSE_TEXT: Record<string, string> = {
+  ACCEPTED: "Accepted",
+  DECLINED: "Declined",
+  NO_RESPONSE: "No Response",
 };
 
 type Meeting = {
@@ -41,6 +52,9 @@ type Meeting = {
 
   // Organizer or Admin; participants only view.
   canManage: boolean;
+
+  // Set for a bumped booking: who took the room.
+  bumped?: BumpDetails | null;
 };
 
 type Props = {
@@ -181,8 +195,10 @@ export default function BookingDetailsCard({
                   ? "text-green-600"
                   : meeting.meetingStatus === "Pending reschedule"
                   ? "text-amber-600"
-                  : meeting.meetingStatus === "Completed"
+                    : meeting.meetingStatus === "Completed"
                   ? "text-blue-600"
+                  : meeting.meetingStatus === "Replaced"
+                  ? "text-orange-600"
                   : "text-red-600"
               }
             />
@@ -202,6 +218,8 @@ export default function BookingDetailsCard({
                       ? "bg-amber-100 text-amber-700"
                       : meeting.meetingStatus === "Completed"
                       ? "bg-blue-100 text-blue-700"
+                      : meeting.meetingStatus === "Replaced"
+                      ? "bg-orange-100 text-orange-800"
                       : "bg-red-100 text-red-700"
                   }`}
               >
@@ -215,6 +233,8 @@ export default function BookingDetailsCard({
         </div>
 
       </div>
+
+      {meeting.bumped && <BumpedDetails bump={meeting.bumped} />}
 
       {/* Organizer */}
 
@@ -280,6 +300,18 @@ export default function BookingDetailsCard({
 
                   <p className="text-sm text-gray-500">
                     Employee ID : {attendee.employeeId}
+                  </p>
+
+                </div>
+
+                <div className="text-right text-sm">
+
+                  <p className="font-medium">
+                    {invitationCategory(attendee.isOptional)}
+                  </p>
+
+                  <p className="text-gray-500">
+                    {RESPONSE_TEXT[attendee.response] ?? "No Response"}
                   </p>
 
                 </div>

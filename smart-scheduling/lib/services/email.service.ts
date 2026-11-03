@@ -207,7 +207,8 @@ export type MeetingEmailKind =
   | "updated"
   | "reminder"
   | "cancelled"
-  | "bumped";
+  | "bumped"
+  | "preempted";
 
 const HEADINGS: Record<MeetingEmailKind, string> = {
   scheduled: "Meeting Scheduled",
@@ -215,6 +216,7 @@ const HEADINGS: Record<MeetingEmailKind, string> = {
   reminder: "Meeting Reminder",
   cancelled: "Meeting Cancelled",
   bumped: "Meeting Room Needed - Action Required",
+  preempted: "Meeting Preempted",
 };
 
 const SERIES_HEADINGS: Record<MeetingEmailKind, string> = {
@@ -223,6 +225,16 @@ const SERIES_HEADINGS: Record<MeetingEmailKind, string> = {
   reminder: "Recurring Meeting Reminder",
   cancelled: "Recurring Meeting Cancelled",
   bumped: "Meeting Room Needed - Action Required",
+  preempted: "Meeting Preempted",
+};
+
+// Set on a "preempted" e-mail: a higher-priority group's booking took this
+// meeting's room. The meeting is cancelled for good; the organizer rebooks.
+export type MeetingPreemptionInfo = {
+  roomName: string;
+  // e.g. "a Leadership booking (priority 1)"
+  claimedBy: string;
+  rebookUrl?: string;
 };
 
 // Set on a "bumped" e-mail: a higher-priority booking took this meeting's room.
@@ -247,6 +259,7 @@ export type MeetingEmailExtras = {
   organizerName?: string;
   series?: MeetingEmailSeries;
   bump?: MeetingBumpInfo;
+  preemption?: MeetingPreemptionInfo;
 };
 
 type MeetingEmailFields = {
@@ -274,6 +287,7 @@ function renderSingle({
   endTime,
   kind = "scheduled",
   bump,
+  preemption,
 }: MeetingEmailFields) {
   // A bumped meeting is either waiting for its organizer to change it (it has
   // a deadline) or already cancelled.
@@ -281,9 +295,15 @@ function renderSingle({
   const heading = cancelledByBump ? HEADINGS.cancelled : HEADINGS[kind];
   // Neither a cancellation nor a pending meeting carries an invite: a new .ics
   // would add a stray event for a slot the meeting no longer holds.
-  const hasInvite = kind !== "cancelled" && kind !== "bumped";
+  const hasInvite =
+    kind !== "cancelled" && kind !== "bumped" && kind !== "preempted";
 
-  const bumpLines: string[] = bump
+  const bumpLines: string[] = preemption
+    ? [
+        `The meeting room (${preemption.roomName}) was needed for ${preemption.claimedBy}, which takes priority over this booking.`,
+        `This booking has been replaced and no longer holds the room. Please book another available slot${preemption.rebookUrl ? `: ${preemption.rebookUrl}` : "."}`,
+      ]
+    : bump
     ? bump.deadline
       ? [
           `The meeting room (${bump.roomName}) is required for a high-priority meeting: ${bump.claimedBy}.`,
@@ -465,40 +485,6 @@ export function renderMeetingEmail(fields: MeetingEmailFields) {
     : renderSingle(fields);
 }
 
-// A short text message (no calendar invite) for events that are not about one
-// meeting's attendees, e.g. room requests. Every line is escaped once, here.
-export async function sendNoticeEmail(
-  to: string | string[],
-  subject: string,
-  lines: string[],
-  links: { label: string; url: string }[] = []
-) {
-  const linkHtml = links
-    .map(
-      (l) =>
-        `<p><a href="${escapeHtml(l.url)}">${escapeHtml(l.label)}</a></p>`
-    )
-    .join("\n");
-
-  const html = `${lines
-    .map((l) => `<p>${escapeHtml(l)}</p>`)
-    .join("\n")}${linkHtml}`;
-
-  const text = [
-    ...lines,
-    ...(links.length > 0 ? [""] : []),
-    ...links.map((l) => `${l.label}: ${l.url}`),
-  ].join("\n");
-
-  return getTransporter().sendMail({
-    from: getMailSender(),
-    to,
-    subject: sanitizeHeaderValue(subject),
-    html,
-    text,
-  });
-}
-
 export async function sendMeetingEmail(
   to: string | string[],
   title: string,
@@ -509,7 +495,7 @@ export async function sendMeetingEmail(
   extras: MeetingEmailExtras = {}
 ) {
   const calendarInvite =
-    kind === "cancelled" || kind === "bumped"
+    kind === "cancelled" || kind === "bumped" || kind === "preempted"
       ? null
       : extras.series && kind !== "reminder"
         ? await generateSeriesCalendarInvite(
@@ -552,5 +538,120 @@ export async function sendMeetingEmail(
           },
         ]
       : [],
+  });
+}
+
+export type InvitationFields = {
+  title: string;
+  organizerName: string;
+  roomName: string;
+  meetingDate: string;
+  startTime: string;
+  endTime: string;
+  acceptUrl: string;
+  declineUrl: string;
+  // Invited as an optional participant: they may attend if available, and their
+  // answer does not affect the meeting.
+  optional?: boolean;
+  // Set for a recurring series: the answer covers every occurrence.
+  seriesNote?: string;
+};
+
+// The personal invitation each participant receives. Every dynamic value is
+// untrusted, so it is escaped once here; the two links are built by the
+// application from signed tokens (lib/invitation-token).
+const OPTIONAL_NOTE =
+  "Your attendance is optional. Attend if you are available; your answer does not affect the meeting.";
+
+export function renderInvitationEmail(fields: InvitationFields) {
+  const heading = "Meeting Invitation";
+  const details: [string, string][] = [
+    ["Title", fields.title],
+    ["Organizer", fields.organizerName],
+    ["Room", fields.roomName],
+    ["Date", withWeekday(fields.meetingDate)],
+    ["Start Time", fields.startTime],
+    ["End Time", fields.endTime],
+  ];
+
+  const button = (url: string, label: string, color: string) =>
+    `<a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 22px;margin-right:12px;border-radius:6px;background:${color};color:#ffffff;text-decoration:none;font-weight:600">${escapeHtml(label)}</a>`;
+
+  const html = `
+      <h2>${escapeHtml(heading)}</h2>
+
+      <p>${escapeHtml(fields.organizerName)} invited you to a meeting${
+        fields.optional ? " as an <strong>optional participant</strong>" : ""
+      }.</p>
+${fields.optional ? `
+      <p>${escapeHtml(OPTIONAL_NOTE)}</p>
+` : ""}${details
+  .map(
+    ([label, value]) => `
+      <p><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</p>`
+  )
+  .join("")}
+${fields.seriesNote ? `\n      <p>${escapeHtml(fields.seriesNote)}</p>\n` : ""}
+      <p style="margin-top:24px">
+        ${button(fields.acceptUrl, "Accept", "#16a34a")}
+        ${button(fields.declineUrl, "Decline", "#dc2626")}
+      </p>
+
+      <p>You will be asked to confirm your answer. You can answer once.</p>
+
+      <p>Calendar invite attached.</p>
+    `;
+
+  const text = [
+    heading,
+    "",
+    `${fields.organizerName} invited you to a meeting${
+      fields.optional ? " as an optional participant" : ""
+    }.`,
+    ...(fields.optional ? ["", OPTIONAL_NOTE] : []),
+    "",
+    ...details.map(([label, value]) => `${label}: ${value}`),
+    ...(fields.seriesNote ? ["", fields.seriesNote] : []),
+    "",
+    `Accept: ${fields.acceptUrl}`,
+    `Decline: ${fields.declineUrl}`,
+    "",
+    "You will be asked to confirm your answer. You can answer once.",
+    "Calendar invite attached.",
+  ].join("\n");
+
+  return {
+    subject: `${heading} - ${sanitizeHeaderValue(fields.title)}`,
+    html,
+    text,
+  };
+}
+
+export async function sendInvitationEmail(
+  to: string,
+  fields: InvitationFields
+) {
+  const calendarInvite = await generateCalendarInvite(
+    fields.title,
+    fields.meetingDate,
+    fields.startTime,
+    fields.endTime
+  );
+
+  const { subject, html, text } = renderInvitationEmail(fields);
+
+  return getTransporter().sendMail({
+    from: getMailSender(),
+    to,
+    subject,
+    html,
+    text,
+    attachments: [
+      {
+        filename: "meeting-invite.ics",
+        content: calendarInvite,
+        contentType: "text/calendar",
+      },
+    ],
   });
 }

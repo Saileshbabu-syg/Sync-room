@@ -8,6 +8,11 @@ import {
   isValidCalendarDate,
   isWithinBookingWindow,
 } from "@/lib/validations/date-time";
+import {
+  NOT_BOTH_LISTS_MESSAGE,
+  overlappingParticipant,
+  participantFields,
+} from "@/lib/validations/participants";
 
 export const meetingDateField = z
   .string()
@@ -46,10 +51,11 @@ export const createMeetingSchema = z
 
     ...timeFields,
 
-    participantEmployeeIds: z
-      .array(z.number().int().positive())
-      .max(100)
-      .optional(),
+    ...participantFields,
+  })
+  .refine((data) => !overlappingParticipant(data), {
+    message: NOT_BOTH_LISTS_MESSAGE,
+    path: ["optionalParticipantEmployeeIds"],
   })
   .refine((data) => data.start_time < data.end_time, {
     message: "End time must be after start time",

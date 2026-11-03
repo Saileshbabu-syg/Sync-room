@@ -16,13 +16,12 @@ import {
 import { nowInAppTimezone } from "@/lib/time";
 
 import { holdsSlot, overlapsSlot } from "./conflict-check.service";
-import { bookedEffectiveRank } from "./priority.service";
+import { bookedPriority } from "./priority.service";
 
 export async function getAvailableRooms(
   meetingDate: string,
   startTime: string,
-  endTime: string,
-  participantCount: number
+  endTime: string
 ) {
 
   // Find meetings that conflict with the requested slot (half-open intervals,
@@ -59,8 +58,8 @@ export async function getAvailableRooms(
       // Room should not already be booked
       !conflictingRoomIds.has(roomDetails.room_id)
 
-      // Room should have enough capacity
-      && roomDetails.room_capacity >= participantCount
+      // Capacity is not a filter: a room smaller than the headcount is still
+      // offered, and the booking screen warns the organizer instead.
 
       // Room should be Available
       && roomDetails.availabilityStatusId === AVAILABILITY_STATUS.AVAILABLE
@@ -72,8 +71,7 @@ export async function isRoomAvailable(
   roomId: number,
   meetingDate: string,
   startTime: string,
-  endTime: string,
-  participantCount: number
+  endTime: string
 ) {
 
   const roomDetails =
@@ -107,19 +105,7 @@ export async function isRoomAvailable(
 
   }
 
-  // Capacity validation
-
-  if (
-    participantCount >
-    roomDetails.room_capacity
-  ) {
-
-    return {
-      success: false,
-      message: `Room capacity is only ${roomDetails.room_capacity}.`,
-    };
-
-  }
+  // Capacity is deliberately not validated here (see booking.service).
 
   // Time conflict validation
 
@@ -181,8 +167,8 @@ export async function getRoomSchedule(
       startTime: meeting.start_time,
       endTime: meeting.end_time,
       status: meetingStatuses.meetingStatusName,
-      // Effective rank: includes the roles of the organizer and attendees.
-      priorityRank: bookedEffectiveRank,
+      // Group priority snapshot of the booking (1 = highest).
+      priorityRank: bookedPriority,
       meetingTypeName: meetingTypes.meetingTypeName,
       organizerEmployeeId: meeting.organizerEmployeeId,
       isAttendee: exists(

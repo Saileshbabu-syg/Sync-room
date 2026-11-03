@@ -1,4 +1,11 @@
 import { auth } from "@/auth";
+import { PERMISSION, ROLE_ADMIN } from "@/lib/constants";
+
+import {
+  canManageGroups,
+  canManageRooms,
+  getPriorityContext,
+} from "@/lib/services/group-context.service";
 import {
   resolveOrganizerByEmail,
   type CurrentOrganizer,
@@ -28,7 +35,18 @@ export async function getCurrentUserProfile() {
     return null;
   }
 
+  // Navigation visibility only. Every protected API and page re-checks this
+  // on the server; hiding a tab is never the access control.
+  const standing = await getPriorityContext(organizer.employeeId);
+
   return {
+    isAdmin: organizer.role === ROLE_ADMIN,
+    canManageGroups: await canManageGroups(
+      organizer.employeeId,
+      organizer.role
+    ),
+    canManageRooms: await canManageRooms(organizer.employeeId, organizer.role),
+    canViewBookingDashboard: standing.permissions.has(PERMISSION.DASHBOARD_VIEW),
     organizerId: organizer.organizerId,
     employeeId: organizer.employeeId,
     name: organizer.name,

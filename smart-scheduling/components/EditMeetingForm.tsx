@@ -29,15 +29,16 @@ type Props = {
   participantCount: number;
   meetingTypeId: number;
   attendeeIds: number[];
+  optionalAttendeeIds: number[];
   meetingTypes: MeetingType[];
 };
 
 export default function EditMeetingForm({
   meetingId,
   title,
-  participantCount,
   meetingTypeId,
   attendeeIds,
+  optionalAttendeeIds,
   meetingTypes,
 }: Props) {
 
@@ -51,6 +52,23 @@ export default function EditMeetingForm({
 
   const [attendees, setAttendees] =
     useState<number[]>(attendeeIds);
+
+  // Invited but not essential. Never overlaps `attendees`.
+  const [optionalAttendees, setOptionalAttendees] =
+    useState<number[]>(optionalAttendeeIds);
+
+  const setMandatory = (ids: number[]) => {
+    setAttendees(ids);
+    setOptionalAttendees((current) => current.filter((id) => !ids.includes(id)));
+  };
+
+  const setOptional = (ids: number[]) => {
+    setOptionalAttendees(ids);
+    setAttendees((current) => current.filter((id) => !ids.includes(id)));
+  };
+
+  // Everyone invited plus the organizer, who is always included.
+  const headcount = attendees.length + optionalAttendees.length + 1;
 
   const [loading, setLoading] =
     useState(false);
@@ -67,13 +85,8 @@ export default function EditMeetingForm({
     try {
 
 const participantEmployeeIds = attendees;
+      const optionalParticipantEmployeeIds = optionalAttendees;
 
-              console.log({
-  title: meetingTitle,
-  participantCount,
-  meetingTypeId: Number(selectedMeetingType),
-  participantEmployeeIds,
-});
       const response = await fetch(
         `/api/meetings/edit/${meetingId}`,
         {
@@ -87,7 +100,7 @@ const participantEmployeeIds = attendees;
           body: JSON.stringify({
             title: meetingTitle,
 
-            participantCount,
+            participantCount: headcount,
 
             meetingTypeId:
               Number(
@@ -95,6 +108,8 @@ const participantEmployeeIds = attendees;
               ),
 
             participantEmployeeIds,
+
+            optionalParticipantEmployeeIds,
           }),
         }
       );
@@ -216,7 +231,7 @@ const participantEmployeeIds = attendees;
           </Label>
 
           <Input
-            value={participantCount}
+            value={headcount}
             readOnly
           />
 
@@ -227,16 +242,55 @@ const participantEmployeeIds = attendees;
         <div>
 
           <Label>
-            Attendees
+            Participants
           </Label>
 
           <EmployeeMultiSelect
             value={attendees}
-            onChange={setAttendees}
+            onChange={setMandatory}
+            label="Participants"
+            testId="participants"
+            otherIds={optionalAttendees}
+            otherLabel="Optional participants"
+            onMoveHere={(id) => {
+              setOptionalAttendees((current) => current.filter((v) => v !== id));
+              setAttendees((current) => [...current, id]);
+            }}
+            onMoveOut={(id) => {
+              setAttendees((current) => current.filter((v) => v !== id));
+              setOptionalAttendees((current) => [...current, id]);
+            }}
+          />
+
+        </div>
+
+        {/* Optional attendees */}
+
+        <div>
+
+          <Label>
+            Optional Participants
+          </Label>
+
+          <EmployeeMultiSelect
+            value={optionalAttendees}
+            onChange={setOptional}
+            label="Optional participants"
+            testId="optional-participants"
+            otherIds={attendees}
+            otherLabel="Participants"
+            onMoveHere={(id) => {
+              setAttendees((current) => current.filter((v) => v !== id));
+              setOptionalAttendees((current) => [...current, id]);
+            }}
+            onMoveOut={(id) => {
+              setOptionalAttendees((current) => current.filter((v) => v !== id));
+              setAttendees((current) => [...current, id]);
+            }}
           />
 
           <p className="mt-2 text-sm text-gray-500">
-            Organizer is added automatically.
+            The organizer is automatically included in the meeting.
           </p>
 
         </div>

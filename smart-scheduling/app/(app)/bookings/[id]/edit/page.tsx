@@ -150,7 +150,12 @@ export default async function EditMeetingPage({
     .innerJoin(roles, eq(roles.roleId, employee.role_id))
     .where(eq(employee.employee_id, meetingData[0].organizerEmployeeId));
 
-  const allowedTypes = owner ? await getAllowedMeetingTypes(owner.role) : [];
+  const allowedTypes = owner
+    ? await getAllowedMeetingTypes({
+        employeeId: meetingData[0].organizerEmployeeId,
+        roleName: owner.role,
+      })
+    : [];
 
   const meetingTypeList = (
     await db
@@ -168,6 +173,7 @@ export default async function EditMeetingPage({
     .select({
       employeeId:
         meeting_attendees.employee_id,
+      isOptional: meeting_attendees.is_optional,
     })
     .from(meeting_attendees)
     .where(
@@ -179,14 +185,19 @@ export default async function EditMeetingPage({
 
   // Remove organizer
 
-  const attendeeIds = attendees
-    .map((a) => a.employeeId)
-    .filter(
-      (id) =>
-        id !==
-        meetingData[0]
-          .organizerEmployeeId
-    );
+  const invited = attendees.filter(
+    (a) =>
+      a.employeeId !==
+      meetingData[0].organizerEmployeeId
+  );
+
+  const attendeeIds = invited
+    .filter((a) => !a.isOptional)
+    .map((a) => a.employeeId);
+
+  const optionalAttendeeIds = invited
+    .filter((a) => a.isOptional)
+    .map((a) => a.employeeId);
 
   return (
     <>
@@ -204,6 +215,7 @@ export default async function EditMeetingPage({
             .meetingTypeId
         }
         attendeeIds={attendeeIds}
+        optionalAttendeeIds={optionalAttendeeIds}
         meetingTypes={meetingTypeList}
       />
     </>

@@ -14,9 +14,12 @@ export async function GET() {
       );
     }
 
-    // Only the types the caller's current role may book — the same list the
+    // Only the types the caller's group (or role, with no group) may book — the same list the
     // booking and edit endpoints enforce.
-    const data = await getAllowedMeetingTypes(organizer.role);
+    const data = await getAllowedMeetingTypes({
+      employeeId: organizer.employeeId,
+      roleName: organizer.role,
+    });
 
     return NextResponse.json({
       success: true,

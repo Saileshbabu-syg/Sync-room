@@ -111,6 +111,8 @@ describe("migrations (F-14)", () => {
         "role_meeting_types", "recurring_meetings", "recurrence_frequency_master",
         "reminder_logs", "notifications", "notification_type_master",
         "meeting_audit_logs", "reschedule_requests", "Account", "Session",
+        "groups", "user_groups", "group_permissions",
+        "booking_priority_history", "group_audit_logs",
       ]) {
         assert.ok(tables.includes(t), `missing table ${t}`);
       }
@@ -125,6 +127,63 @@ describe("migrations (F-14)", () => {
       ).rows;
       assert.ok(constraints.some((c) => c.conname === "meeting_no_room_overlap" && c.contype === "x"));
       assert.ok(constraints.some((c) => c.conname === "meeting_end_after_start" && c.contype === "c"));
+
+      // PREEMPTED (6) no longer holds the room, like cancelled (3) and pending (4).
+      const overlap = await pool.query(
+        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'meeting_no_room_overlap'`
+      );
+      assert.match(overlap.rows[0].def, /3, 4, 6/);
+
+      // One active group per employee, enforced by the database.
+      const index = await pool.query(
+        `SELECT indexdef FROM pg_indexes WHERE indexname = 'user_groups_one_active_per_employee_idx'`
+      );
+      assert.match(index.rows[0].indexdef, /UNIQUE.*employee_id.*effective_until IS NULL/);
+
+      const seeded = await pool.query(`SELECT name, priority FROM groups ORDER BY priority, id`);
+      assert.deepEqual(
+        seeded.rows.map((g) => [g.name, g.priority]),
+        [["Leadership", 1], ["HR", 2], ["Manager", 3], ["TL", 4], ["Employee", 5], ["Admin", 5]]
+      );
+
+      const status = await pool.query(`SELECT meeting_status_name FROM meeting_statuses WHERE meeting_status_id = 6`);
+      assert.equal(status.rows[0].meeting_status_name, "PREEMPTED");
+
+      // 0029: optional participants, Entra object id, per-group meeting types.
+      const columns = await pool.query(
+        `SELECT table_name, column_name FROM information_schema.columns
+         WHERE (table_name = 'meeting_attendees' AND column_name = 'is_optional')
+            OR (table_name = 'Employee' AND column_name = 'entra_object_id')`
+      );
+      assert.equal(columns.rowCount, 2);
+
+      const optional = await pool.query(
+        `SELECT is_nullable, column_default FROM information_schema.columns
+         WHERE table_name = 'meeting_attendees' AND column_name = 'is_optional'`
+      );
+      assert.equal(optional.rows[0].is_nullable, "NO");
+      assert.match(optional.rows[0].column_default, /false/);
+
+      const unique = await pool.query(
+        `SELECT 1 FROM pg_constraint WHERE conname = 'Employee_entra_object_id_unique' AND contype = 'u'`
+      );
+      assert.equal(unique.rowCount, 1, "one employee per Entra object id");
+
+      const oneRunning = await pool.query(
+        `SELECT indexdef FROM pg_indexes WHERE indexname = 'employee_sync_runs_one_running_idx'`
+      );
+      assert.match(oneRunning.rows[0].indexdef, /UNIQUE.*RUNNING/);
+
+      // Every group starts with the meeting types of its namesake role (none
+      // here: a new database has no roles mapped yet), and Admin is a group.
+      assert.equal(
+        (await pool.query(`SELECT 1 FROM groups WHERE name = 'Admin'`)).rowCount,
+        1
+      );
+      assert.equal(
+        (await pool.query(`SELECT 1 FROM group_meeting_types`)).rowCount,
+        0
+      );
     });
   });
 

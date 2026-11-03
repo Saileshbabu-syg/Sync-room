@@ -1,6 +1,11 @@
 import { auth } from "@/auth";
 import { parseIdParam } from "@/lib/api";
-import { MEETING_STATUS_LABEL, ROLE_ADMIN } from "@/lib/constants";
+import {
+  MEETING_STATUS,
+  MEETING_STATUS_LABEL,
+  ROLE_ADMIN,
+} from "@/lib/constants";
+import { getBumpInfo } from "@/lib/services/bump-info.service";
 import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
 
@@ -165,6 +170,10 @@ const attendees = await db
 
     employeeName:
       employee.employee_name,
+
+    isOptional: meeting_attendees.is_optional,
+
+    response: meeting_attendees.response_status,
   })
   .from(meeting_attendees)
 
@@ -189,8 +198,15 @@ const attendees = await db
     )
   );
 
+const bumped =
+  meetingData[0].meetingStatusId === MEETING_STATUS.PREEMPTED
+    ? ((await getBumpInfo([meetingId])).get(meetingId) ?? null)
+    : null;
+
 const meetingDetails = {
   ...meetingData[0],
+
+  bumped,
 
   canManage:
     isOrganizer || userProfile[0].role === ROLE_ADMIN,
@@ -212,6 +228,8 @@ const meetingDetails = {
   attendees: attendees.map((attendee) => ({
     employeeId: attendee.employeeId ?? 0,
     employeeName: attendee.employeeName ?? "Unknown Employee",
+    isOptional: attendee.isOptional,
+    response: attendee.response,
   })),
 };
 

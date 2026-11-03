@@ -12,14 +12,14 @@ import {
   parseIdParam,
   rateLimit,
 } from "@/lib/api";
-import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
+import { MEETING_STATUS, PERMISSION, ROLE_ADMIN } from "@/lib/constants";
+import { getPriorityContext } from "@/lib/services/group-context.service";
 import { isMeetingEnded } from "@/lib/time";
 import { AUDIT_ACTION, createAuditLog } from "@/lib/services/audit.service";
 import {
   dispatchNotification,
   queueMeetingNotification,
 } from "@/lib/services/notification.service";
-import { fulfilAwaitingRequests } from "@/lib/services/room-request.service";
 
 class CancelError extends Error {
   status: number;
@@ -55,6 +55,13 @@ export async function PATCH(
       rateLimit(organizer.employeeId, "cancel", 30);
 
     if (blocked) return blocked;
+
+    // The group's permissions, read from the database (not the session).
+    const standing = await getPriorityContext(organizer.employeeId);
+
+    if (!standing.permissions.has(PERMISSION.BOOKING_CANCEL)) {
+      return jsonError(403, "Your group is not allowed to cancel bookings.");
+    }
 
     const { id } = await params;
 
@@ -94,6 +101,11 @@ export async function PATCH(
 
       if (existingMeeting.meetingStatusId === MEETING_STATUS.CANCELLED) {
         throw new CancelError("Meeting is already cancelled.", 400);
+      }
+
+      // Preempted is final and kept as-is in the booking history.
+      if (existingMeeting.meetingStatusId === MEETING_STATUS.PREEMPTED) {
+        throw new CancelError("Replaced bookings cannot be cancelled.", 400);
       }
 
       // The cron flips these to Completed once it ticks; don't let the lag
@@ -138,15 +150,6 @@ export async function PATCH(
     });
 
     dispatchNotification(notificationId);
-
-    // The room is free now: complete any approved room request waiting for it
-    // (the cron job would do it within a minute anyway).
-    void fulfilAwaitingRequests().catch((error) =>
-      console.error(
-        "Completing waiting room requests failed:",
-        error instanceof Error ? error.message : error
-      )
-    );
 
     return NextResponse.json(
       {

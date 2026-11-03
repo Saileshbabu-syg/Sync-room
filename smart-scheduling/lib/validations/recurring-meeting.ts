@@ -4,6 +4,11 @@ import {
   NO_CONTROL_CHARS,
   isNotInPast,
 } from "@/lib/validations/date-time";
+import {
+  NOT_BOTH_LISTS_MESSAGE,
+  overlappingParticipant,
+  participantFields,
+} from "@/lib/validations/participants";
 import { meetingDateField, timeFields } from "@/lib/validations/meeting.validator";
 
 // Organizer and status come from the server, not the request body.
@@ -30,10 +35,7 @@ export const recurringMeetingSchema = z
 
     occurrence_count: z.number().int().min(1).max(12),
 
-    participantEmployeeIds: z
-      .array(z.number().int().positive())
-      .max(100)
-      .optional(),
+    ...participantFields,
 
     // Occurrence dates to leave out of the series ("book only the dates that
     // are free"). Each must be one of the dates the series generates; the
@@ -42,6 +44,10 @@ export const recurringMeetingSchema = z
       .array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/))
       .max(12)
       .optional(),
+  })
+  .refine((data) => !overlappingParticipant(data), {
+    message: NOT_BOTH_LISTS_MESSAGE,
+    path: ["optionalParticipantEmployeeIds"],
   })
   .refine((data) => data.start_time < data.end_time, {
     message: "End time must be after start time",

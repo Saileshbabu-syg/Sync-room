@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 
+import BumpedDetails, { type BumpDetails } from "@/components/BumpedDetails";
 import CancelMeetingButton from "@/components/CancelMeetingButton";
 
 import {
@@ -9,6 +11,7 @@ import {
   Clock,
   Users,
   Building2,
+  ChevronDown,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,6 +27,8 @@ type Meeting = {
   meetingType: string | null;
   meetingStatus: string | null;
   canManage: boolean;
+  // Set for a bumped booking: who took the room.
+  bumped?: BumpDetails | null;
 };
 
 type Props = {
@@ -33,6 +38,8 @@ type Props = {
 export default function BookingCard({
   meeting,
 }: Props) {
+  const [showBump, setShowBump] = useState(false);
+
   return (
     <div className="rounded-2xl border bg-white p-6 shadow">
 
@@ -59,6 +66,8 @@ export default function BookingCard({
                 ? "bg-amber-100 text-amber-700"
                 : meeting.meetingStatus === "Completed"
                 ? "bg-blue-100 text-blue-700"
+                : meeting.meetingStatus === "Replaced"
+                ? "bg-orange-100 text-orange-800"
                 : "bg-red-100 text-red-700"
             }`}
         >
@@ -106,6 +115,40 @@ export default function BookingCard({
         </div>
 
       </div>
+
+      {meeting.meetingStatus === "Replaced" && (
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShowBump((open) => !open)}
+            aria-expanded={showBump}
+            data-testid="bump-toggle"
+            className="flex w-full items-center justify-between rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 text-left text-sm font-medium text-orange-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span>
+              {meeting.bumped
+                ? `Replaced by ${meeting.bumped.byName}`
+                : "Replaced by a higher-priority booking"}
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 transition-transform ${showBump ? "rotate-180" : ""}`}
+            />
+          </button>
+
+          {showBump && (
+            <div className="mt-2">
+              {meeting.bumped ? (
+                <BumpedDetails bump={meeting.bumped} />
+              ) : (
+                <p className="rounded-lg border bg-slate-50 p-3 text-sm text-gray-600">
+                  The details of the booking that took this room are not
+                  available.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-8 flex gap-3">
 

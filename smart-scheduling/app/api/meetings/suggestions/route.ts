@@ -9,6 +9,7 @@ import {
   isRoomAvailable,
 } from "@/lib/services/room-suggestion.service";
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
+import { canUseRoom, getBookingPolicy } from "@/lib/services/booking-policy.service";
 import { jsonError, rateLimit, readJson } from "@/lib/api";
 import { suggestionsSchema } from "@/lib/validations/suggestions.validator";
 
@@ -56,28 +57,33 @@ export async function POST(
       meeting_date,
       start_time,
       end_time,
-      participant_count,
     } = parsed.data;
 
     // -------------------------------
     // Booking from Room Details Page
     // -------------------------------
 
+    const policy = await getBookingPolicy(organizer.employeeId);
+
     if (room_id) {
+      if (!canUseRoom(policy, room_id)) {
+        return NextResponse.json(
+          { success: false, message: "Your group is not allowed to book this room." },
+          { status: 403 }
+        );
+      }
 
       const available =
         await isRoomAvailable(
           room_id,
           meeting_date,
           start_time,
-          end_time,
-          participant_count
+          end_time
         );
 
-      // Taken for that time: not an error. The user may continue; at
-      // confirmation they see the existing booking and can request the room.
-      // The booking itself is still refused by the server if they try to
-      // confirm it.
+      // Taken for that time: not an error. The user may continue (a higher
+      // priority group can take the room); the booking itself is re-checked by
+      // the server when they confirm it.
       if (!available.success && "conflict" in available && available.conflict) {
         return NextResponse.json(
           { success: true, occupied: true, message: available.message },
@@ -113,8 +119,7 @@ export async function POST(
       await getAvailableRooms(
         meeting_date,
         start_time,
-        end_time,
-        participant_count
+        end_time
       );
 
     // Get Maximum Room Capacity
@@ -133,7 +138,7 @@ export async function POST(
 
       success: true,
 
-      data: availableRooms,
+      data: availableRooms.filter((r) => canUseRoom(policy, r.room_id)),
 
       maxCapacity:
         maxRoom[0]?.capacity ?? 0,

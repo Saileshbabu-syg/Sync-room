@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 
 import {
   Users,
@@ -33,30 +32,16 @@ type Props = {
   // The room is booked by a lower-priority meeting; a higher-priority meeting
   // type can take it over.
   priorityClaim?: boolean;
-  // The room is booked for this time. It can still be chosen: at confirmation
-  // the user sees the existing booking and can ask its organizer for the room.
-  occupied?: boolean;
 };
 
 export default function RoomCard({
   room,
   bookingData,
   priorityClaim = false,
-  occupied = false,
 }: Props) {
   const router = useRouter();
 
   const handleSelectRoom = () => {
-  if (
-    Number(bookingData.participants) >
-    room.room_capacity
-  ) {
-    toast.warning(
-      "Participant count exceeds room capacity."
-    );
-    return;
-  }
-
   const query = new URLSearchParams({
     roomId: room.room_id.toString(),
     roomName: room.room_name,
@@ -93,27 +78,25 @@ console.log(room);
           {room.room_name}
         </h2>
 
-        {occupied && (
-          <p
-            className="rounded-lg bg-red-50 p-3 text-sm text-red-800"
-            data-testid="occupied-room-note"
-          >
-            <span className="font-semibold">Occupied.</span> This room is
-            already booked for this time. You can still select it; when you
-            confirm, you will see the existing booking and can request the room
-            from its organizer.
-          </p>
-        )}
-
         {priorityClaim && (
           <p
             className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800"
             data-testid="priority-claim-note"
           >
-            Booked by a lower-priority meeting. Choose a higher-priority
-            meeting type (for example Interview) to take this room; the
-            current organizer is notified and asked to change the room or time,
-            or the meeting is cancelled automatically before it starts.
+            Booked by a lower-priority group. Your group&apos;s priority lets
+            you take this room: that booking is replaced and its attendees are
+            notified.
+          </p>
+        )}
+
+        {Number(bookingData.participants) > room.room_capacity && (
+          <p
+            className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800"
+            data-testid="capacity-warning"
+          >
+            <span className="font-semibold">Over capacity.</span> This room
+            seats {room.room_capacity} and you have{" "}
+            {bookingData.participants} people. You can still book it.
           </p>
         )}
 

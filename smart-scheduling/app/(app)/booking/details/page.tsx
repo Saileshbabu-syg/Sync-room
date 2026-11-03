@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 
 import BookingSummaryCard from "@/components/BookingSummaryCard";
 import MeetingDetailsForm from "@/components/MeetingDetailsForm";
+import { canUseRoom, getBookingPolicy } from "@/lib/services/booking-policy.service";
 
 import { room } from "@/db/schema";
 
@@ -50,6 +51,17 @@ export default async function BookingDetailsPage({
 
   if (roomData.length === 0) {
     return <h1>Room Not Found</h1>;
+  }
+
+  if (!canUseRoom(await getBookingPolicy(userProfile[0].employeeId), roomData[0].room_id)) {
+    return (
+      <div className="rounded-xl border bg-white p-10 text-center shadow">
+        <h1 className="text-xl font-semibold">Room not available to your group</h1>
+        <p className="mt-2 text-gray-500">
+          Your group is not allowed to book {roomData[0].room_name}. Please choose another room.
+        </p>
+      </div>
+    );
   }
 
   return (

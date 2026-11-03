@@ -38,6 +38,10 @@ const nextConfig: NextConfig = {
   // Do not advertise the framework.
   poweredByHeader: false,
 
+  // Report generators read their own data files (PDF fonts) and use Node
+  // streams; they must run from node_modules, not from the server bundle.
+  serverExternalPackages: ["pdfkit", "exceljs"],
+
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

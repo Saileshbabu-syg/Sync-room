@@ -2,23 +2,33 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
+  bookingPriorityHistory,
   employee,
+  groups,
   meeting,
+  meeting_attendees,
   meetingTypes,
   notification_type_master,
   notifications,
   reschedule_requests,
   room,
 } from "@/db/schema";
-import { MAX_DELIVERY_ATTEMPTS, NOTIFICATION_TYPE } from "@/lib/constants";
+import {
+  MAX_DELIVERY_ATTEMPTS,
+  MEETING_STATUS,
+  NOTIFICATION_TYPE,
+} from "@/lib/constants";
+import { invitationLink } from "@/lib/invitation-token";
 import type { DbExecutor } from "@/lib/db-types";
 import { nowInAppTimezone } from "@/lib/time";
 
 import { getMeetingAttendees, getMeetingDetails } from "./reminder.service";
 import {
+  sendInvitationEmail,
   sendMeetingEmail,
   type MeetingBumpInfo,
   type MeetingEmailKind,
+  type MeetingPreemptionInfo,
 } from "./email.service";
 import {
   loadSeriesEmailContext,
@@ -103,7 +113,9 @@ async function ensureNotificationTypeId(executor: DbExecutor, name: string) {
 export async function queueMeetingNotification(
   executor: DbExecutor,
   meetingId: number,
-  kind: NotificationKind
+  kind: NotificationKind,
+  // Only for per-person messages (invitations).
+  recipientEmployeeId?: number
 ): Promise<number> {
   const typeId = await ensureNotificationTypeId(
     executor,
@@ -115,11 +127,146 @@ export async function queueMeetingNotification(
     .values({
       meeting_id: meetingId,
       notification_type_id: typeId,
+      recipient_employee_id: recipientEmployeeId ?? null,
       status: "PENDING",
     })
     .returning({ id: notifications.notification_id });
 
   return row.id;
+}
+
+// Sends one participant their invitation (Accept / Decline links). Runs inside
+// deliverNotification's transaction, which already holds the row's lock.
+async function deliverInvitation(
+  tx: DbExecutor,
+  row: typeof notifications.$inferSelect,
+  details: NonNullable<Awaited<ReturnType<typeof getMeetingDetails>>>
+): Promise<DeliveryResult> {
+  const finish = async (status: string, attempts = row.attempts + 1) => {
+    await tx
+      .update(notifications)
+      .set({
+        status,
+        attempts,
+        ...(status === "SENT" ? { sent_at: new Date() } : {}),
+      })
+      .where(eq(notifications.notification_id, row.notification_id));
+  };
+
+  // Nothing to answer once the meeting is gone.
+  if (details.meetingStatusId !== MEETING_STATUS.SCHEDULED) {
+    await finish("SKIPPED");
+
+    return "SKIPPED";
+  }
+
+  const [recipient] = row.recipient_employee_id
+    ? await tx
+        .select({
+          email: employee.email,
+          optional: meeting_attendees.is_optional,
+        })
+        .from(employee)
+        .leftJoin(
+          meeting_attendees,
+          and(
+            eq(meeting_attendees.employee_id, employee.employee_id),
+            eq(meeting_attendees.meeting_id, row.meeting_id)
+          )
+        )
+        .where(eq(employee.employee_id, row.recipient_employee_id))
+    : [];
+
+  const [organizer] = await tx
+    .select({ name: employee.employee_name })
+    .from(employee)
+    .where(eq(employee.employee_id, details.organizerEmployeeId));
+
+  const [roomRow] = await tx
+    .select({ name: room.room_name })
+    .from(room)
+    .where(eq(room.room_id, details.room_id));
+
+  if (!recipient?.email || !row.recipient_employee_id) {
+    await finish("FAILED");
+
+    return "FAILED";
+  }
+
+  try {
+    await sendInvitationEmail(recipient.email, {
+      title: details.title,
+      organizerName: organizer?.name ?? "",
+      roomName: roomRow?.name ?? "",
+      meetingDate: String(details.meeting_date),
+      startTime: String(details.start_time),
+      endTime: String(details.end_time),
+      acceptUrl: invitationLink(
+        details.meeting_id,
+        row.recipient_employee_id,
+        "accept"
+      ),
+      declineUrl: invitationLink(
+        details.meeting_id,
+        row.recipient_employee_id,
+        "decline"
+      ),
+      optional: recipient.optional === true,
+      seriesNote:
+        details.recurringMeetingId !== null
+          ? "This is part of a recurring series. Your answer applies to every occurrence."
+          : undefined,
+    });
+
+    await finish("SENT");
+
+    return "SENT";
+  } catch (error) {
+    console.error(
+      `Invitation ${row.notification_id} delivery failed:`,
+      error instanceof Error ? error.message : error
+    );
+
+    const attempts = row.attempts + 1;
+    const exhausted = attempts >= MAX_DELIVERY_ATTEMPTS;
+
+    await finish(exhausted ? "FAILED" : "PENDING", attempts);
+
+    return exhausted ? "FAILED" : "RETRY";
+  }
+}
+
+// Who took the room of a preempted meeting, from the append-only history row.
+async function loadPreemptionInfo(
+  executor: DbExecutor,
+  affectedMeetingId: number,
+  roomId: number
+): Promise<MeetingPreemptionInfo | undefined> {
+  const [history] = await executor
+    .select({
+      incomingGroup: groups.name,
+      incomingPriority: bookingPriorityHistory.incomingPriority,
+    })
+    .from(bookingPriorityHistory)
+    .leftJoin(groups, eq(groups.id, bookingPriorityHistory.incomingGroupId))
+    .where(eq(bookingPriorityHistory.affectedBookingId, affectedMeetingId))
+    .orderBy(desc(bookingPriorityHistory.id))
+    .limit(1);
+
+  if (!history) return undefined;
+
+  const [roomRow] = await executor
+    .select({ name: room.room_name })
+    .from(room)
+    .where(eq(room.room_id, roomId));
+
+  const appUrl = process.env.NEXTAUTH_URL?.replace(/\/+$/, "");
+
+  return {
+    roomName: roomRow?.name ?? "the room",
+    claimedBy: `a ${history.incomingGroup ?? "higher-priority"} booking (priority ${history.incomingPriority})`,
+    rebookUrl: appUrl ? `${appUrl}/booking` : undefined,
+  };
 }
 
 export type DeliveryResult = "SENT" | "RETRY" | "FAILED" | "SKIPPED";
@@ -165,11 +312,26 @@ export async function deliverNotification(
         )
       );
 
+    if (type?.name === NOTIFICATION_TYPE.INVITED) {
+      return deliverInvitation(tx, row, details);
+    }
+
     let recipients = (await getMeetingAttendees(row.meeting_id, tx))
       .map((a) => a.email)
       .filter((email): email is string => Boolean(email));
 
     const isBooking = type?.name === NOTIFICATION_TYPE.BOOKED;
+
+    // The organizer gets the booking confirmation; every other participant
+    // gets their own invitation (deliverInvitation) instead of a copy of it.
+    if (isBooking) {
+      const [organizerRow] = await tx
+        .select({ email: employee.email })
+        .from(employee)
+        .where(eq(employee.employee_id, details.organizerEmployeeId));
+
+      if (organizerRow?.email) recipients = [organizerRow.email];
+    }
     const kind: MeetingEmailKind =
       type?.name === NOTIFICATION_TYPE.UPDATED
         ? "updated"
@@ -177,7 +339,14 @@ export async function deliverNotification(
           ? "cancelled"
           : type?.name === NOTIFICATION_TYPE.BUMPED
             ? "bumped"
-            : "scheduled";
+            : type?.name === NOTIFICATION_TYPE.PREEMPTED
+              ? "preempted"
+              : "scheduled";
+
+    const preemption =
+      kind === "preempted"
+        ? await loadPreemptionInfo(tx, row.meeting_id, details.room_id)
+        : undefined;
 
     const bump =
       kind === "bumped"
@@ -227,7 +396,7 @@ export async function deliverNotification(
           String(details.start_time),
           String(details.end_time),
           kind,
-          series ?? { bump }
+          series ?? { bump, preemption }
         );
       }
 

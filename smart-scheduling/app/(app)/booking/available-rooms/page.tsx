@@ -4,8 +4,8 @@ import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 
 import { getCurrentUserProfile } from "@/lib/auth-helpers";
+import { canUseRoom, getBookingPolicy } from "@/lib/services/booking-policy.service";
 import { getClaimableRooms } from "@/lib/services/priority.service";
-import { getOccupiedRooms } from "@/lib/services/room-request.service";
 import { getAvailableRooms } from "@/lib/services/room-suggestion.service";
 import { availableRoomsQuerySchema } from "@/lib/validations/suggestions.validator";
 
@@ -24,43 +24,29 @@ type SearchQuery = {
 // 307 redirect instead of a 200 loading shell.
 async function RoomResults({
   query,
-  role,
+  employeeId,
 }: {
   query: SearchQuery;
-  role: string;
+  employeeId: number;
 }) {
-  const [rooms, claimableRooms] = await Promise.all([
-    getAvailableRooms(
-      query.date,
-      query.start,
-      query.end,
-      query.participants
-    ),
-    // Rooms held only by lower-priority meetings than this role can book.
+  const [allRooms, allClaimable, policy] = await Promise.all([
+    getAvailableRooms(query.date, query.start, query.end),
+    // Rooms held only by lower-priority meetings than this employee's group.
     getClaimableRooms(
-      role,
+      employeeId,
       query.date,
       query.start,
       query.end,
       query.participants
     ),
+    getBookingPolicy(employeeId),
   ]);
 
-  // Everything else that is taken: still selectable, and a request can be
-  // made at confirmation.
-  const occupiedRooms = await getOccupiedRooms(
-    query.date,
-    query.start,
-    query.end,
-    query.participants,
-    [...rooms, ...claimableRooms].map((r) => r.room_id)
-  );
+  // Only the rooms this person's group may book.
+  const rooms = allRooms.filter((r) => canUseRoom(policy, r.room_id));
+  const claimableRooms = allClaimable.filter((r) => canUseRoom(policy, r.room_id));
 
-  if (
-    rooms.length === 0 &&
-    claimableRooms.length === 0 &&
-    occupiedRooms.length === 0
-  ) {
+  if (rooms.length === 0 && claimableRooms.length === 0) {
     return (
       <div
         className="rounded-xl border bg-white p-10 text-center shadow"
@@ -69,8 +55,7 @@ async function RoomResults({
         <h2 className="text-xl font-semibold">No rooms available</h2>
 
         <p className="mt-2 text-gray-500">
-          No room is in service and large enough for the selected number of
-          participants. Try fewer participants.
+          No room is free for that time. Try another date or time.
         </p>
       </div>
     );
@@ -95,19 +80,6 @@ async function RoomResults({
           key={room.room_id}
           room={room}
           priorityClaim
-          bookingData={{
-            date: query.date,
-            start: query.start,
-            end: query.end,
-            participants: String(query.participants),
-          }}
-        />
-      ))}
-      {occupiedRooms.map((room) => (
-        <RoomCard
-          key={room.room_id}
-          room={room}
-          occupied
           bookingData={{
             date: query.date,
             start: query.start,
@@ -194,7 +166,7 @@ export default async function AvailableRoomsPage({
 </div>
 
         <Suspense fallback={<RoomsSkeleton />}>
-          <RoomResults query={query.data} role={currentUser.role} />
+          <RoomResults query={query.data} employeeId={currentUser.employeeId} />
         </Suspense>
 
       </div>

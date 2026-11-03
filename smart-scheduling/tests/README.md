@@ -5,8 +5,8 @@ already a dev dependency — no extra framework or package.
 
 | Command | What it runs | Needs |
 |---|---|---|
-| `npm run test:unit` | pure logic: time/overlap rules, validators, e-mail escaping, API helpers, rate limiter | nothing |
-| `npm run test:db` | booking service, concurrency, role rules, reminders/audit/notifications, identity, migrations | isolated local Postgres |
+| `npm run test:unit` | pure logic: time/overlap rules, validators, e-mail escaping, API helpers, rate limiter, report periods, CSV/XLSX/PDF rendering | nothing |
+| `npm run test:db` | booking service, concurrency, role rules, group priority/preemption, groups, booking dashboard + reports, participant invitations, optional participants, group meeting types, Entra sync, reminders/audit/notifications, identity, migrations | isolated local Postgres |
 | `npm run test:e2e` | the production build over real HTTP: auth matrix, authorization, pages, booking API, SMTP sink | local Postgres + `npm run build:test` |
 | `npm test` | unit + db | |
 | `npm run test:all` | everything | |

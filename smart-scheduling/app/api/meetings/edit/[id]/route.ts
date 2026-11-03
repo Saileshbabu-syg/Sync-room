@@ -25,7 +25,7 @@ import {
 import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
 import { isMeetingEnded } from "@/lib/time";
 import { AUDIT_ACTION, createAuditLog } from "@/lib/services/audit.service";
-import { isMeetingTypeAllowedForRole } from "@/lib/services/meeting-type-access.service";
+import { isMeetingTypeAllowed } from "@/lib/services/meeting-type-access.service";
 import {
   dispatchNotification,
   queueMeetingNotification,
@@ -123,6 +123,13 @@ export async function PATCH(
         throw new EditError("Cancelled meetings cannot be edited.", 400);
       }
 
+      if (existingMeeting.meetingStatusId === MEETING_STATUS.PREEMPTED) {
+        throw new EditError(
+          "Replaced bookings cannot be edited. Please book a new slot.",
+          400
+        );
+      }
+
       if (
         isMeetingEnded(existingMeeting.meeting_date, existingMeeting.end_time)
       ) {
@@ -142,32 +149,59 @@ export async function PATCH(
       }
 
       const existingRows = await tx
-        .select({ employee_id: meeting_attendees.employee_id })
+        .select({
+          employee_id: meeting_attendees.employee_id,
+          is_optional: meeting_attendees.is_optional,
+        })
         .from(meeting_attendees)
         .where(eq(meeting_attendees.meeting_id, meetingId));
 
-      // Existing attendees, organizer excluded.
-      const oldAttendees = existingRows
+      const others = existingRows.filter(
+        (a) => a.employee_id !== existingMeeting.organizerEmployeeId
+      );
+      const byId = (a: number, b: number) => a - b;
+
+      // Existing attendees, organizer excluded, split by kind.
+      const oldMandatory = others
+        .filter((a) => !a.is_optional)
         .map((a) => a.employee_id)
-        .filter((empId) => empId !== existingMeeting.organizerEmployeeId)
-        .sort((a, b) => a - b);
+        .sort(byId);
+      const oldOptional = others
+        .filter((a) => a.is_optional)
+        .map((a) => a.employee_id)
+        .sort(byId);
+      const oldAttendees = [...oldMandatory, ...oldOptional].sort(byId);
 
       const newParticipantCount =
         validatedData.participantCount ?? existingMeeting.participantCount;
 
-      if (newParticipantCount > roomDetails.room_capacity) {
-        throw new EditError("Room capacity exceeded.", 400);
-      }
+      // Headcount above the room's capacity is allowed (the form only warns).
 
-      // Attendees are only touched when the request supplies them.
-      const suppliedAttendees = validatedData.participantEmployeeIds;
+      // Attendees are only touched when the request supplies a list. If only
+      // one of the two lists is sent, the other keeps its people - except
+      // anyone just moved across, who can only be in one.
+      const suppliedMandatory = validatedData.participantEmployeeIds;
+      const suppliedOptional = validatedData.optionalParticipantEmployeeIds;
+      const suppliedAttendees =
+        suppliedMandatory !== undefined || suppliedOptional !== undefined
+          ? true
+          : undefined;
 
-      const newAttendees =
-        suppliedAttendees !== undefined
-          ? [...new Set(suppliedAttendees)]
-              .filter((empId) => empId !== existingMeeting.organizerEmployeeId)
-              .sort((a, b) => a - b)
-          : oldAttendees;
+      const clean = (ids: number[]) =>
+        [...new Set(ids)]
+          .filter((empId) => empId !== existingMeeting.organizerEmployeeId)
+          .sort(byId);
+
+      const newOptionalFirst =
+        suppliedOptional !== undefined ? clean(suppliedOptional) : undefined;
+      const newMandatory =
+        suppliedMandatory !== undefined
+          ? clean(suppliedMandatory)
+          : oldMandatory.filter((id) => !newOptionalFirst?.includes(id));
+      const newOptional =
+        newOptionalFirst ?? oldOptional.filter((id) => !newMandatory.includes(id));
+
+      const newAttendees = [...newMandatory, ...newOptional].sort(byId);
 
       // The organizer counts as one participant; the headcount can never be
       // lower than the people actually invited.
@@ -178,7 +212,7 @@ export async function PATCH(
         );
       }
 
-      if (suppliedAttendees !== undefined && newAttendees.length > 0) {
+      if (suppliedAttendees && newAttendees.length > 0) {
         const found = await tx
           .select({ id: employee.employee_id })
           .from(employee)
@@ -212,14 +246,17 @@ export async function PATCH(
 
         if (
           !owner ||
-          !(await isMeetingTypeAllowedForRole(
-            owner.role,
+          !(await isMeetingTypeAllowed(
+            {
+              employeeId: existingMeeting.organizerEmployeeId,
+              roleName: owner.role,
+            },
             validatedData.meetingTypeId!,
             tx
           ))
         ) {
           throw new EditError(
-            "This role is not allowed to use that meeting type.",
+            "The organizer's group is not allowed to use that meeting type.",
             403
           );
         }
@@ -243,12 +280,25 @@ export async function PATCH(
         changes.push("meetingType");
       }
 
-      const attendeesChanged =
-        suppliedAttendees !== undefined &&
+      const membersChanged =
+        suppliedAttendees === true &&
         JSON.stringify(oldAttendees) !== JSON.stringify(newAttendees);
+      const kindsChanged =
+        suppliedAttendees === true &&
+        !membersChanged &&
+        JSON.stringify(oldOptional) !== JSON.stringify(newOptional);
+      const attendeesChanged = membersChanged || kindsChanged;
 
-      if (attendeesChanged) {
+      if (membersChanged) {
         changes.push("attendees");
+      }
+
+      if (membersChanged || kindsChanged) {
+        const moved =
+          oldOptional.some((id) => newMandatory.includes(id)) ||
+          oldMandatory.some((id) => newOptional.includes(id));
+
+        if (moved) changes.push("participant types");
       }
 
       if (changes.length === 0) {
@@ -269,23 +319,69 @@ export async function PATCH(
         })
         .where(eq(meeting.meeting_id, meetingId));
 
+      // Only the difference is written, so the people who stay keep the answer
+      // they already gave; newly added participants get an invitation.
+      const invitationIds: number[] = [];
+
       if (attendeesChanged) {
-        await tx
-          .delete(meeting_attendees)
-          .where(
-            and(
-              eq(meeting_attendees.meeting_id, meetingId)
-            )
+        const removed = oldAttendees.filter((id) => !newAttendees.includes(id));
+        const added = newAttendees.filter((id) => !oldAttendees.includes(id));
+
+        if (removed.length > 0) {
+          await tx
+            .delete(meeting_attendees)
+            .where(
+              and(
+                eq(meeting_attendees.meeting_id, meetingId),
+                inArray(meeting_attendees.employee_id, removed)
+              )
+            );
+        }
+
+        // Someone moved between the two lists keeps their answer; only the
+        // kind changes.
+        for (const [ids, isOptional] of [
+          [newMandatory, false],
+          [newOptional, true],
+        ] as const) {
+          const flip = ids.filter(
+            (id) => oldAttendees.includes(id) && (isOptional ? oldMandatory : oldOptional).includes(id)
           );
 
-        await tx.insert(meeting_attendees).values(
-          [existingMeeting.organizerEmployeeId, ...newAttendees].map(
-            (employeeId) => ({
+          if (flip.length > 0) {
+            await tx
+              .update(meeting_attendees)
+              .set({ is_optional: isOptional })
+              .where(
+                and(
+                  eq(meeting_attendees.meeting_id, meetingId),
+                  inArray(meeting_attendees.employee_id, flip)
+                )
+              );
+          }
+        }
+
+        if (added.length > 0) {
+          await tx.insert(meeting_attendees).values(
+            added.map((employeeId) => ({
               meeting_id: meetingId,
               employee_id: employeeId,
-            })
-          )
-        );
+              response_status: "NO_RESPONSE",
+              is_optional: newOptional.includes(employeeId),
+            }))
+          );
+
+          for (const employeeId of added) {
+            invitationIds.push(
+              await queueMeetingNotification(
+                tx,
+                meetingId,
+                "INVITED",
+                employeeId
+              )
+            );
+          }
+        }
       }
 
       await createAuditLog(
@@ -296,10 +392,15 @@ export async function PATCH(
         tx
       );
 
-      return queueMeetingNotification(tx, meetingId, "UPDATED");
+      return {
+        updateId: await queueMeetingNotification(tx, meetingId, "UPDATED"),
+        invitationIds,
+      };
     });
 
-    dispatchNotification(notificationId);
+    dispatchNotification(notificationId.updateId);
+
+    for (const id of notificationId.invitationIds) dispatchNotification(id);
 
     return NextResponse.json(
       {

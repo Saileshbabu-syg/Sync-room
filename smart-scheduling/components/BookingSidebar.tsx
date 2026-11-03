@@ -8,19 +8,21 @@ import {
   CalendarPlus,
   Building2,
   ClipboardList,
-  Inbox,
+  UsersRound,
+  BarChart3,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
+const homeMenu = {
+  title: "Home",
+  href: "/home",
+  icon: House,
+};
+
 const menus = [
-  {
-    title: "Home",
-    href: "/home",
-    icon: House,
-  },
   {
     title: "Book Meeting",
     href: "/booking",
@@ -36,21 +38,44 @@ const menus = [
     href: "/bookings",
     icon: ClipboardList,
   },
-  {
-    title: "Room Requests",
-    href: "/requests",
-    icon: Inbox,
-  },
 ];
+
+// Shown only to people who may use them (the pages and APIs enforce it again).
+const groupManagementMenu = {
+  title: "Group Management",
+  href: "/admin/groups",
+  icon: UsersRound,
+};
+
+const dashboardMenu = {
+  title: "Dashboard",
+  href: "/dashboard",
+  icon: BarChart3,
+};
 
 type Props = {
   // Icons only, to give the page more room.
   collapsed?: boolean;
   onToggle: () => void;
+  showGroupManagement?: boolean;
+  showBookingDashboard?: boolean;
 };
 
-export default function BookingSidebar({ collapsed = false, onToggle }: Props) {
+export default function BookingSidebar({
+  collapsed = false,
+  onToggle,
+  showGroupManagement = false,
+  showBookingDashboard = false,
+}: Props) {
   const pathname = usePathname();
+
+  // Dashboard sits directly under Home.
+  const visibleMenus = [
+    homeMenu,
+    ...(showBookingDashboard ? [dashboardMenu] : []),
+    ...menus,
+    ...(showGroupManagement ? [groupManagementMenu] : []),
+  ];
 
   return (
     <aside
@@ -60,12 +85,10 @@ export default function BookingSidebar({ collapsed = false, onToggle }: Props) {
       aria-label="Navigation"
     >
 
-      {/* Collapse / expand, at the top of the sidebar. */}
+      {/* Collapse / expand, on the left of the navigation header. */}
 
       <div
-        className={`flex border-b p-3 ${
-          collapsed ? "justify-center" : "justify-end"
-        }`}
+        className={`flex p-2 ${collapsed ? "justify-center" : "justify-start"}`}
       >
         <Button
           variant="ghost"
@@ -85,15 +108,12 @@ export default function BookingSidebar({ collapsed = false, onToggle }: Props) {
 
       {/* Menu */}
 
-      <nav className="flex-1 space-y-2 overflow-y-auto p-3">
+      <nav
+        className="flex-1 space-y-1 overflow-y-auto border-t p-2"
+        aria-label="Main"
+      >
 
-        {!collapsed && (
-          <h2 className="px-2 pb-2 pt-1 text-lg font-bold text-blue-700">
-            Navigation
-          </h2>
-        )}
-
-        {menus.map((menu) => {
+        {visibleMenus.map((menu) => {
 
           const Icon = menu.icon;
 
@@ -113,7 +133,7 @@ export default function BookingSidebar({ collapsed = false, onToggle }: Props) {
 
               <Button
                 variant={active ? "default" : "ghost"}
-                className={`mb-2 h-12 w-full ${
+                className={`h-10 w-full ${
                   collapsed ? "justify-center px-0" : "justify-start"
                 }`}
                 tabIndex={-1}

@@ -119,7 +119,7 @@ describe("records are created by the booking itself (F-15)", () => {
     assert.equal(type.notification_type_name, "MEETING_BOOKED");
   });
 
-  it("a series gets one reminder and one audit row per occurrence, and one notification", async () => {
+  it("a series gets one reminder and one audit row per occurrence, one confirmation and one invitation", async () => {
     await createBooking(
       input({
         occurrenceDates: [dateFromToday(7), dateFromToday(14), dateFromToday(21)],
@@ -129,7 +129,8 @@ describe("records are created by the booking itself (F-15)", () => {
 
     assert.equal((await db.select().from(reminder_logs)).length, 3);
     assert.equal((await db.select().from(meeting_audit_logs)).length, 3);
-    assert.equal((await db.select().from(notifications)).length, 1);
+    // The organizer's confirmation, plus Carol's invitation.
+    assert.equal((await db.select().from(notifications)).length, 2);
   });
 
   it("a rejected booking leaves no reminder, audit or notification behind", async () => {
@@ -301,7 +302,7 @@ describe("reminder processing", () => {
 
 describe("booking e-mails (notifications outbox) (F-10)", () => {
   it("a booking sends its confirmation after commit and marks the row SENT", async () => {
-    await createBooking(input({ notify: true }));
+    await createBooking(input({ notify: true, participantEmployeeIds: [], participantCount: 1 }));
 
     assert.ok(
       await waitFor(async () => (await db.select().from(notifications))[0]?.status === "SENT")
@@ -313,7 +314,9 @@ describe("booking e-mails (notifications outbox) (F-10)", () => {
   it("a mail outage never fails or rolls back the booking, and it is retried later", async () => {
     mail.setFailures(100);
 
-    const { meetings } = await createBooking(input({ notify: true }));
+    const { meetings } = await createBooking(
+      input({ notify: true, participantEmployeeIds: [], participantCount: 1 })
+    );
 
     assert.ok(meetings[0].meeting_id, "the booking succeeded");
     await waitFor(async () => (await db.select().from(notifications))[0]?.attempts === 1);

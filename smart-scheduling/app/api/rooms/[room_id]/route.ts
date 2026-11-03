@@ -12,7 +12,7 @@ import {
   PG_FOREIGN_KEY_VIOLATION,
   readJson,
 } from "@/lib/api";
-import { ROLE_ADMIN } from "@/lib/constants";
+import { canManageRooms } from "@/lib/services/group-context.service";
 import { roomBodySchema } from "@/lib/validations/room.validator";
 
 type Context = { params: Promise<{ room_id: string }> };
@@ -28,9 +28,9 @@ export async function PATCH(request: Request, { params }: Context) {
       );
     }
 
-    if (organizer.role !== ROLE_ADMIN) {
+    if (!(await canManageRooms(organizer.employeeId, organizer.role))) {
       return NextResponse.json(
-        { message: "Only Admin can update rooms." },
+        { message: "You do not have permission to update rooms." },
         { status: 403 }
       );
     }
@@ -113,9 +113,9 @@ export async function DELETE(request: Request, { params }: Context) {
       );
     }
 
-    if (organizer.role !== ROLE_ADMIN) {
+    if (!(await canManageRooms(organizer.employeeId, organizer.role))) {
       return NextResponse.json(
-        { message: "Only Admin can delete rooms." },
+        { message: "You do not have permission to delete rooms." },
         { status: 403 }
       );
     }

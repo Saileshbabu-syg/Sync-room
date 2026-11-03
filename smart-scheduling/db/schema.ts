@@ -20,10 +20,12 @@
 import { relations, sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   date,
   index,
   integer,
+  jsonb,
   pgTable,
   serial,
   text,
@@ -31,6 +33,7 @@ import {
   timestamp,
   unique,
   uniqueIndex,
+  uuid,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -136,10 +139,45 @@ export const employee = pgTable(
     employee_name: varchar("employee_name", { length: 100 }).notNull(),
     // Login key: sign-in matches on it, so it must always be present.
     email: varchar("email", { length: 150 }).notNull().unique(),
+    // Microsoft Entra ID object id. The stable key for directory sync; null
+    // for people added by hand and not yet matched to a directory account.
+    entra_object_id: uuid("entra_object_id").unique(),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
   (t) => [index("employee_role_id_idx").on(t.role_id)]
+);
+
+// One row per Entra ID sync attempt, so the screen can show progress, the last
+// success and the last error. Rows are only ever appended or finished.
+export const employeeSyncRuns = pgTable(
+  "employee_sync_runs",
+  {
+    id: serial("id").primaryKey(),
+    status: varchar("status", { length: 16 }).notNull().default("RUNNING"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    triggeredBy: integer("triggered_by").references(() => employee.employee_id),
+    fetched: integer("fetched").notNull().default(0),
+    created: integer("created").notNull().default(0),
+    updated: integer("updated").notNull().default(0),
+    linked: integer("linked").notNull().default(0),
+    skipped: integer("skipped").notNull().default(0),
+    error: text("error"),
+  },
+  (t) => [
+    index("employee_sync_runs_started_idx").on(t.startedAt),
+    check(
+      "employee_sync_runs_status_valid",
+      sql`${t.status} IN ('RUNNING', 'SUCCESS', 'FAILED')`
+    ),
+    // At most one sync can be running at a time.
+    uniqueIndex("employee_sync_runs_one_running_idx")
+      .on(t.status)
+      .where(sql`${t.status} = 'RUNNING'`),
+  ]
 );
 
 export const organizers = pgTable(
@@ -243,6 +281,181 @@ export const recurring_meetings = pgTable(
   ]
 );
 
+// Application groups. They live only in this database (never in Entra / Azure):
+// each carries a booking priority (1 = highest) and a set of permission keys.
+// Admin is NOT a group - it stays a role (see ROLE_ADMIN).
+export const groups = pgTable(
+  "groups",
+  {
+    id: serial("id").primaryKey(),
+    name: varchar("name", { length: 100 }).notNull(),
+    description: text("description"),
+    // 1 = highest priority. Groups may share a priority.
+    priority: integer("priority").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("groups_name_lower_uq").on(sql`lower(${t.name})`),
+    check("groups_priority_range", sql`${t.priority} BETWEEN 1 AND 1000`),
+    check("groups_name_not_blank", sql`length(btrim(${t.name})) > 0`),
+  ]
+);
+
+// Group membership with history. An employee has at most ONE row with
+// effective_until IS NULL (partial unique index) - the active assignment.
+// Changing group closes that row and opens a new one.
+export const userGroups = pgTable(
+  "user_groups",
+  {
+    id: serial("id").primaryKey(),
+    // The application's stable employee key (Employee.employee_id).
+    employeeId: integer("employee_id")
+      .notNull()
+      .references(() => employee.employee_id),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "restrict" }),
+    assignedBy: integer("assigned_by").references(() => employee.employee_id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    effectiveUntil: timestamp("effective_until", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("user_groups_one_active_per_employee_idx")
+      .on(t.employeeId)
+      .where(sql`${t.effectiveUntil} IS NULL`),
+    index("user_groups_group_id_idx").on(t.groupId),
+    check(
+      "user_groups_until_after_assigned",
+      sql`${t.effectiveUntil} IS NULL OR ${t.effectiveUntil} >= ${t.assignedAt}`
+    ),
+  ]
+);
+
+// Which meeting types each group may book (replaces the per-role list for
+// anyone who has a group; people without one keep using role_meeting_types).
+export const groupMeetingTypes = pgTable(
+  "group_meeting_types",
+  {
+    id: serial("id").primaryKey(),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    meetingTypeId: integer("meeting_type_id")
+      .notNull()
+      .references(() => meetingTypes.meetingTypeId),
+  },
+  (t) => [
+    unique("group_meeting_types_group_type_uq").on(t.groupId, t.meetingTypeId),
+    index("group_meeting_types_type_idx").on(t.meetingTypeId),
+  ]
+);
+
+// Per-group booking limits. A null column means "no extra limit" (the system
+// maximum still applies); limits can only tighten the system ones.
+export const groupSettings = pgTable(
+  "group_settings",
+  {
+    groupId: integer("group_id")
+      .primaryKey()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    maxDurationMinutes: integer("max_duration_minutes"),
+    maxAdvanceDays: integer("max_advance_days"),
+    maxOccurrences: integer("max_occurrences"),
+  },
+  (t) => [
+    check(
+      "group_settings_duration_range",
+      sql`${t.maxDurationMinutes} IS NULL OR ${t.maxDurationMinutes} BETWEEN 15 AND 1440`
+    ),
+    check(
+      "group_settings_advance_range",
+      sql`${t.maxAdvanceDays} IS NULL OR ${t.maxAdvanceDays} BETWEEN 1 AND 92`
+    ),
+    check(
+      "group_settings_occurrences_range",
+      sql`${t.maxOccurrences} IS NULL OR ${t.maxOccurrences} BETWEEN 1 AND 12`
+    ),
+  ]
+);
+
+// Rooms a group may book. A group with NO rows here may book every room; with
+// rows, only those.
+export const groupRooms = pgTable(
+  "group_rooms",
+  {
+    id: serial("id").primaryKey(),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    roomId: integer("room_id")
+      .notNull()
+      .references(() => room.room_id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    unique("group_rooms_group_room_uq").on(t.groupId, t.roomId),
+    index("group_rooms_room_idx").on(t.roomId),
+  ]
+);
+
+// Entra ID sync settings (a single row, id = 1).
+export const entraSyncSettings = pgTable(
+  "entra_sync_settings",
+  {
+    id: integer("id").primaryKey().default(1),
+    autoSyncEnabled: boolean("auto_sync_enabled").notNull().default(false),
+    intervalHours: integer("interval_hours").notNull().default(24),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedBy: integer("updated_by").references(() => employee.employee_id),
+  },
+  (t) => [
+    check("entra_sync_settings_single_row", sql`${t.id} = 1`),
+    check(
+      "entra_sync_settings_interval_range",
+      sql`${t.intervalHours} BETWEEN 1 AND 168`
+    ),
+  ]
+);
+
+// Which app group a person starts in on their first sync, by Entra security
+// group. Only used for people with no active group; never moves anyone.
+export const entraGroupMappings = pgTable(
+  "entra_group_mappings",
+  {
+    id: serial("id").primaryKey(),
+    entraGroupId: uuid("entra_group_id").notNull().unique(),
+    entraGroupName: varchar("entra_group_name", { length: 200 }),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+  },
+  (t) => [index("entra_group_mappings_group_idx").on(t.groupId)]
+);
+
+export const groupPermissions = pgTable(
+  "group_permissions",
+  {
+    id: serial("id").primaryKey(),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => groups.id, { onDelete: "cascade" }),
+    permissionKey: varchar("permission_key", { length: 64 }).notNull(),
+    isEnabled: boolean("is_enabled").notNull().default(true),
+  },
+  (t) => [
+    unique("group_permissions_group_key_uq").on(t.groupId, t.permissionKey),
+  ]
+);
+
 export const meeting = pgTable(
   "meeting",
   {
@@ -269,6 +482,14 @@ export const meeting = pgTable(
     recurringMeetingId: integer("recurring_meeting_id").references(
       () => recurring_meetings.recurring_meeting_id
     ),
+    // Snapshot of the organizer's application group when the meeting was
+    // booked. Later group or priority changes never rewrite it. Null on
+    // meetings that pre-date groups (they rank as the default policy).
+    groupIdAtBooking: integer("group_id_at_booking").references(
+      () => groups.id,
+      { onDelete: "restrict" }
+    ),
+    priorityAtBooking: integer("priority_at_booking"),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
@@ -293,11 +514,25 @@ export const meeting_attendees = pgTable(
     employee_id: integer("employee_id")
       .notNull()
       .references(() => employee.employee_id),
+    // The participant's answer to the e-mail invitation. The organizer is
+    // ACCEPTED from the start; everyone else begins as NO_RESPONSE and can
+    // answer once (see invitation.service).
+    response_status: varchar("response_status", { length: 15 })
+      .notNull()
+      .default("NO_RESPONSE"),
+    responded_at: timestamp("responded_at", { withTimezone: true }),
+    // Invited but not essential. An optional participant's answer never
+    // affects the booking.
+    is_optional: boolean("is_optional").notNull().default(false),
     created_at: timestamp("created_at").defaultNow(),
   },
   (t) => [
     unique().on(t.meeting_id, t.employee_id),
     index("meeting_attendees_employee_id_idx").on(t.employee_id),
+    check(
+      "meeting_attendees_response_valid",
+      sql`${t.response_status} IN ('NO_RESPONSE', 'ACCEPTED', 'DECLINED')`
+    ),
   ]
 );
 
@@ -312,6 +547,11 @@ export const notifications = pgTable(
       .notNull()
       .references(() => notification_type_master.notification_type_id),
     status: varchar("status", { length: 20 }).default("PENDING"),
+    // Set for a per-person message (an invitation): only that employee is
+    // mailed. Null = the usual message to every attendee.
+    recipient_employee_id: integer("recipient_employee_id").references(
+      () => employee.employee_id
+    ),
     // Delivery attempts so far; PENDING rows are retried until the limit,
     // then parked as FAILED.
     attempts: integer("attempts").notNull().default(0),
@@ -579,6 +819,61 @@ export const room_request_emails = pgTable(
   ]
 );
 
+// One row per booking taken over by a higher-priority one. Append-only: a
+// trigger (migration 0027) rejects UPDATE and DELETE.
+export const bookingPriorityHistory = pgTable(
+  "booking_priority_history",
+  {
+    id: serial("id").primaryKey(),
+    incomingBookingId: integer("incoming_booking_id")
+      .notNull()
+      .references(() => meeting.meeting_id),
+    affectedBookingId: integer("affected_booking_id")
+      .notNull()
+      .references(() => meeting.meeting_id),
+    previousGroupId: integer("previous_group_id").references(() => groups.id),
+    previousPriority: integer("previous_priority").notNull(),
+    incomingGroupId: integer("incoming_group_id").references(() => groups.id),
+    incomingPriority: integer("incoming_priority").notNull(),
+    reason: varchar("reason", { length: 255 }).notNull(),
+    // Who triggered it (the incoming booking's organizer).
+    actorEmployeeId: integer("actor_employee_id").references(
+      () => employee.employee_id
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("booking_priority_history_affected_idx").on(t.affectedBookingId),
+    index("booking_priority_history_incoming_idx").on(t.incomingBookingId),
+  ]
+);
+
+// Admin changes to groups, priorities, permissions and memberships.
+// Append-only (trigger in migration 0027).
+export const groupAuditLogs = pgTable(
+  "group_audit_logs",
+  {
+    id: serial("id").primaryKey(),
+    actorEmployeeId: integer("actor_employee_id").references(
+      () => employee.employee_id
+    ),
+    action: varchar("action", { length: 64 }).notNull(),
+    // Deliberately no FK: the row must survive the group's deletion, and the
+    // table is append-only (an ON DELETE SET NULL update would be rejected).
+    groupId: integer("group_id"),
+    targetEmployeeId: integer("target_employee_id").references(
+      () => employee.employee_id
+    ),
+    details: jsonb("details"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("group_audit_logs_created_idx").on(t.createdAt)]
+);
+
 /* -------------------------------------------------------------------------- */
 /* 4. Relations                                                             */
 /* -------------------------------------------------------------------------- */
@@ -795,3 +1090,13 @@ export type RoomRequest = typeof room_requests.$inferSelect;
 export type NewRoomRequest = typeof room_requests.$inferInsert;
 export type RoomRequestEmail = typeof room_request_emails.$inferSelect;
 export type RoomRequestHolder = typeof room_request_holders.$inferSelect;
+export type Group = typeof groups.$inferSelect;
+export type NewGroup = typeof groups.$inferInsert;
+export type UserGroup = typeof userGroups.$inferSelect;
+export type GroupSettings = typeof groupSettings.$inferSelect;
+export type EntraGroupMapping = typeof entraGroupMappings.$inferSelect;
+export type GroupMeetingType = typeof groupMeetingTypes.$inferSelect;
+export type EmployeeSyncRun = typeof employeeSyncRuns.$inferSelect;
+export type GroupPermission = typeof groupPermissions.$inferSelect;
+export type BookingPriorityHistory = typeof bookingPriorityHistory.$inferSelect;
+export type GroupAuditLog = typeof groupAuditLogs.$inferSelect;

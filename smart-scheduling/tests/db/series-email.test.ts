@@ -72,19 +72,29 @@ const waitFor = async (check: () => Promise<boolean> | boolean, ms = 5000) => {
 const notificationRow = async () => (await db.select().from(notifications))[0];
 
 describe("recurring booking confirmation e-mail", () => {
-  it("one e-mail to every attendee lists all occurrences with their times", async () => {
+  it("the organizer gets one e-mail listing all occurrences; the participant gets an invitation", async () => {
     await createRecurringMeeting(series({ notify: true }));
 
-    assert.ok(await waitFor(async () => (await notificationRow())?.status === "SENT"));
-    assert.equal((await db.select().from(notifications)).length, 1);
-    assert.equal(mail.sent.length, 1);
+    assert.ok(
+      await waitFor(
+        async () =>
+          (await db.select().from(notifications)).length === 2 &&
+          (await db.select().from(notifications)).every((n) => n.status === "SENT")
+      )
+    );
+    assert.equal(mail.sent.length, 2);
 
-    const [m] = mail.sent;
+    const m = mail.sent.find((x) => /Recurring Meeting Scheduled/.test(x.subject))!;
+    const invite = mail.sent.find((x) => /Meeting Invitation/.test(x.subject))!;
     const dates = computeOccurrenceDates(START(), 2, 4);
 
     assert.equal(m.from, process.env.EMAIL_FROM);
-    assert.ok(m.to.includes(f.users.bob.email));
-    assert.ok(m.to.includes(f.users.carol.email));
+    assert.equal(m.to, f.users.bob.email, "the organizer only");
+    assert.equal(invite.to, f.users.carol.email);
+    assert.ok(invite.text.includes("/invite?"), "links to the confirmation page");
+    assert.match(invite.text, /Accept: http/);
+    assert.match(invite.text, /Decline: http/);
+    assert.match(invite.text, /recurring series/);
     assert.match(m.subject, /^Recurring Meeting Scheduled - Standup$/);
 
     dates.forEach((date, i) =>
@@ -128,11 +138,15 @@ describe("recurring booking confirmation e-mail", () => {
     assert.equal(mail.sent.length, 0);
 
     mail.setFailures(0);
-    assert.equal((await processPendingNotifications(0)).SENT, 1);
+    // The confirmation and the participant's invitation are separate rows.
+    assert.equal((await processPendingNotifications(0)).SENT, 2);
     assert.equal((await processPendingNotifications(0)).SENT, 0, "no second send");
 
-    assert.equal(mail.sent.length, 1);
-    assert.equal((mail.sent[0].ics.match(/BEGIN:VEVENT/g) ?? []).length, 4);
+    assert.equal(mail.sent.length, 2);
+
+    const confirmation = mail.sent.find((x) => /Recurring Meeting Scheduled/.test(x.subject))!;
+
+    assert.equal((confirmation.ics.match(/BEGIN:VEVENT/g) ?? []).length, 4);
     assert.equal((await notificationRow()).status, "SENT");
   });
 

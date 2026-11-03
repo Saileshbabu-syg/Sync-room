@@ -190,6 +190,41 @@
       "when": 1793684439250,
       "tag": "0026_pending_reschedule_status",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793694035217,
+      "tag": "0027_groups_priority",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793703279715,
+      "tag": "0028_participants_responses",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793708106845,
+      "tag": "0029_group_types_entra_optional",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793712231860,
+      "tag": "0030_group_management_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793712936391,
+      "tag": "0031_group_controls",
+      "breakpoints": true
     }
   ]
 }

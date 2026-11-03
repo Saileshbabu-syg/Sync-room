@@ -30,6 +30,7 @@ Every variable is listed with placeholders in `.env.example`.
 | `AUTH_SECRET` | random | dummy | **required**, random, >= 32 chars, per environment |
 | `AUTH_URL` | `http://localhost:3000` | harness sets it | **required**, public `https://` origin |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth client | dummy | **required** |
+| `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_CLIENT_SECRET` | app registration (for **Sync from Entra ID**) | unset | only to use the sync; app registration needs the **User.Read.All** *application* permission with admin consent; **Group.Read.All** and **GroupMember.Read.All** too if you use the Entra group mapping |
 | `EMAIL_FROM` | set | dummy | **required**, one address |
 | `SMTP_HOST` / `SMTP_PORT` | relay or local sink | local sink | **required** |
 | `SMTP_USER` / `SMTP_PASSWORD` | if relay needs auth | unset | if relay needs auth |
