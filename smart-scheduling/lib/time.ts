@@ -66,6 +66,25 @@ export function nowInAppTimezone(now: Date = new Date()) {
   };
 }
 
+// Whole-clock minutes from `now` until a wall-clock slot starts (negative once
+// it has started). Both sides are APP_TIMEZONE wall-clock values, so the
+// difference is taken on the same scale.
+export function minutesUntilStart(
+  meetingDate: string,
+  startTime: string,
+  now: Date = new Date()
+): number {
+  const current = nowInAppTimezone(now);
+  const wallClock = (date: string, time: string) =>
+    Date.parse(`${date}T${normalizeTime(time)}Z`);
+
+  return (
+    (wallClock(meetingDate, startTime) -
+      wallClock(current.date, current.time)) /
+    60000
+  );
+}
+
 // True when the slot starts before the current minute (the current minute
 // itself is still bookable).
 export function isSlotStartInPast(
