@@ -170,8 +170,8 @@ export async function createBooking(input: BookingInput) {
     throw new BookingError("Invalid start or end time", 400);
   }
 
-  if (timeToSeconds(startTime) >= timeToSeconds(endTime)) {
-    throw new BookingError("End time must be after start time", 400);
+  if (timeToSeconds(startTime) === timeToSeconds(endTime)) {
+    throw new BookingError("End time must be different from the start time", 400);
   }
 
   // Same rule as the request schemas, for every caller of the service.

@@ -62,7 +62,7 @@ export function editBlocker(
     return "Replaced bookings cannot be edited. Please book a new slot.";
   }
 
-  if (isMeetingEnded(row.meeting_date, row.end_time, now)) {
+  if (isMeetingEnded(row.meeting_date, row.start_time, row.end_time, now)) {
     return "Meetings that have already ended cannot be edited.";
   }
 

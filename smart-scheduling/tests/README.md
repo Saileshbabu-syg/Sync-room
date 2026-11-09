@@ -11,6 +11,12 @@ already a dev dependency — no extra framework or package.
 | `npm test` | unit + db | |
 | `npm run test:all` | everything | |
 
+Overnight bookings (a meeting ending the next day) are covered by
+`tests/unit/overnight.test.ts`, `tests/db/overnight.test.ts` (conflicts across
+midnight, limits by start date, series, moves, concurrency, completion) and
+`tests/e2e/overnight.test.ts`; migration 0043 forward, refused rollback and
+re-apply are in `tests/db/migrations.test.ts` (disposable `ss_test_mig_*` databases).
+
 ## One-time setup
 
 1. A local Postgres (the repo's `docker compose up -d` container works).

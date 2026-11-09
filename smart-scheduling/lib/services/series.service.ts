@@ -97,7 +97,7 @@ type MeetingRow = typeof meeting.$inferSelect;
 const stillHappens = (row: MeetingRow, now?: Date) =>
   (row.meetingStatusId === MEETING_STATUS.SCHEDULED ||
     row.meetingStatusId === MEETING_STATUS.PENDING_RESCHEDULE) &&
-  !isMeetingEnded(row.meeting_date, row.end_time, now);
+  !isMeetingEnded(row.meeting_date, row.start_time, row.end_time, now);
 
 // The chosen meeting (unlocked read, to learn its series and rooms).
 async function readAnchor(meetingId: number) {
@@ -331,7 +331,7 @@ function cancelBlocker(row: MeetingRow, now?: Date) {
     return "Replaced bookings cannot be cancelled.";
   }
 
-  if (isMeetingEnded(row.meeting_date, row.end_time, now)) {
+  if (isMeetingEnded(row.meeting_date, row.start_time, row.end_time, now)) {
     return "Meetings that have already ended cannot be cancelled.";
   }
 

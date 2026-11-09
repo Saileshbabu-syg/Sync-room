@@ -49,6 +49,18 @@ node-cron (in process) -----------------/        +-> SMTP (Nodemailer), Microsof
   room and meeting-type access), then inserts. Overlap is also enforced by a
   Postgres exclusion constraint (`meeting_no_room_overlap`), so concurrent
   requests cannot double-book.
+- **Overnight meetings:** a meeting row keeps one date (the day it starts) and
+  two wall-clock times; an end time earlier than the start ends the **next
+  day** (23:00 to 01:00), equal times are invalid, so there is no end-date
+  column. `lib/time.ts` derives the real end for everything that needs it (the
+  calendar invite and Teams event, "has it ended", reminders stay on the start),
+  and `meetingStartsAt`/`meetingEndsAt` in `conflict-check.service.ts` do the same
+  in SQL, identical to the `meeting_no_room_overlap` exclusion constraint
+  (migration 0043). An overnight meeting needs the effective overnight policy
+  (application switch and the group's choice, `checkBookingPolicy`), counts
+  once against the day/week/month it **starts** in, and is checked occurrence by
+  occurrence in a series. Rolling 0043 back is refused while any overnight
+  meeting exists (nothing is deleted).
 - **Priority** (`priority.service.ts`): a booking from a higher-ranked group may
   take a slot held by a lower one (the loser becomes *Pending reschedule* and is
   cancelled automatically 30 minutes before start if nothing is done; or is

@@ -1,4 +1,5 @@
 import { APP_TIMEZONE } from "@/lib/constants";
+import { slotEndDate } from "@/lib/time";
 
 // The ONLY place that talks to Microsoft Graph for online meetings. Nothing
 // else in the application builds a Graph URL or handles a Graph token.
@@ -232,7 +233,10 @@ function eventBody(slot: OnlineMeetingSlot) {
       timeZone: APP_TIMEZONE,
     },
     end: {
-      dateTime: wallClock(slot.meetingDate, slot.endTime),
+      dateTime: wallClock(
+        slotEndDate(slot.meetingDate, slot.startTime, slot.endTime),
+        slot.endTime
+      ),
       timeZone: APP_TIMEZONE,
     },
   };

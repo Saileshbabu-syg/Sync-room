@@ -2,6 +2,8 @@ import { db } from "@/db";
 import { meeting } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 
+import { isOvernightSlot } from "@/lib/time";
+
 function addOneHour(time: string): string {
   const [hours, minutes] = time
     .split(":")
@@ -30,7 +32,10 @@ export async function getSuggestedTimeSlots(
       )
     );
 
-  return meetings.map((m) => ({
+  // A meeting that ends the next day leaves no "next hour" on this date.
+  return meetings
+    .filter((m) => !isOvernightSlot(m.start_time, m.end_time))
+    .map((m) => ({
     suggested_start_time: m.end_time,
     suggested_end_time: addOneHour(
       String(m.end_time)

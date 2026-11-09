@@ -57,8 +57,8 @@ export const editMeetingSchema = z
     (data) =>
       data.start_time === undefined ||
       data.end_time === undefined ||
-      data.start_time < data.end_time,
-    { message: "End time must be after start time", path: ["end_time"] }
+      data.start_time !== data.end_time,
+    { message: "End time must be different from the start time", path: ["end_time"] }
   )
   .refine(
     (data) =>

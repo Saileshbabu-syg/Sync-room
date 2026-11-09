@@ -31,7 +31,6 @@ import { dbErrorCode, PG_UNIQUE_VIOLATION } from "@/lib/api";
 import {
   ALL_PERMISSIONS,
   PERMISSION,
-  PRIVILEGED_PERMISSIONS,
   ROLE_ADMIN,
 } from "@/lib/constants";
 import type { DbExecutor, Tx } from "@/lib/db-types";
@@ -50,18 +49,15 @@ import { getPriorityContext } from "./group-context.service";
 
 // Admin-side management of application groups, their permissions and the
 // employee -> group assignments. Everything here lives in OUR database; Entra /
-// Google only identify the employee. Callers (the API routes) must already have
-// checked that the actor may use Group Management at all (requireGroupManagement).
-// This module then decides what the actor may change, from the actor's role and
-// group read from the database:
+// Google only identify the employee. Callers (the API routes) check
+// requireGroupManagement; every operation here checks it again (assertManager).
 //
-//  * The Admin role may do everything.
-//  * Anyone else (a group with `group.manage`) may NOT create groups, change any
-//    group's permissions, meeting types or priority, or meeting type
-//    priorities; may not edit or delete a privileged group (one granting any
-//    of PRIVILEGED_PERMISSIONS); and may only move people who are not Admins,
-//    not themselves, between non-privileged groups that do not rank above the
-//    actor's own group.
+// Group Management is the only gate: the Admin role or a group that grants
+// `group.manage` may do everything in this module - create, edit and delete
+// any group, change its name, description, order, permissions, meeting types,
+// rooms and booking policies, set meeting type priorities and the Entra
+// default group, and assign anyone to any group. There are no extra
+// Admin-only rules.
 
 export const GROUP_AUDIT = {
   CREATED: "GROUP_CREATED",
@@ -126,15 +122,13 @@ function mapConflict(error: unknown): never {
 
 type Actor = {
   employeeId: number;
-  isAdmin: boolean;
   // Admin role, or a group that grants group.manage (Group Management access).
   mayManageGroups: boolean;
-  // The actor's own group standing (1 = highest).
-  groupId: number | null;
-  priority: number;
 };
 
-async function loadActor(
+// The acting employee, re-read from the database. Throws unless they are an
+// active employee who may use Group Management.
+async function loadManager(
   executor: DbExecutor,
   actorEmployeeId: number
 ): Promise<Actor> {
@@ -149,193 +143,20 @@ async function loadActor(
   if (!row) throw new GroupError("You do not have permission to do this.", 403);
 
   const standing = await getPriorityContext(actorEmployeeId, executor);
+  const mayManageGroups =
+    row.role === ROLE_ADMIN || standing.permissions.has(PERMISSION.GROUP_MANAGE);
 
-  return {
-    employeeId: actorEmployeeId,
-    isAdmin: row.role === ROLE_ADMIN,
-    mayManageGroups:
-      row.role === ROLE_ADMIN || standing.permissions.has(PERMISSION.GROUP_MANAGE),
-    groupId: standing.groupId,
-    priority: standing.priority,
-  };
+  if (!mayManageGroups) {
+    throw new GroupError("You do not have permission to manage groups.", 403);
+  }
+
+  return { employeeId: actorEmployeeId, mayManageGroups };
 }
 
-function adminOnly(message: string): never {
-  throw new GroupError(message, 403);
-}
-
-async function isPrivilegedGroup(executor: DbExecutor, groupId: number) {
-  const [row] = await executor
-    .select({ key: groupPermissions.permissionKey })
-    .from(groupPermissions)
-    .where(
-      and(
-        eq(groupPermissions.groupId, groupId),
-        eq(groupPermissions.isEnabled, true),
-        inArray(groupPermissions.permissionKey, PRIVILEGED_PERMISSIONS)
-      )
-    )
-    .limit(1);
-
-  return Boolean(row);
-}
-
-const sameSet = <T>(a: T[], b: T[]) => {
-  const left = new Set(a);
-  const right = new Set(b);
-
-  return left.size === right.size && [...left].every((v) => right.has(v));
-};
-
-// The edit form sends the whole group back, unchanged permissions and
-// priority included; only a real change counts. The legacy booking.priority
-// key is not offered by the form, so it is left out of the comparison.
-async function changesPermissionsOrPriority(
-  tx: Tx,
-  before: typeof groups.$inferSelect,
-  input: UpdateGroupInput
-) {
-  if (input.priority !== undefined && input.priority !== before.priority) {
-    return true;
-  }
-
-  if (input.permissions) {
-    const current = await tx
-      .select({ key: groupPermissions.permissionKey })
-      .from(groupPermissions)
-      .where(
-        and(
-          eq(groupPermissions.groupId, before.id),
-          eq(groupPermissions.isEnabled, true)
-        )
-      );
-    const legacy = (key: string) => key !== PERMISSION.BOOKING_PRIORITY;
-
-    if (
-      !sameSet(
-        current.map((p) => p.key).filter(legacy),
-        input.permissions.filter(legacy)
-      )
-    ) {
-      return true;
-    }
-  }
-
-  if (input.meetingTypeIds) {
-    const current = await tx
-      .select({ id: groupMeetingTypes.meetingTypeId })
-      .from(groupMeetingTypes)
-      .where(eq(groupMeetingTypes.groupId, before.id));
-
-    if (!sameSet(current.map((t) => t.id), input.meetingTypeIds)) return true;
-  }
-
-  return false;
-}
-
-// Does this edit change anything besides the group's booking policies
-// (overnight choice, longest meeting, bookings per day / week / month)? Those
-// are open to everyone who may manage groups, even for a group with
-// administrative permissions; everything else about such a group stays with
-// administrators.
-async function changesBeyondSettings(
-  tx: Tx,
-  before: typeof groups.$inferSelect,
-  input: UpdateGroupInput
-) {
-  if (input.name !== undefined && input.name !== before.name) return true;
-
-  if (input.description !== undefined && input.description !== before.description) {
-    return true;
-  }
-
-  if (input.isActive !== undefined && input.isActive !== before.isActive) return true;
-
-  if (await changesPermissionsOrPriority(tx, before, input)) return true;
-
-  if (input.roomIds) {
-    const current = await tx
-      .select({ id: groupRooms.roomId })
-      .from(groupRooms)
-      .where(eq(groupRooms.groupId, before.id));
-
-    if (!sameSet(current.map((r) => r.id), input.roomIds)) return true;
-  }
-
-  return false;
-}
-
-// Whether a non-Admin actor may move `employeeId` out of `fromGroupId` (their
-// current group, if any) and into `toGroupId` (null = unassign).
-async function assertMayReassign(
-  tx: Tx,
-  actor: Actor,
-  employeeId: number,
-  fromGroupId: number | null,
-  toGroupId: number | null
-) {
-  if (actor.isAdmin) return;
-
-  if (employeeId === actor.employeeId) {
-    adminOnly("You cannot change your own group.");
-  }
-
-  const [target] = await tx
-    .select({ role: roles.roleName })
-    .from(employee)
-    .innerJoin(roles, eq(roles.roleId, employee.role_id))
-    .where(eq(employee.employee_id, employeeId));
-
-  if (target?.role === ROLE_ADMIN) {
-    adminOnly("Only an administrator can change an administrator's group.");
-  }
-
-  for (const groupId of [fromGroupId, toGroupId]) {
-    if (groupId === null) continue;
-
-    if (await isPrivilegedGroup(tx, groupId)) {
-      adminOnly(
-        "Only an administrator can move people into or out of a group with administrative permissions."
-      );
-    }
-
-    const [group] = await tx
-      .select({ priority: groups.priority })
-      .from(groups)
-      .where(eq(groups.id, groupId));
-
-    if (group && group.priority < actor.priority) {
-      adminOnly(
-        "You cannot move people into or out of a group that ranks above your own."
-      );
-    }
-  }
-}
-
-// The Entra sync places everyone without a group in the default group, so
-// choosing it is an assignment: the same rules as moving people into it.
-export async function assertMaySetDefaultGroup(
-  actorEmployeeId: number,
-  groupId: number
-) {
-  const actor = await loadActor(db, actorEmployeeId);
-
-  if (actor.isAdmin) return;
-
-  if (await isPrivilegedGroup(db, groupId)) {
-    adminOnly(
-      "Only an administrator can make a group with administrative permissions the default."
-    );
-  }
-
-  const [group] = await db
-    .select({ priority: groups.priority })
-    .from(groups)
-    .where(eq(groups.id, groupId));
-
-  if (group && group.priority < actor.priority) {
-    adminOnly("You cannot make a group that ranks above your own the default.");
-  }
+// The Entra sync places everyone without a group in the default group; choosing
+// it needs Group Management, nothing more.
+export async function assertMaySetDefaultGroup(actorEmployeeId: number) {
+  await loadManager(db, actorEmployeeId);
 }
 
 /* ------------------------------- groups ---------------------------------- */
@@ -463,7 +284,7 @@ async function writeSettings(
     !actorMayManageGroups &&
     (changed.overnight || changed.day || changed.week || changed.month)
   ) {
-    adminOnly("You do not have permission to change a group's booking policies.");
+    throw new GroupError("You do not have permission to change a group's booking policies.", 403);
   }
 
   const problem = groupPolicyProblem(await getAppBookingPolicy(tx), {
@@ -558,9 +379,7 @@ export async function updateMeetingTypePriority(
   actorEmployeeId: number
 ) {
   return db.transaction(async (tx) => {
-    if (!(await loadActor(tx, actorEmployeeId)).isAdmin) {
-      adminOnly("Only an administrator can change meeting type priorities.");
-    }
+    await loadManager(tx, actorEmployeeId);
 
     const [before] = await tx
       .select({
@@ -641,10 +460,7 @@ export async function createGroup(
 ) {
   try {
     return await db.transaction(async (tx) => {
-      // A new group comes with its own priority and permissions.
-      if (!(await loadActor(tx, actorEmployeeId)).isAdmin) {
-        adminOnly("Only an administrator can create groups.");
-      }
+      await loadManager(tx, actorEmployeeId);
 
       const [created] = await tx
         .insert(groups)
@@ -698,27 +514,7 @@ export async function updateGroup(
 
       if (!before) throw new GroupError("Group not found.", 404);
 
-      const actor = await loadActor(tx, actorEmployeeId);
-
-      if (!actor.isAdmin) {
-        // A group with administrative permissions can only be edited by an
-        // administrator - except for its booking policies, which anyone who
-        // may manage groups can set.
-        if (
-          (await isPrivilegedGroup(tx, groupId)) &&
-          (await changesBeyondSettings(tx, before, input))
-        ) {
-          adminOnly(
-            "Only an administrator can edit a group with administrative permissions."
-          );
-        }
-
-        if (await changesPermissionsOrPriority(tx, before, input)) {
-          adminOnly(
-            "Only an administrator can change a group's priority, permissions or meeting types."
-          );
-        }
-      }
+      const actor = await loadManager(tx, actorEmployeeId);
 
       const [after] = await tx
         .update(groups)
@@ -796,14 +592,7 @@ export async function deleteGroup(groupId: number, actorEmployeeId: number) {
 
     if (!group) throw new GroupError("Group not found.", 404);
 
-    if (
-      !(await loadActor(tx, actorEmployeeId)).isAdmin &&
-      (await isPrivilegedGroup(tx, groupId))
-    ) {
-      adminOnly(
-        "Only an administrator can delete a group with administrative permissions."
-      );
-    }
+    await loadManager(tx, actorEmployeeId);
 
     const [{ members }] = await tx
       .select({ members: count() })
@@ -977,13 +766,7 @@ export async function assignEmployee(
 
       if (current?.groupId === groupId) return { changed: false, group: target };
 
-      await assertMayReassign(
-        tx,
-        await loadActor(tx, actorEmployeeId),
-        employeeId,
-        current?.groupId ?? null,
-        groupId
-      );
+      await loadManager(tx, actorEmployeeId);
 
       if (current) {
         await tx
@@ -1020,25 +803,7 @@ export async function unassignEmployee(
   actorEmployeeId: number
 ) {
   return db.transaction(async (tx) => {
-    const [current] = await tx
-      .select({ groupId: userGroups.groupId })
-      .from(userGroups)
-      .where(
-        and(
-          eq(userGroups.employeeId, employeeId),
-          isNull(userGroups.effectiveUntil)
-        )
-      );
-
-    if (current) {
-      await assertMayReassign(
-        tx,
-        await loadActor(tx, actorEmployeeId),
-        employeeId,
-        current.groupId,
-        null
-      );
-    }
+    await loadManager(tx, actorEmployeeId);
 
     const closed = await tx
       .update(userGroups)

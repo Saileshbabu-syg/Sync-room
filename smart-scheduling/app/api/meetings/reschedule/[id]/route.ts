@@ -31,8 +31,8 @@ const rescheduleSchema = z
     meeting_date: meetingDateField,
     ...timeFields,
   })
-  .refine((data) => data.start_time < data.end_time, {
-    message: "End time must be after start time",
+  .refine((data) => data.start_time !== data.end_time, {
+    message: "End time must be different from the start time",
     path: ["end_time"],
   })
   .refine((data) => isLongEnough(data.start_time, data.end_time), {

@@ -19,9 +19,8 @@ import { startApp, type App } from "./harness";
 // allowance, the longest meeting, rescheduling, recurring series, and policy
 // changes that leave existing meetings alone.
 //
-// Overnight booking (a meeting that continues past midnight) is a later phase:
-// the setting is stored and resolved, but a meeting still has to end after it
-// starts, which one test below pins down.
+// Overnight booking (a meeting that continues past midnight) is covered in
+// tests/e2e/overnight.test.ts; here only the refusal while the policy is off.
 
 let app: App;
 let f: Fixtures;
@@ -228,11 +227,11 @@ describe("3. same-day bookings and overnight", () => {
     assert.equal(await meetingCount(), 1);
   });
 
-  it("a meeting that ends before it starts is refused (overnight booking is a later phase), and the form says it is not permitted", async () => {
+  it("a meeting that ends the next day is refused while overnight is off, and the form says it is not permitted", async () => {
     const res = await book(f.users.bob, day(1), { start_time: "23:00", end_time: "01:00" });
 
-    assert.equal(res.status, 400);
-    assert.match(message(res), /Validation failed|End time must be after start time/);
+    assert.equal(res.status, 403);
+    assert.match(message(res), /Overnight bookings are not permitted/);
 
     const policy = await app.call("GET", "/api/booking-policy", { as: f.users.bob });
 

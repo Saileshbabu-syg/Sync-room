@@ -1,13 +1,14 @@
 import { createEvent, createEvents, type EventAttributes } from "ics";
 
-import { appWallClockToUtc } from "@/lib/time";
+import { appWallClockToUtc, slotEndDate } from "@/lib/time";
 
 // Meeting dates and times are wall-clock values in APP_TIMEZONE. They are
 // converted to UTC explicitly so the invite does not depend on the timezone of
-// the server that generates it (DTSTART/DTEND are written as UTC, "...Z").
+// the server that generates it (DTSTART/DTEND are written as UTC, "...Z"). An
+// overnight meeting ends on the day after its date.
 const utcTimes = (date: string, startTime: string, endTime: string) => ({
   start: appWallClockToUtc(date, startTime),
-  end: appWallClockToUtc(date, endTime),
+  end: appWallClockToUtc(slotEndDate(date, startTime, endTime), endTime),
   startInputType: "utc" as const,
   startOutputType: "utc" as const,
   endInputType: "utc" as const,

@@ -296,8 +296,9 @@ export function AppBookingPolicyPanel({
             <span className="font-medium">Allow overnight bookings</span>
             <span className="block text-xs text-gray-500">
               The master switch: when it is off, no group can book a meeting that continues past
-              midnight. When it is on, each group can still opt out. Saved now; meetings that
-              cross midnight can be booked once that feature is released.
+              midnight (for example 11:00 PM to 01:00 AM). When it is on, each group can still opt
+              out. The meeting counts against the day it starts, and it must still fit the longest
+              meeting and the booking limits.
             </span>
           </span>
         </label>
@@ -444,7 +445,7 @@ export function GroupBookingPolicySection({
           </select>
           <p className="text-xs text-gray-500">
             {app.allowOvernight
-              ? "Whether this group's meetings may continue past midnight. Saved now; cross-midnight booking is released separately."
+              ? "Whether this group's meetings may continue past midnight. A meeting counts against the day it starts."
               : "Overnight bookings are turned off for the whole application, so this group cannot allow them."}
           </p>
         </div>

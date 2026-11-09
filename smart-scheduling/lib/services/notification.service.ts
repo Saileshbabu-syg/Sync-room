@@ -351,7 +351,7 @@ async function prepareInvitation(
   // Nothing to answer once the meeting is gone.
   if (
     details.meetingStatusId !== MEETING_STATUS.SCHEDULED ||
-    isMeetingEnded(details.meeting_date, details.end_time, now)
+    isMeetingEnded(details.meeting_date, details.start_time, details.end_time, now)
   ) {
     return { skip: "The meeting is no longer scheduled or has ended." };
   }
@@ -489,7 +489,7 @@ async function prepareNotification(claim: Claim, now: Date): Promise<Prepared> {
   if (
     (kind === "updated" || (isBooking && !isSeriesBooking)) &&
     (details.meetingStatusId !== MEETING_STATUS.SCHEDULED ||
-      isMeetingEnded(details.meeting_date, details.end_time, now))
+      isMeetingEnded(details.meeting_date, details.start_time, details.end_time, now))
   ) {
     return {
       skip: `The meeting is no longer scheduled or has ended; the ${kind === "updated" ? "update" : "confirmation"} was not sent.`,

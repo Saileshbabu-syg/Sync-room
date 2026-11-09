@@ -11,6 +11,7 @@ import {
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import { canUseRoom, getBookingPolicy } from "@/lib/services/booking-policy.service";
 import { jsonError, rateLimit, readJson } from "@/lib/api";
+import { isOvernightSlot } from "@/lib/time";
 import { suggestionsSchema } from "@/lib/validations/suggestions.validator";
 
 import { desc, isNull } from "drizzle-orm";
@@ -64,6 +65,18 @@ export async function POST(
     // -------------------------------
 
     const policy = await getBookingPolicy(organizer.employeeId);
+
+    // Early, friendly refusal; createBooking enforces the same rule.
+    if (isOvernightSlot(start_time, end_time) && !policy.allowOvernight) {
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "Overnight bookings are not permitted for your group: the meeting must end on the day it starts.",
+        },
+        { status: 403 }
+      );
+    }
 
     if (room_id) {
       if (!canUseRoom(policy, room_id)) {

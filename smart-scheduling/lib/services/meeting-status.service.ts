@@ -5,12 +5,14 @@ import { meeting } from "@/db/schema";
 import { APP_TIMEZONE, MEETING_STATUS } from "@/lib/constants";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
+import { meetingEndsAt } from "./conflict-check.service";
 
 export async function updateCompletedMeetings() {
   try {
     return await db.transaction(async (tx) => {
-      // Meeting date + end time are wall-clock values in APP_TIMEZONE, so they
-      // must be converted to an instant before comparing with now().
+      // Meeting date + end time (the next day for an overnight meeting) are
+      // wall-clock values in APP_TIMEZONE, so they must be converted to an
+      // instant before comparing with now().
       const updatedMeetings = await tx
         .update(meeting)
         .set({
@@ -20,10 +22,7 @@ export async function updateCompletedMeetings() {
         .where(
           and(
             eq(meeting.meetingStatusId, MEETING_STATUS.SCHEDULED),
-            sql`(
-              (${meeting.meeting_date} + ${meeting.end_time})
-                AT TIME ZONE ${APP_TIMEZONE}
-            ) <= NOW()`
+            sql`(${meetingEndsAt} AT TIME ZONE ${APP_TIMEZONE}) <= NOW()`
           )
         )
         .returning({

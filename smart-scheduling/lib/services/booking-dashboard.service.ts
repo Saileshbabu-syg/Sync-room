@@ -30,6 +30,7 @@ import {
   type BumpInfo,
   type ReplacedBooking,
 } from "./bump-info.service";
+import { meetingEndsAt, meetingStartsAt } from "./conflict-check.service";
 
 // Read-only booking history for the booking dashboard and its report downloads.
 // The metrics, the table and the exports all build their WHERE clause with
@@ -114,7 +115,7 @@ export async function getDashboardMetrics(
       cancelled: sql<number>`(count(*) filter (where ${meeting.meetingStatusId} = ${MEETING_STATUS.CANCELLED}))::int`,
       bumped: sql<number>`(count(*) filter (where ${meeting.meetingStatusId} = ${MEETING_STATUS.PREEMPTED}))::int`,
       pending: sql<number>`(count(*) filter (where ${meeting.meetingStatusId} = ${MEETING_STATUS.PENDING_RESCHEDULE}))::int`,
-      hours: sql<string>`coalesce(sum(extract(epoch from (${meeting.end_time} - ${meeting.start_time})) / 3600.0) filter (where ${confirmed}), 0)::text`,
+      hours: sql<string>`coalesce(sum(extract(epoch from (${meetingEndsAt} - ${meetingStartsAt})) / 3600.0) filter (where ${confirmed}), 0)::text`,
       rooms: sql<number>`(count(distinct ${meeting.room_id}) filter (where ${confirmed}))::int`,
     })
     .from(meeting)

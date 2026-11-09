@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { History, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,13 +17,21 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Pagination from "@/components/Pagination";
 import {
   AppBookingPolicyPanel,
   DEFAULT_GROUP_POLICY,
-  bookingPolicySummary,
   GroupBookingPolicySection,
   groupPolicyFormProblem,
   type AppBookingSettingsView,
@@ -33,7 +41,6 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -122,7 +129,7 @@ type SyncSummary = {
   notInDirectory: number;
 };
 
-const PERMISSION_OPTIONS = [
+const PERMISSION_OPTIONS: { key: string; label: string; hint?: string }[] = [
   { key: "dashboard.view", label: "Dashboard" },
   { key: "group.manage", label: "Group Management" },
   { key: "booking.create", label: "Create bookings" },
@@ -131,13 +138,19 @@ const PERMISSION_OPTIONS = [
   { key: "booking.recurring", label: "Recurring meetings" },
   {
     key: "booking.outranks",
-    label: "Outranks all meetings (a meeting that invites a member always gets the room)",
+    label: "Outranks all meetings",
+    hint: "A meeting that invites a member always gets the room.",
   },
   {
     key: "booking.protected",
-    label: "Protected meetings (a meeting that invites a member can never be taken over)",
+    label: "Protected meetings",
+    hint: "A meeting that invites a member can never be taken over.",
   },
-  { key: "rooms.manage", label: "Room management (add, edit, delete rooms)" },
+  {
+    key: "rooms.manage",
+    label: "Room management",
+    hint: "Add, edit and delete rooms.",
+  },
 ];
 
 const selectClass =
@@ -205,6 +218,38 @@ const policyOf = (g: GroupRow): GroupBookingPolicy => ({
   maxBookingsPerWeek: g.settings.maxBookingsPerWeek,
   maxBookingsPerMonth: g.settings.maxBookingsPerMonth,
 });
+
+// A titled card that groups related fields inside the group dialog.
+function FormSection({
+  title,
+  description,
+  count,
+  testId,
+  children,
+}: {
+  title: string;
+  description?: string;
+  count?: string;
+  testId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-4 rounded-lg border bg-white p-4" data-testid={testId}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">{title}</h3>
+          {description && <p className="text-xs text-muted-foreground">{description}</p>}
+        </div>
+        {count && (
+          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-muted-foreground">
+            {count}
+          </span>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
 
 // A dropdown of rooms with a checkbox each, so an admin can give a group some
 // rooms and not others. "All rooms" (the default) also covers rooms added later;
@@ -335,8 +380,8 @@ function GroupsTab({
       meetingTypeIds: form.meetingTypeIds,
       settings: {
         ...NO_LIMITS,
-        // Everyone keeps the group's stored duration; only an administrator
-        // (who sees the policy section) sends the new policy fields.
+        // The stored duration is always sent back; the new policy fields go
+        // with it whenever the policy section is shown.
         maxDurationMinutes: form.policy.maxDurationMinutes,
         ...(appSettings && {
           overnightPolicy: form.policy.overnight,
@@ -406,12 +451,11 @@ function GroupsTab({
       )}
 
       <div className="overflow-x-auto rounded-xl border">
-        <table className="w-full min-w-[980px] text-left text-sm">
+        <table className="w-full min-w-[760px] text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase text-gray-500">
             <tr>
               <th className="p-3">Group</th>
               <th className="p-3">Description</th>
-              {appSettings && <th className="p-3">Booking policies</th>}
               <th className="p-3">Employees</th>
               <th className="p-3">Status</th>
               <th className="p-3">Created</th>
@@ -429,14 +473,6 @@ function GroupsTab({
                 >
                   {g.description || "-"}
                 </td>
-                {appSettings && (
-                  <td
-                    className="max-w-[260px] p-3 text-xs text-gray-600"
-                    data-testid={`group-policy-${g.id}`}
-                  >
-                    {bookingPolicySummary(appSettings, policyOf(g))}
-                  </td>
-                )}
                 <td className="p-3" data-testid={`group-count-${g.id}`}>
                   {g.employeeCount}
                 </td>
@@ -490,7 +526,7 @@ function GroupsTab({
 
             {groups.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-10 text-center text-gray-500">
+                <td colSpan={6} className="p-10 text-center text-gray-500">
                   No groups yet. Use Add Group to create the first one.
                 </td>
               </tr>
@@ -500,109 +536,146 @@ function GroupsTab({
       </div>
 
       {/* Add / edit */}
-      <Sheet open={form !== null} onOpenChange={(open) => !open && setForm(null)}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle>{form?.id === null ? "Add group" : "Edit group"}</SheetTitle>
-            <SheetDescription>
-              Groups exist only in this application, not in your identity
-              provider.
-            </SheetDescription>
-          </SheetHeader>
+      <Dialog open={form !== null} onOpenChange={(open) => !open && setForm(null)}>
+        <DialogContent data-testid="group-dialog">
+          <DialogHeader>
+            <DialogTitle>{form?.id === null ? "Add group" : "Edit group"}</DialogTitle>
+            <DialogDescription>
+              Groups exist only in this application, not in your identity provider.
+            </DialogDescription>
+          </DialogHeader>
 
           {form && (
-            <div className="space-y-4 px-4">
-              <div className="space-y-2">
-                <Label htmlFor="group-name">Group name</Label>
-                <Input
-                  id="group-name"
-                  value={form.name}
-                  maxLength={100}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
+            <DialogBody className="space-y-6 bg-slate-50/60">
+              <FormSection title="General" description="Name the group and set its status.">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label htmlFor="group-name">Group name</Label>
+                    <Input
+                      id="group-name"
+                      value={form.name}
+                      maxLength={100}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="group-description">Description</Label>
-                <Input
-                  id="group-description"
-                  value={form.description}
-                  maxLength={500}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="group-priority">Group order (1 = first)</Label>
+                    <Input
+                      id="group-priority"
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={form.priority}
+                      onChange={(e) => setForm({ ...form, priority: e.target.value })}
+                    />
+                  </div>
+                </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="group-priority">Group order (1 = first)</Label>
-                <Input
-                  id="group-priority"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={form.priority}
-                  onChange={(e) => setForm({ ...form, priority: e.target.value })}
-                />
-                <p className="text-xs text-gray-500">
-                  Only decides which group wins when an employee is in several
-                  mapped Entra groups. It does not affect room booking: that is
-                  set by meeting type priority (see the Meeting types tab).
+                <div className="space-y-2">
+                  <Label htmlFor="group-description">Description</Label>
+                  <Input
+                    id="group-description"
+                    value={form.description}
+                    maxLength={500}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  />
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Group order only decides which group wins when an employee is in
+                  several mapped Entra groups. It does not affect room booking: that
+                  is set by meeting type priority (see the Meeting types tab).
                 </p>
-              </div>
 
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-medium">Permissions</legend>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={form.isActive}
+                    onCheckedChange={(checked) =>
+                      setForm({ ...form, isActive: checked === true })
+                    }
+                  />
+                  Active (inactive groups cannot receive new employees)
+                </label>
+              </FormSection>
 
-                {PERMISSION_OPTIONS.map((p) => (
-                  <label key={p.key} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={form.permissions.includes(p.key)}
-                      onCheckedChange={(checked) =>
-                        setForm({
-                          ...form,
-                          permissions: toggleIn(form.permissions, p.key, checked === true),
-                        })
-                      }
-                    />
-                    {p.label}
-                  </label>
-                ))}
-              </fieldset>
+              <FormSection
+                title="Permissions"
+                description="What members of this group can do in the application."
+                count={`${form.permissions.length} of ${PERMISSION_OPTIONS.length}`}
+              >
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {PERMISSION_OPTIONS.map((p) => (
+                    <label
+                      key={p.key}
+                      className="flex items-start gap-2 rounded-md border bg-background p-2.5 text-sm hover:bg-slate-50"
+                    >
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={form.permissions.includes(p.key)}
+                        onCheckedChange={(checked) =>
+                          setForm({
+                            ...form,
+                            permissions: toggleIn(form.permissions, p.key, checked === true),
+                          })
+                        }
+                      />
+                      <span>
+                        <span className="block font-medium">{p.label}</span>
+                        {p.hint && (
+                          <span className="block text-xs text-muted-foreground">{p.hint}</span>
+                        )}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </FormSection>
 
-              <fieldset className="space-y-2" data-testid="meeting-type-permissions">
-                <legend className="text-sm font-medium">Meeting types this group can book</legend>
-
-                {meetingTypes.map((t) => (
-                  <label key={t.id} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={form.meetingTypeIds.includes(t.id)}
-                      onCheckedChange={(checked) =>
-                        setForm({
-                          ...form,
-                          meetingTypeIds: toggleIn(form.meetingTypeIds, t.id, checked === true),
-                        })
-                      }
-                    />
-                    {t.name}
-                  </label>
-                ))}
+              <FormSection
+                title="Meeting types"
+                description="Meeting types this group can book."
+                count={`${form.meetingTypeIds.length} of ${meetingTypes.length}`}
+                testId="meeting-type-permissions"
+              >
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {meetingTypes.map((t) => (
+                    <label
+                      key={t.id}
+                      className="flex items-center gap-2 rounded-md border bg-background p-2.5 text-sm hover:bg-slate-50"
+                    >
+                      <Checkbox
+                        checked={form.meetingTypeIds.includes(t.id)}
+                        onCheckedChange={(checked) =>
+                          setForm({
+                            ...form,
+                            meetingTypeIds: toggleIn(form.meetingTypeIds, t.id, checked === true),
+                          })
+                        }
+                      />
+                      {t.name}
+                    </label>
+                  ))}
+                </div>
 
                 {form.meetingTypeIds.length === 0 && (
                   <p className="text-xs text-amber-700">
                     With none ticked, this group cannot book any meeting.
                   </p>
                 )}
-              </fieldset>
+              </FormSection>
 
-              <fieldset className="space-y-2" data-testid="room-access">
-                <legend className="text-sm font-medium">Rooms this group can book</legend>
-
+              <FormSection
+                title="Rooms"
+                description="Rooms this group can book."
+                testId="room-access"
+              >
                 <RoomPicker
                   rooms={rooms}
                   allRooms={form.allRooms}
                   roomIds={form.roomIds}
                   onChange={(allRooms, roomIds) => setForm({ ...form, allRooms, roomIds })}
                 />
-              </fieldset>
+              </FormSection>
 
               {appSettings && (
                 <GroupBookingPolicySection
@@ -612,20 +685,13 @@ function GroupsTab({
                   onChange={(policy) => setForm({ ...form, policy })}
                 />
               )}
-
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={form.isActive}
-                  onCheckedChange={(checked) =>
-                    setForm({ ...form, isActive: checked === true })
-                  }
-                />
-                Active (inactive groups cannot receive new employees)
-              </label>
-            </div>
+            </DialogBody>
           )}
 
-          <SheetFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setForm(null)} disabled={saving}>
+              Cancel
+            </Button>
             <Button
               disabled={
                 saving ||
@@ -636,11 +702,11 @@ function GroupsTab({
               }
               onClick={submit}
             >
-              {saving ? "Saving..." : "Save group"}
+              {saving ? "Saving..." : form?.id === null ? "Create group" : "Save changes"}
             </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirm delete */}
       <AlertDialog

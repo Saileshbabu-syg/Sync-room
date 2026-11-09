@@ -93,7 +93,7 @@ export default async function EditMeetingPage({
   if (
     (meetingData[0].meetingStatusId !== MEETING_STATUS.SCHEDULED &&
       !isPending) ||
-    isMeetingEnded(meetingData[0].meeting_date, meetingData[0].end_time)
+    isMeetingEnded(meetingData[0].meeting_date, meetingData[0].start_time, meetingData[0].end_time)
   ) {
     redirect("/bookings");
   }

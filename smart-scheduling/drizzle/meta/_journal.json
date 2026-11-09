@@ -302,6 +302,13 @@
       "when": 1794209376407,
       "tag": "0042_booking_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794219236521,
+      "tag": "0043_overnight_bookings",
+      "breakpoints": true
     }
   ]
 }

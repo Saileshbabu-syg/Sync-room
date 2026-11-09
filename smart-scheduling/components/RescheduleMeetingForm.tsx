@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import TimeSelect from "@/components/TimeSelect";
+import { useAllowOvernight } from "@/lib/hooks/useAllowOvernight";
 import {
   Select,
   SelectContent,
@@ -53,6 +54,7 @@ export default function RescheduleMeetingForm({
   mode = "reschedule",
 }: Props) {
   const router = useRouter();
+  const allowOvernight = useAllowOvernight();
 
   const [room, setRoom] = useState(String(roomId));
   const [date, setDate] = useState(meetingDate);
@@ -158,7 +160,7 @@ export default function RescheduleMeetingForm({
 
           <div>
             <Label>End Time</Label>
-            <TimeSelect value={end} onChange={setEnd} after={start} />
+            <TimeSelect value={end} onChange={setEnd} after={start} overnight={allowOvernight} />
           </div>
         </div>
 

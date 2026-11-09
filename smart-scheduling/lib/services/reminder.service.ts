@@ -239,7 +239,7 @@ async function deliverReminder(
     if (
       !details ||
       details.meetingStatusId !== MEETING_STATUS.SCHEDULED ||
-      isMeetingEnded(details.meeting_date, details.end_time, now)
+      isMeetingEnded(details.meeting_date, details.start_time, details.end_time, now)
     ) {
       await finishReminder(claim, {
         status: "SKIPPED",

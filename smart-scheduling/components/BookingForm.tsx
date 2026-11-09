@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import TimeSelect from "@/components/TimeSelect";
 import { focusNextOnEnter } from "@/lib/focusNextOnEnter";
 import { formatTime } from "@/lib/format";
+import { useAllowOvernight } from "@/lib/hooks/useAllowOvernight";
 import { usePersistedForm } from "@/lib/hooks/usePersistedForm";
 import { nowInAppTimezone } from "@/lib/time";
 import {
@@ -29,6 +30,7 @@ const EMPTY_FORM = {
 
 export default function BookingForm() {
   const router = useRouter();
+  const allowOvernight = useAllowOvernight();
 
   const [loading, setLoading] = useState(false);
 
@@ -109,7 +111,7 @@ if (formData.meetingDate === nowApp.date) {
 
 // Same rule as the server (lib/validations/date-time).
 if (
-  formData.endTime <= formData.startTime ||
+  formData.endTime === formData.startTime ||
   !isLongEnough(formData.startTime, formData.endTime)
 ) {
   toast.warning(MIN_DURATION_MESSAGE);
@@ -257,6 +259,7 @@ router.push(
             value={formData.endTime}
             onChange={(v) => setFormData((prev) => ({ ...prev, endTime: v }))}
             after={formData.startTime || undefined}
+            overnight={allowOvernight}
             placeholder="Select end time"
           />
 

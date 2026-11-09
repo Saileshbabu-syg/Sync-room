@@ -5,7 +5,7 @@ import { groupRooms, groupSettings } from "@/db/schema";
 import { PERMISSION } from "@/lib/constants";
 import type { DbExecutor } from "@/lib/db-types";
 import { addDays } from "@/lib/report-period";
-import { nowInAppTimezone, timeToSeconds } from "@/lib/time";
+import { durationMinutes, isOvernightSlot, nowInAppTimezone } from "@/lib/time";
 
 import {
   DEFAULT_GROUP_BOOKING_POLICY,
@@ -148,8 +148,20 @@ export function checkBookingPolicy(
     };
   }
 
-  const minutes =
-    (timeToSeconds(booking.endTime) - timeToSeconds(booking.startTime)) / 60;
+  // A meeting that ends the next day needs overnight permission: the
+  // application's master switch AND the group's own choice (already combined in
+  // policy.allowOvernight). Checked for every entry point and every occurrence
+  // (a series has one start and end time, so one check covers them all).
+  if (isOvernightSlot(booking.startTime, booking.endTime) && !policy.allowOvernight) {
+    return {
+      status: 403,
+      message:
+        "Overnight bookings are not permitted for your group: the meeting must end on the day it starts.",
+    };
+  }
+
+  // Across midnight when the meeting is overnight.
+  const minutes = durationMinutes(booking.startTime, booking.endTime);
 
   if (policy.maxDurationMinutes !== null && minutes > policy.maxDurationMinutes) {
     return {

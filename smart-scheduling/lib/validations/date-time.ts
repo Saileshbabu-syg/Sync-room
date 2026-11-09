@@ -7,8 +7,8 @@ import { durationMinutes, isSlotStartInPast, nowInAppTimezone } from "@/lib/time
 export const MIN_MEETING_MINUTES = 15;
 export const MIN_DURATION_MESSAGE = `Meeting duration must be at least ${MIN_MEETING_MINUTES} minutes.`;
 
-// Duration is measured on the wall-clock times as booked (same day, start <
-// end): meetings are stored and shown that way, and the application's zone has
+// Duration is measured on the wall-clock times as booked (across midnight when the
+// end is earlier than the start): meetings are stored and shown that way, and the zone has
 // no daylight-saving jumps. Malformed values pass here; the field checks
 // report them (refinements must not throw on them).
 export function isLongEnough(start: string, end: string) {

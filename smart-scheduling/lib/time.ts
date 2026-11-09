@@ -5,7 +5,15 @@
 // comparison goes through seconds-since-midnight instead.
 //
 // Slots are half-open intervals [start, end): a meeting may start exactly when
-// another one ends. Overnight slots (end before start) are not supported.
+// another one ends.
+//
+// Overnight slots: a meeting row keeps ONE date (the day it starts) and two
+// wall-clock times. When the end time is earlier than the start time the meeting
+// ends on the NEXT calendar day (23:00 -> 01:00). Equal times are a zero-length
+// slot and are never valid, so a meeting is always shorter than 24 hours and the
+// end date never needs its own column. Everything that needs a real end
+// (conflicts, reminders, calendar, Teams, "has it ended") derives it here, or in
+// SQL with the same rule (lib/services/conflict-check.service.ts).
 
 import { APP_TIMEZONE } from "@/lib/constants";
 
@@ -40,8 +48,62 @@ export function timeRangesOverlap(
   );
 }
 
+// True when the slot ends on the day after it starts (end earlier than start).
+export function isOvernightSlot(start: string, end: string): boolean {
+  return timeToSeconds(end) < timeToSeconds(start);
+}
+
+const SECONDS_PER_DAY = 24 * 3600;
+const DAY_MS = SECONDS_PER_DAY * 1000;
+
+// Length of the slot in minutes, across midnight when the slot is overnight.
 export function durationMinutes(start: string, end: string): number {
-  return (timeToSeconds(end) - timeToSeconds(start)) / 60;
+  const seconds = timeToSeconds(end) - timeToSeconds(start);
+
+  return (seconds < 0 ? seconds + SECONDS_PER_DAY : seconds) / 60;
+}
+
+// "YYYY-MM-DD" plus whole days (calendar arithmetic, no time zone involved).
+export function addCalendarDays(date: string, days: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+// The calendar date the slot ends on: the start date, or the next day for an
+// overnight slot.
+export function slotEndDate(date: string, start: string, end: string): string {
+  return isOvernightSlot(start, end) ? addCalendarDays(date, 1) : date;
+}
+
+// A slot as a pair of wall-clock instants (milliseconds, the wall clock read as
+// UTC so no zone is involved: the application's zone has no daylight saving).
+// Half-open [startMs, endMs).
+export type SlotBounds = { startMs: number; endMs: number };
+
+export function slotBounds(date: string, start: string, end: string): SlotBounds {
+  const [y, m, d] = date.split("-").map(Number);
+  const dayMs = Date.UTC(y, m - 1, d);
+
+  return {
+    startMs: dayMs + timeToSeconds(start) * 1000,
+    endMs:
+      dayMs +
+      timeToSeconds(end) * 1000 +
+      (isOvernightSlot(start, end) ? DAY_MS : 0),
+  };
+}
+
+export function boundsOverlap(a: SlotBounds, b: SlotBounds): boolean {
+  return a.startMs < b.endMs && a.endMs > b.startMs;
+}
+
+// "YYYY-MM-DD HH:MM:SS" wall-clock timestamps of a slot, for SQL comparisons.
+export function slotTimestamps(date: string, start: string, end: string) {
+  return {
+    start: `${date} ${normalizeTime(start)}`,
+    end: `${slotEndDate(date, start, end)} ${normalizeTime(end)}`,
+  };
 }
 
 // Current wall-clock date ("YYYY-MM-DD") and time ("HH:MM:SS") in APP_TIMEZONE.
@@ -82,16 +144,19 @@ export function isSlotStartInPast(
   return timeToSeconds(startTime) < timeToSeconds(current.time.slice(0, 5));
 }
 
-// True once the meeting's end time has been reached.
+// True once the meeting's end has been reached. An overnight meeting ends on
+// the day after its date.
 export function isMeetingEnded(
   meetingDate: string,
+  startTime: string,
   endTime: string,
   now: Date = new Date()
 ): boolean {
   const current = nowInAppTimezone(now);
+  const endDate = slotEndDate(meetingDate, startTime, endTime);
 
-  if (meetingDate !== current.date) {
-    return meetingDate < current.date;
+  if (endDate !== current.date) {
+    return endDate < current.date;
   }
 
   return timeToSeconds(endTime) <= timeToSeconds(current.time);

@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, exists, notInArray, or, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 
@@ -13,7 +13,7 @@ import {
   SLOT_FREE_STATUSES,
   ROLE_ADMIN,
 } from "@/lib/constants";
-import { nowInAppTimezone } from "@/lib/time";
+import { isOvernightSlot, nowInAppTimezone } from "@/lib/time";
 
 import { holdsSlot, overlapsSlot } from "./conflict-check.service";
 import { bookedPriority } from "./priority.service";
@@ -31,11 +31,7 @@ export async function getAvailableRooms(
     .select({ roomId: meeting.room_id })
     .from(meeting)
     .where(
-      and(
-        eq(meeting.meeting_date, meetingDate),
-        overlapsSlot(startTime, endTime),
-        holdsSlot
-      )
+      and(overlapsSlot(meetingDate, startTime, endTime), holdsSlot)
     );
 
   // Extract booked room ids
@@ -118,11 +114,7 @@ export async function isRoomAvailable(
           meeting.room_id,
           roomId
         ),
-        eq(
-          meeting.meeting_date,
-          meetingDate
-        ),
-        overlapsSlot(startTime, endTime),
+        overlapsSlot(meetingDate, startTime, endTime),
         holdsSlot
       ),
     });
@@ -166,6 +158,7 @@ export async function getRoomSchedule(
   const schedules = await db
     .select({
       title: meeting.title,
+      startDate: meeting.meeting_date,
       startTime: meeting.start_time,
       endTime: meeting.end_time,
       status: meetingStatuses.meetingStatusName,
@@ -200,7 +193,15 @@ export async function getRoomSchedule(
     .where(
       and(
         eq(meeting.room_id, roomId),
-        eq(meeting.meeting_date, meetingDate),
+        // The day's meetings, plus an overnight meeting that started the evening
+        // before and is still using the room in the early hours of this day.
+        or(
+          eq(meeting.meeting_date, meetingDate),
+          and(
+            sql`${meeting.meeting_date} = (${meetingDate}::date - 1)`,
+            sql`${meeting.end_time} < ${meeting.start_time}`
+          )
+        ),
 
         // Hide cancelled meetings and bumped ones waiting to be rescheduled:
         // neither holds the room any more.
@@ -211,13 +212,22 @@ export async function getRoomSchedule(
       )
     )
     // Earliest first: the form lists these slots as the day's timeline.
-    .orderBy(asc(meeting.start_time), asc(meeting.meeting_id));
+    .orderBy(asc(meeting.meeting_date), asc(meeting.start_time), asc(meeting.meeting_id));
+
+  const all = schedules.map((m) => ({
+    ...m,
+    // Started the day before / ends the day after the viewed date.
+    fromPreviousDay: m.startDate !== meetingDate,
+    continuesNextDay:
+      m.startDate === meetingDate && isOvernightSlot(m.startTime, m.endTime),
+  }));
 
   const visible =
-    // If selected date is today, remove meetings that have already ended.
+    // If selected date is today, remove meetings that have already ended (one
+    // that runs into tomorrow has not).
     meetingDate === current.date
-      ? schedules.filter((m) => m.endTime > current.time)
-      : schedules;
+      ? all.filter((m) => m.continuesNextDay || m.endTime > current.time)
+      : all;
 
   return visible.map((m) => ({
     title:
@@ -228,6 +238,9 @@ export async function getRoomSchedule(
         : "Busy",
     startTime: m.startTime,
     endTime: m.endTime,
+    // Whole-day timeline: which part of the meeting falls on this date.
+    fromPreviousDay: m.fromPreviousDay,
+    continuesNextDay: m.continuesNextDay,
     status: m.status,
     priorityRank: m.priorityRank,
     meetingTypeName: m.meetingTypeName,

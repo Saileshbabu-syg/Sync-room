@@ -13,7 +13,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Pagination from "@/components/Pagination";
 import { StatusBadge } from "@/components/StatusBadge";
 import { invitationCategory } from "@/lib/constants";
-import { formatDate, formatTime, formatTimeRange } from "@/lib/format";
+import { formatDate, formatEndTime, formatTime, formatTimeRange } from "@/lib/format";
 import { addDays } from "@/lib/report-period";
 
 type Option = { id: number; name: string };
@@ -628,7 +628,7 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
                       <td className="p-3">{r.roomName}</td>
                       <td className="whitespace-nowrap p-3">{formatDate(r.meetingDate)}</td>
                       <td className="p-3">{formatTime(r.startTime)}</td>
-                      <td className="p-3">{formatTime(r.endTime)}</td>
+                      <td className="p-3">{formatEndTime(r.startTime, r.endTime)}</td>
                       <td className="p-3">
                         <StatusBadge statusId={r.statusId} />
                       </td>

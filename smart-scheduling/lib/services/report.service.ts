@@ -6,7 +6,7 @@ import PDFDocument from "pdfkit";
 import { db } from "@/db";
 import { groupAuditLogs } from "@/db/schema";
 import { APP_TIMEZONE, invitationCategory } from "@/lib/constants";
-import { formatTime } from "@/lib/format";
+import { formatEndTime, formatTime } from "@/lib/format";
 import { neutralizeFormula } from "@/lib/spreadsheet-safe";
 import { nowInAppTimezone } from "@/lib/time";
 
@@ -91,7 +91,7 @@ function cells(r: ReportRow): (string | number)[] {
     r.roomName,
     r.meetingDate,
     formatTime(r.startTime),
-    formatTime(r.endTime),
+    formatEndTime(r.startTime, r.endTime),
     r.status,
     r.bumped?.byName ?? "",
     r.bumped?.reason ?? "",
@@ -272,7 +272,7 @@ async function writePdf(
     r.title,
     r.roomName,
     r.meetingDate,
-    `${formatTime(r.startTime)} - ${formatTime(r.endTime)}`,
+    `${formatTime(r.startTime)} - ${formatEndTime(r.startTime, r.endTime)}`,
     r.bumped ? `${r.status} by ${r.bumped.byName}` : r.status,
   ];
   const heads = [

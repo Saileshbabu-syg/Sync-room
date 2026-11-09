@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import EmployeeMultiSelect from "@/components/EmployeeMultiSelect";
 import SeriesScopeSelect, { type SeriesScope } from "@/components/SeriesScopeSelect";
 import TimeSelect from "@/components/TimeSelect";
+import { useAllowOvernight } from "@/lib/hooks/useAllowOvernight";
 import { toast } from "sonner";
 
 type MeetingType = {
@@ -50,6 +51,7 @@ export default function EditMeetingForm({
   inSeries = false,
   rooms = [],
 }: Props) {
+  const allowOvernight = useAllowOvernight();
 
   const [scope, setScope] = useState<SeriesScope>("single");
 
@@ -223,7 +225,12 @@ const participantEmployeeIds = attendees;
               </div>
               <div>
                 <Label>End Time</Label>
-                <TimeSelect value={seriesEnd} onChange={setSeriesEnd} />
+                <TimeSelect
+                  value={seriesEnd}
+                  onChange={setSeriesEnd}
+                  after={seriesStart || undefined}
+                  overnight={allowOvernight}
+                />
               </div>
             </div>
           </div>

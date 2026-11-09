@@ -45,9 +45,11 @@ describe("createMeetingSchema", () => {
     assert.equal(createMeetingSchema.safeParse(valid()).success, true);
   });
 
-  it("rejects invalid start/end ordering and identical times", () => {
-    rejects(createMeetingSchema, { ...valid(), start_time: "11:00", end_time: "10:00" });
+  it("rejects identical times; an earlier end time is an overnight meeting, left to the booking policy", () => {
     rejects(createMeetingSchema, { ...valid(), start_time: "10:00", end_time: "10:00" });
+    assert.equal(createMeetingSchema.safeParse({ ...valid(), start_time: "23:00", end_time: "01:00" }).success, true);
+    // Still at least 15 minutes, measured across midnight.
+    rejects(createMeetingSchema, { ...valid(), start_time: "23:55", end_time: "00:05" });
   });
 
   it('rejects "HH:MM:SS", malformed times and impossible dates', () => {
@@ -108,7 +110,8 @@ describe("recurringMeetingSchema", () => {
   it("rejects bad counts, ordering and past dates", () => {
     rejects(recurringMeetingSchema, { ...base(), occurrence_count: 0 });
     rejects(recurringMeetingSchema, { ...base(), occurrence_count: 13 });
-    rejects(recurringMeetingSchema, { ...base(), start_time: "11:00", end_time: "10:00" });
+    rejects(recurringMeetingSchema, { ...base(), start_time: "10:00", end_time: "10:00" });
+    assert.equal(recurringMeetingSchema.safeParse({ ...base(), start_time: "23:00", end_time: "01:00" }).success, true);
     rejects(recurringMeetingSchema, { ...base(), meeting_date: dateFromToday(-2) });
   });
 });
@@ -152,7 +155,8 @@ describe("suggestions validation (F-18)", () => {
     assert.equal(availableRoomsQuerySchema.safeParse(q).success, true);
     rejects(availableRoomsQuerySchema, { ...q, participants: "abc" });
     rejects(availableRoomsQuerySchema, { ...q, date: undefined });
-    rejects(availableRoomsQuerySchema, { ...q, end: "08:00" });
+    rejects(availableRoomsQuerySchema, { ...q, end: "09:00" });
+    assert.equal(availableRoomsQuerySchema.safeParse({ ...q, start: "23:00", end: "01:00" }).success, true);
   });
 });
 

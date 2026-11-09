@@ -109,8 +109,8 @@ export function normalizeSlot(target: MoveTarget): MoveTarget {
     throw new RescheduleError("Invalid start or end time", 400);
   }
 
-  if (timeToSeconds(startTime) >= timeToSeconds(endTime)) {
-    throw new RescheduleError("End time must be after start time", 400);
+  if (timeToSeconds(startTime) === timeToSeconds(endTime)) {
+    throw new RescheduleError("End time must be different from the start time", 400);
   }
 
   if (!isLongEnough(startTime, endTime)) {
@@ -172,7 +172,7 @@ export async function moveLockedMeeting(
 
   if (
     existing.meetingStatusId === MEETING_STATUS.SCHEDULED &&
-    isMeetingEnded(existing.meeting_date, existing.end_time, now)
+    isMeetingEnded(existing.meeting_date, existing.start_time, existing.end_time, now)
   ) {
     throw new RescheduleError(
       "Meetings that have already ended cannot be moved.",

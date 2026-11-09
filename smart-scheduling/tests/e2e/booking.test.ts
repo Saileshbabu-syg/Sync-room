@@ -176,7 +176,6 @@ describe("booking rules over HTTP", () => {
 
   it("invalid ordering / times / past dates are 400", async () => {
     for (const o of [
-      { start_time: "11:00", end_time: "10:00" },
       { start_time: "10:00", end_time: "10:00" },
       { start_time: "10:00:00", end_time: "11:00:00" },
       { meeting_date: dateFromToday(-1) },
@@ -185,6 +184,13 @@ describe("booking rules over HTTP", () => {
     ]) {
       assert.equal((await book(f.users.bob, { ...o, start_time: o.start_time ?? "14:00", end_time: o.end_time ?? "15:00" })).status, 400, JSON.stringify(o));
     }
+  });
+
+  it("a reversed time is an overnight meeting: 403 while overnight is off (the default)", async () => {
+    const res = await book(f.users.bob, { start_time: "11:00", end_time: "10:00" });
+
+    assert.equal(res.status, 403);
+    assert.match(String(res.json!.message), /Overnight bookings are not permitted/);
   });
 
   it("a room under maintenance cannot be booked, even by calling the API directly (F-06)", async () => {

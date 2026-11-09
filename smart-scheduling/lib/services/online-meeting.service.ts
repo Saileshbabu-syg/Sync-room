@@ -639,7 +639,7 @@ export async function retryOnlineMeetings(
     );
   }
 
-  if (isMeetingEnded(row.meeting_date, row.end_time)) {
+  if (isMeetingEnded(row.meeting_date, row.start_time, row.end_time)) {
     throw new OnlineMeetingError("This meeting has already ended.", 400);
   }
 
@@ -675,7 +675,7 @@ export async function retryOnlineMeetings(
               )
             )
         )
-          .filter((m) => !isMeetingEnded(m.meeting_date, m.end_time))
+          .filter((m) => !isMeetingEnded(m.meeting_date, m.start_time, m.end_time))
           .map((m) => m.meeting_id)
       : [];
 

@@ -7,7 +7,7 @@ import {
 } from "./calendar.service";
 import type { MeetingEmailSeries } from "./meeting-series.service";
 import { APP_TIMEZONE } from "@/lib/constants";
-import { formatTime, formatTimeRange } from "@/lib/format";
+import { formatEndTime, formatTime, formatTimeRange } from "@/lib/format";
 import { escapeHtml, sanitizeHeaderValue } from "@/lib/html";
 
 // The one place booking e-mail leaves the application. Every booking-related
@@ -454,7 +454,7 @@ ${bumpLines.map((l) => `
 
       <p><strong>Start Time:</strong> ${escapeHtml(formatTime(startTime))}</p>
 
-      <p><strong>End Time:</strong> ${escapeHtml(formatTime(endTime))}</p>
+      <p><strong>End Time:</strong> ${escapeHtml(formatEndTime(startTime, endTime))}</p>
 
       <p><strong>Time zone:</strong> ${escapeHtml(zone)}</p>${onlineHtml}
 ${
@@ -474,7 +474,7 @@ ${
     `Title: ${title}`,
     `Date: ${meetingDate}`,
     `Start Time: ${formatTime(startTime)}`,
-    `End Time: ${formatTime(endTime)}`,
+    `End Time: ${formatEndTime(startTime, endTime)}`,
     `Time zone: ${zone}`,
     ...(joinUrl
       ? ["", `Meeting type: ${TEAMS_LABEL}`, `Join Meeting: ${joinUrl}`]
@@ -784,7 +784,7 @@ export function renderInvitationEmail(fields: InvitationFields) {
     ["Room", fields.roomName],
     ["Date", withWeekday(fields.meetingDate)],
     ["Start Time", formatTime(fields.startTime)],
-    ["End Time", formatTime(fields.endTime)],
+    ["End Time", formatEndTime(fields.startTime, fields.endTime)],
     ["Time zone", timeZoneLabel(fields.meetingDate, fields.startTime)],
     ...(fields.joinUrl
       ? ([["Meeting type", TEAMS_LABEL]] as [string, string][])

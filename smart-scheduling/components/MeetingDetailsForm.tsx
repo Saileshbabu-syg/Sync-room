@@ -37,7 +37,12 @@ import {
 import TimeSelect from "@/components/TimeSelect";
 import { formKeyNavigation } from "@/lib/focusNextOnEnter";
 import { toast } from "sonner";
-import { isSlotStartInPast, nowInAppTimezone } from "@/lib/time";
+import {
+  durationMinutes,
+  isOvernightSlot,
+  isSlotStartInPast,
+  nowInAppTimezone,
+} from "@/lib/time";
 import { addDays } from "@/lib/report-period";
 import { formatDuration, formatTimeRange } from "@/lib/format";
 
@@ -73,6 +78,9 @@ type BookedSlot = {
   title: string;
   startTime: string;
   endTime: string;
+  // Overnight meetings: this date holds only part of them.
+  fromPreviousDay?: boolean;
+  continuesNextDay?: boolean;
   status: string | null;
   priorityRank: number;
   meetingTypeName: string;
@@ -309,13 +317,17 @@ export default function MeetingDetailsForm({
           /^\d{2}:\d{2}/.test(startTime) &&
           isSlotStartInPast(meetingDate, startTime.slice(0, 5))
         ? "The start time has already passed. Choose a later time."
-        : policy.maxDurationMinutes !== null &&
+        : startTime &&
+            endTime &&
+            startTime !== endTime &&
+            isOvernightSlot(startTime, endTime) &&
+            !policy.allowOvernight
+          ? "Overnight bookings are not permitted for your group: the meeting must end on the day it starts."
+          : policy.maxDurationMinutes !== null &&
             startTime &&
             endTime &&
-            startTime < endTime &&
-            (Number(endTime.slice(0, 2)) * 60 + Number(endTime.slice(3, 5))) -
-              (Number(startTime.slice(0, 2)) * 60 + Number(startTime.slice(3, 5))) >
-              policy.maxDurationMinutes
+            startTime !== endTime &&
+            durationMinutes(startTime, endTime) > policy.maxDurationMinutes
           ? `Meetings can be at most ${formatDuration(policy.maxDurationMinutes)} for your group.`
           : meetingDate &&
               policy.maxAdvanceDays !== null &&
@@ -332,14 +344,24 @@ export default function MeetingDetailsForm({
   );
 
   // Bookings that overlap the chosen time (half-open, like the server).
-  const overlapping =
-    startTime && endTime && startTime < endTime
-      ? bookedSlots.filter(
-          (slot) =>
-            slot.startTime.slice(0, 5) < endTime &&
-            slot.endTime.slice(0, 5) > startTime
-        )
-      : [];
+  // Minutes into the chosen date; an overnight meeting runs past 24:00, and a
+  // meeting from the evening before covers this date's early hours only.
+  const minutesOf = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+  const chosenRange =
+    startTime && endTime && startTime !== endTime
+      ? {
+          from: minutesOf(startTime),
+          to: minutesOf(endTime) + (isOvernightSlot(startTime, endTime) ? 1440 : 0),
+        }
+      : null;
+  const overlapping = chosenRange
+    ? bookedSlots.filter((slot) => {
+        const from = slot.fromPreviousDay ? 0 : minutesOf(slot.startTime);
+        const to = slot.continuesNextDay ? 1440 : minutesOf(slot.endTime);
+
+        return from < chosenRange.to && to > chosenRange.from;
+      })
+    : [];
 
   // Same rule as the server: the chosen meeting type must have a strictly
   // higher rank (a smaller number) than the booking, unless a priority guest is
@@ -450,8 +472,8 @@ const handleSubmit = async (takeoverConfirmed = false) => {
     return;
   }
 
-  if (startTime >= endTime) {
-    toast.warning("End time must be after start time.");
+  if (startTime === endTime) {
+    toast.warning("End time must be different from the start time.");
     return;
   }
 
@@ -778,6 +800,7 @@ finishBooking();
             value={endTime}
             onChange={setEndTime}
             after={startTime || undefined}
+            overnight={policy.allowOvernight}
             placeholder="Select end time"
           />
 

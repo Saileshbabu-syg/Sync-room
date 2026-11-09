@@ -24,7 +24,7 @@ import type { DbExecutor, Tx } from "@/lib/db-types";
 import { appWallClockToUtc, isSlotStartInPast } from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
-import { holdsSlot, overlapsSlot } from "./conflict-check.service";
+import { holdsSlot, overlapsAnySlot, overlapsSlot } from "./conflict-check.service";
 import { getAllowedMeetingTypes } from "./meeting-type-access.service";
 import {
   dispatchNotification,
@@ -128,9 +128,8 @@ export async function findSlotHolders(
     .where(
       and(
         eq(meeting.room_id, roomId),
-        inArray(meeting.meeting_date, meetingDates),
         holdsSlot,
-        overlapsSlot(startTime, endTime)
+        overlapsAnySlot(meetingDates, startTime, endTime)
       )
     )
     .orderBy(asc(meeting.meeting_date), asc(meeting.start_time))
@@ -371,11 +370,7 @@ export async function getClaimableRooms(
     })
     .from(meeting)
     .where(
-      and(
-        eq(meeting.meeting_date, meetingDate),
-        holdsSlot,
-        overlapsSlot(startTime, endTime)
-      )
+      and(holdsSlot, overlapsSlot(meetingDate, startTime, endTime))
     );
 
   const byRoom = new Map<number, typeof holders>();

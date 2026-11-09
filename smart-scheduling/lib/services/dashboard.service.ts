@@ -127,7 +127,7 @@ export async function getTodayMeetings(
   employeeId: number
 ) {
 
-  const today = nowInAppTimezone().date;
+  const { date: today, time: currentTime } = nowInAppTimezone();
 
   return await db
 
@@ -186,10 +186,16 @@ export async function getTodayMeetings(
 
         involvesEmployee(employeeId),
 
-        eq(
-          meeting.meeting_date,
-          today
-        ),
+        // Today's meetings, plus an overnight meeting that started yesterday
+        // and is still running past midnight.
+        sql`(
+          ${meeting.meeting_date} = ${today}::date
+          OR (
+            ${meeting.meeting_date} = (${today}::date - 1)
+            AND ${meeting.end_time} < ${meeting.start_time}
+            AND ${meeting.end_time} > ${currentTime}::time
+          )
+        )`,
 
         eq(
           meeting.meetingStatusId,
@@ -201,6 +207,7 @@ export async function getTodayMeetings(
     )
 
     .orderBy(
+      asc(meeting.meeting_date),
       asc(meeting.start_time)
     );
 

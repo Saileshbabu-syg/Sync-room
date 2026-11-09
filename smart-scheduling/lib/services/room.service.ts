@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, like, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { availabilityMaster, meeting, room } from "@/db/schema";
@@ -6,6 +6,7 @@ import { AVAILABILITY_STATUS, MEETING_STATUS } from "@/lib/constants";
 import type { DbExecutor, Tx } from "@/lib/db-types";
 import { nowInAppTimezone } from "@/lib/time";
 
+import { meetingEndsAt } from "./conflict-check.service";
 import { canUseRoom, getBookingPolicy } from "./booking-policy.service";
 import { canManageRooms } from "./group-context.service";
 import { ROOM_LOCK_NAMESPACE } from "./reschedule.service";
@@ -69,13 +70,9 @@ async function upcomingMeetings(executor: DbExecutor, roomId: number, now?: Date
           MEETING_STATUS.SCHEDULED,
           MEETING_STATUS.PENDING_RESCHEDULE,
         ]),
-        or(
-          gt(meeting.meeting_date, today.date),
-          and(
-            eq(meeting.meeting_date, today.date),
-            sql`${meeting.end_time} > ${today.time}::time`
-          )
-        )
+        // Not ended yet: the end (the next day for an overnight meeting) is
+        // still ahead of the application's wall clock.
+        sql`${meetingEndsAt} > ${`${today.date} ${today.time}`}::timestamp`
       )
     )
     .orderBy(asc(meeting.meeting_date), asc(meeting.start_time));

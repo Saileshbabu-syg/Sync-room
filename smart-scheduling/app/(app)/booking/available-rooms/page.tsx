@@ -7,6 +7,7 @@ import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { canUseRoom, getBookingPolicy } from "@/lib/services/booking-policy.service";
 import { getClaimableRooms } from "@/lib/services/priority.service";
 import { getAvailableRooms } from "@/lib/services/room-suggestion.service";
+import { isOvernightSlot } from "@/lib/time";
 import { availableRoomsQuerySchema } from "@/lib/validations/suggestions.validator";
 
 import RoomCard from "@/components/RoomCard";
@@ -142,6 +143,16 @@ export default async function AvailableRoomsPage({
   const query = availableRoomsQuerySchema.safeParse(params);
 
   if (!query.success) {
+    redirect("/booking");
+  }
+
+  // A slot that ends the next day needs overnight permission (the booking
+  // enforces it again); back to the search form rather than a list of rooms
+  // nobody could book it in.
+  if (
+    isOvernightSlot(query.data.start, query.data.end) &&
+    !(await getBookingPolicy(currentUser.employeeId)).allowOvernight
+  ) {
     redirect("/booking");
   }
 

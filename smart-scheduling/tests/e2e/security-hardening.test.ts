@@ -39,29 +39,43 @@ after(() => app?.stop());
 const priorityOf = async (groupId: number) =>
   (await db.select({ p: groups.priority }).from(groups).where(eq(groups.id, groupId)))[0].p;
 
-describe("group management API (S-02)", () => {
-  it("a non-Admin group manager gets 403 for priority and permission changes, and nothing changes", async () => {
-    const before = await priorityOf(f.groupIds.employee);
-
+describe("group management API (Group Management permission only)", () => {
+  it("a non-Admin group manager can change priority, permissions and group membership", async () => {
     const priority = await app.call("PATCH", `/api/admin/groups/${f.groupIds.employee}`, {
       as: f.users.manager,
-      body: { priority: 1 },
+      body: { priority: 2 },
     });
-    assert.equal(priority.status, 403, priority.text);
+    assert.equal(priority.status, 200, priority.text);
+    assert.equal(await priorityOf(f.groupIds.employee), 2);
 
     const grant = await app.call("PATCH", `/api/admin/groups/${f.groupIds.manager}`, {
       as: f.users.manager,
       body: { permissions: [PERMISSION.BOOKING_OUTRANKS, PERMISSION.GROUP_MANAGE] },
     });
-    assert.equal(grant.status, 403, grant.text);
+    assert.equal(grant.status, 200, grant.text);
 
-    const move = await app.call("PUT", `/api/admin/employees/${f.users.manager.employeeId}/group`, {
+    const edit = await app.call("PATCH", `/api/admin/groups/${f.groupIds.leadership}`, {
+      as: f.users.manager,
+      body: { name: "Leadership team", description: "edited by a group manager" },
+    });
+    assert.equal(edit.status, 200, edit.text);
+
+    const move = await app.call("PUT", `/api/admin/employees/${f.users.dave.employeeId}/group`, {
       as: f.users.manager,
       body: { groupId: f.groupIds.leadership },
     });
-    assert.equal(move.status, 403, move.text);
+    assert.equal(move.status, 200, move.text);
+  });
 
-    assert.equal(await priorityOf(f.groupIds.employee), before);
+  it("someone without the permission gets 403 and nothing changes", async () => {
+    const before = await priorityOf(f.groupIds.tl);
+
+    const res = await app.call("PATCH", `/api/admin/groups/${f.groupIds.tl}`, {
+      as: f.users.bob,
+      body: { priority: 1 },
+    });
+    assert.equal(res.status, 403, res.text);
+    assert.equal(await priorityOf(f.groupIds.tl), before);
   });
 
   it("an Admin still can", async () => {

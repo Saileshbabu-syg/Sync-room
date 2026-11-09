@@ -78,9 +78,29 @@ export function formatDuration(totalMinutes: number): string {
   );
 }
 
-// "02:30 PM - 03:30 PM"
+// True when the end is earlier than the start, i.e. the meeting ends on the next
+// day. Compares the "HH:mm" part, so "HH:mm" and "HH:mm:ss" mix safely; anything
+// that is not a wall-clock time is never overnight.
+function endsNextDay(start: string, end: string): boolean {
+  const s = WALL_CLOCK.exec(start);
+  const e = WALL_CLOCK.exec(end);
+
+  return s !== null && e !== null && e[0] < s[0];
+}
+
+export const NEXT_DAY_LABEL = "next day";
+
+// "01:00 AM" or, for a meeting that ends the day after it starts,
+// "01:00 AM (next day)".
+export function formatEndTime(start: string, end: string): string {
+  return endsNextDay(start, end)
+    ? `${formatTime(end)} (${NEXT_DAY_LABEL})`
+    : formatTime(end);
+}
+
+// "02:30 PM - 03:30 PM", or "11:00 PM - 01:00 AM (next day)".
 export function formatTimeRange(start: string, end: string): string {
-  return `${formatTime(start)} - ${formatTime(end)}`;
+  return `${formatTime(start)} - ${formatEndTime(start, end)}`;
 }
 
 // An instant (e.g. when something was created), in APP_TIMEZONE:

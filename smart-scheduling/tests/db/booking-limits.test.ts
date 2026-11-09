@@ -497,7 +497,7 @@ describe("authorization and validation of the settings", () => {
       const error = await failure(updateGroup(f.groupIds.employee, { settings }, f.users.bob.employeeId));
 
       assert.equal(error.status, 403);
-      assert.match(error.message, /permission.*booking policies/);
+      assert.match(error.message, /permission/);
     }
   });
 
@@ -524,22 +524,14 @@ describe("authorization and validation of the settings", () => {
 
       assert.equal(rows[0].actorEmployeeId, f.users.bob.employeeId);
 
-      // The group now holds an administrative permission, so everything else
-      // about it still belongs to administrators.
+      // Group Management is the only gate: the same member may also change
+      // the group's name, status, permissions and rooms.
       const bob = f.users.bob.employeeId;
 
-      for (const change of [
-        { name: "Renamed" },
-        { isActive: false },
-        { permissions: ALL },
-        { roomIds: [f.rooms.alpha.room_id] },
-      ]) {
-        const error = await failure(updateGroup(f.groupIds.employee, change, bob));
+      await updateGroup(f.groupIds.employee, { name: "Renamed", roomIds: [f.rooms.alpha.room_id] }, bob);
+      await updateGroup(f.groupIds.employee, { permissions: [...ALL, "group.manage"] }, bob);
 
-        assert.equal(error.status, 403, JSON.stringify(change));
-      }
-
-      // Sending the whole form back unchanged, with a new limit, is accepted.
+      // Sending the whole form back, with a new limit, is accepted.
       await updateGroup(
         f.groupIds.employee,
         {

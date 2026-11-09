@@ -125,10 +125,14 @@ describe("back-to-back and overlapping slots (F-09)", () => {
     assert.equal(await count(), 1);
   });
 
-  it("rejects identical, reversed and malformed times with 400", async () => {
-    for (const [s, e] of [["10:00", "10:00"], ["11:00", "10:00"], ["xx", "11:00"]]) {
+  it("rejects identical and malformed times with 400", async () => {
+    for (const [s, e] of [["10:00", "10:00"], ["xx", "11:00"]]) {
       assert.equal((await rejection(createBooking(input({ startTime: s, endTime: e })))).status, 400);
     }
+  });
+
+  it("a reversed time is an overnight meeting: refused (403) while overnight is off, which is the default", async () => {
+    assert.equal((await rejection(createBooking(input({ startTime: "11:00", endTime: "10:00" })))).status, 403);
   });
 
   it("treats the same time on adjacent days as independent (date boundary)", async () => {

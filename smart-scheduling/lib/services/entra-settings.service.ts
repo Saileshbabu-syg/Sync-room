@@ -66,11 +66,7 @@ export async function updateEntraSettings(
 
   if (!target) throw new GroupError("Choose an active group.", 400);
 
-  // Only a change of default group is checked, so keeping a default an admin
-  // chose does not stop anyone from changing the schedule.
-  if (input.defaultGroupId !== (await resolveDefaultGroupId())) {
-    await assertMaySetDefaultGroup(actorEmployeeId, input.defaultGroupId);
-  }
+  await assertMaySetDefaultGroup(actorEmployeeId);
 
   await db.transaction(async (tx) => {
     await tx

@@ -126,7 +126,7 @@ describe("migrations (F-14)", () => {
         )
       ).rows;
       assert.ok(constraints.some((c) => c.conname === "meeting_no_room_overlap" && c.contype === "x"));
-      assert.ok(constraints.some((c) => c.conname === "meeting_end_after_start" && c.contype === "c"));
+      assert.ok(constraints.some((c) => c.conname === "meeting_end_differs_from_start" && c.contype === "c"));
 
       // PREEMPTED (6) no longer holds the room, like cancelled (3) and pending (4).
       const overlap = await pool.query(
@@ -359,7 +359,7 @@ describe("0041_room_archive and the manual rollbacks (Phase 7)", () => {
     });
   });
 
-  it("the down scripts 0042 -> 0036 run in reverse without touching rooms or meetings, and the chain re-applies", async () => {
+  it("the down scripts 0043 -> 0036 run in reverse without touching rooms or meetings, and the chain re-applies", async () => {
     const { url } = await createDatabase("rollback");
 
     await migrateDatabase(url);
@@ -367,11 +367,11 @@ describe("0041_room_archive and the manual rollbacks (Phase 7)", () => {
 
     const downs = fs
       .readdirSync(path.join(migrationsDir, "down"))
-      .filter((f) => /^00(3[6-9]|4[0-2])_.*\.down\.sql$/.test(f))
+      .filter((f) => /^00(3[6-9]|4[0-3])_.*\.down\.sql$/.test(f))
       .sort()
       .reverse();
 
-    assert.deepEqual(downs.map((f) => f.slice(0, 4)), ["0042", "0041", "0040", "0039", "0038", "0037", "0036"]);
+    assert.deepEqual(downs.map((f) => f.slice(0, 4)), ["0043", "0042", "0041", "0040", "0039", "0038", "0037", "0036"]);
 
     await withPool(url, async (pool) => {
       await pool.query(`UPDATE rooms SET archived_at = now() WHERE room_name = 'Beta'`);
@@ -449,6 +449,8 @@ describe("0041_room_archive and the manual rollbacks (Phase 7)", () => {
       await pool.query(`UPDATE group_settings SET overnight_policy = 'NOT_ALLOWED', max_bookings_per_day = 3 WHERE group_id = $1`, [groupId]);
       await pool.query(`INSERT INTO app_booking_settings (id, max_bookings_per_day) VALUES (1, 5)`);
 
+      // 0043 sits on top of 0042: roll it back first (nothing overnight exists here).
+      await pool.query(fs.readFileSync(path.join(migrationsDir, "down", "0043_overnight_bookings.down.sql"), "utf8"));
       await pool.query(fs.readFileSync(path.join(migrationsDir, "down", "0042_booking_policies.down.sql"), "utf8"));
 
       const gone = await pool.query(
@@ -465,7 +467,7 @@ describe("0041_room_archive and the manual rollbacks (Phase 7)", () => {
       assert.deepEqual(kept.rows, [{ max_duration_minutes: 120 }]);
       assert.equal((await pool.query(`SELECT 1 FROM meeting`)).rowCount, 2);
 
-      await pool.query(lastApplied(1));
+      await pool.query(lastApplied(2));
     });
 
     await migrateDatabase(url);
@@ -476,6 +478,112 @@ describe("0041_room_archive and the manual rollbacks (Phase 7)", () => {
 
       const back = await pool.query(`SELECT overnight_policy, max_bookings_per_day FROM group_settings`);
       assert.deepEqual(back.rows, [{ overnight_policy: "INHERIT", max_bookings_per_day: null }]);
+    });
+  });
+});
+
+describe("0043_overnight_bookings: forward, rollback and re-apply on a disposable database", () => {
+  const OVERNIGHT = (title: string, date: string, start: string, end: string, room = 1) =>
+    `INSERT INTO meeting (title, room_id, meeting_date, organizer_employee_id, participant_count,
+                          meeting_type_id, meeting_status_id, start_time, end_time)
+     VALUES ('${title}', ${room}, '${date}', 1, 2, 1, 1, '${start}', '${end}')`;
+
+  const sqlState = async (pool: Pool, statement: string) => {
+    try {
+      await pool.query(statement);
+    } catch (error) {
+      return (error as { code?: string; message: string });
+    }
+
+    return null;
+  };
+
+  it("applies on a populated database without changing a row, and relaxes only the same-day assumptions", async () => {
+    const { url } = await createDatabase("m43");
+
+    await migrateDatabase(url, truncatedMigrations(42));
+    await withPool(url, (pool) => pool.query(SEED_SQL));
+
+    // Before 0043 the database refuses a meeting that ends before it starts.
+    await withPool(url, async (pool) => {
+      assert.equal((await sqlState(pool, OVERNIGHT("night", "2030-02-01", "23:00", "01:00")))?.code, "23514");
+    });
+
+    const before = await withPool(url, (pool) =>
+      pool.query(`SELECT meeting_id, title, room_id, meeting_date::text, start_time::text, end_time::text, meeting_status_id FROM meeting ORDER BY meeting_id`)
+    );
+
+    await migrateDatabase(url);
+
+    await withPool(url, async (pool) => {
+      const after = await pool.query(
+        `SELECT meeting_id, title, room_id, meeting_date::text, start_time::text, end_time::text, meeting_status_id FROM meeting ORDER BY meeting_id`
+      );
+      assert.deepEqual(after.rows, before.rows, "no existing row was touched");
+
+      const names = (await pool.query(`SELECT conname FROM pg_constraint WHERE conrelid = 'meeting'::regclass`)).rows.map((r) => r.conname);
+      assert.ok(names.includes("meeting_end_differs_from_start"));
+      assert.ok(!names.includes("meeting_end_after_start"));
+
+      const def = (await pool.query(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'meeting_no_room_overlap'`)).rows[0].def;
+      assert.match(def, /3, 4, 6/, "the status exclusions of 0027 are kept");
+      assert.match(def, /'1 day'::interval/);
+
+      // A zero-length meeting is still refused.
+      assert.equal((await sqlState(pool, OVERNIGHT("zero", "2030-02-01", "10:00", "10:00")))?.code, "23514");
+
+      // The overnight meeting is accepted and blocks the next morning of the same room.
+      assert.equal(await sqlState(pool, OVERNIGHT("night", "2030-02-01", "23:00", "01:00")), null);
+      assert.equal((await sqlState(pool, OVERNIGHT("clash", "2030-02-02", "00:30", "01:30")))?.code, "23P01");
+      assert.equal((await sqlState(pool, OVERNIGHT("clash2", "2030-02-01", "22:00", "23:30")))?.code, "23P01");
+      assert.equal(await sqlState(pool, OVERNIGHT("back-to-back", "2030-02-02", "01:00", "02:00")), null);
+      assert.equal(await sqlState(pool, OVERNIGHT("other room", "2030-02-02", "00:30", "01:30", 2)), null);
+    });
+  });
+
+  it("the down script refuses to run while an overnight meeting exists, then restores the old rules; re-applying works", async () => {
+    const { url } = await createDatabase("rollback0043");
+    const down = fs.readFileSync(path.join(migrationsDir, "down", "0043_overnight_bookings.down.sql"), "utf8");
+
+    await migrateDatabase(url);
+    await withPool(url, (pool) => pool.query(SEED_SQL));
+
+    await withPool(url, async (pool) => {
+      await pool.query(OVERNIGHT("night", "2030-02-01", "23:00", "01:00"));
+
+      const refused = await sqlState(pool, down);
+
+      assert.match(refused?.message ?? "", /Cannot roll back 0043: 1 overnight meeting/);
+
+      // The refusal changed nothing: the new constraints are still in place.
+      const names = (await pool.query(`SELECT conname FROM pg_constraint WHERE conrelid = 'meeting'::regclass`)).rows.map((r) => r.conname);
+      assert.ok(names.includes("meeting_end_differs_from_start"));
+      assert.equal((await pool.query(`SELECT 1 FROM meeting`)).rowCount, 3);
+
+      // The operator moves it to a same-day slot (nothing is deleted by the script).
+      await pool.query(`UPDATE meeting SET start_time = '21:00', end_time = '23:00' WHERE title = 'night'`);
+      await pool.query(down);
+
+      const restored = (await pool.query(`SELECT conname FROM pg_constraint WHERE conrelid = 'meeting'::regclass`)).rows.map((r) => r.conname);
+      assert.ok(restored.includes("meeting_end_after_start"));
+      assert.ok(!restored.includes("meeting_end_differs_from_start"));
+      assert.equal((await pool.query(`SELECT 1 FROM meeting`)).rowCount, 3, "no meeting was deleted");
+
+      assert.equal((await sqlState(pool, OVERNIGHT("night2", "2030-03-01", "23:00", "01:00")))?.code, "23514");
+      assert.equal((await sqlState(pool, OVERNIGHT("overlap", "2030-02-01", "22:00", "22:30")))?.code, "23P01");
+
+      await pool.query(lastApplied(1));
+    });
+
+    await migrateDatabase(url);
+
+    await withPool(url, async (pool) => {
+      const applied = await pool.query(`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`);
+      assert.equal(applied.rows[0].n, journalLength());
+
+      assert.equal(await sqlState(pool, OVERNIGHT("night3", "2030-03-01", "23:00", "01:00")), null);
+      assert.equal((await sqlState(pool, OVERNIGHT("clash", "2030-03-02", "00:15", "00:45")))?.code, "23P01");
+      assert.equal((await pool.query(`SELECT 1 FROM meeting`)).rowCount, 4);
     });
   });
 });

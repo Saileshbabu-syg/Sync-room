@@ -32,7 +32,7 @@ import {
 
 import { seedFixtures, type Fixtures } from "../helpers/fixtures";
 
-// Phase 1 security hardening: S-02 (group escalation), S-03 (inactive
+// Phase 1 security hardening: group management authorization, S-03 (inactive
 // employees), S-05 (e-mail normalization and verified e-mail at sign-in).
 
 let f: Fixtures;
@@ -103,110 +103,121 @@ async function formFor(groupId: number) {
   };
 }
 
-describe("S-02: a non-Admin group manager cannot escalate privileges", () => {
-  it("cannot change a group's priority", async () => {
-    const before = await groupRow(f.groupIds.employee);
-
-    await refused(updateGroup(f.groupIds.employee, { ...(await formFor(f.groupIds.employee)), priority: 1 }, mona));
-
-    assert.equal((await groupRow(f.groupIds.employee)).priority, before.priority);
-  });
-
-  it("cannot grant booking.outranks or booking.protected to another group", async () => {
-    for (const key of [PERMISSION.BOOKING_OUTRANKS, PERMISSION.BOOKING_PROTECTED]) {
-      const form = await formFor(f.groupIds.employee);
-
-      await refused(updateGroup(f.groupIds.employee, { ...form, permissions: [...form.permissions, key] }, mona));
-      assert.ok(!(await groupRow(f.groupIds.employee)).permissions.includes(key));
-    }
-  });
-
-  it("cannot grant anything to their own group", async () => {
-    const form = await formFor(f.groupIds.manager);
-
-    await refused(
-      updateGroup(
-        f.groupIds.manager,
-        { ...form, permissions: [...form.permissions, PERMISSION.BOOKING_OUTRANKS] },
-        mona
-      )
-    );
-    assert.ok(!(await groupRow(f.groupIds.manager)).permissions.includes(PERMISSION.BOOKING_OUTRANKS));
-  });
-
-  it("cannot remove permissions or change meeting types either", async () => {
+describe("Group Management permission is the only gate (no Admin role needed)", () => {
+  it("a non-Admin group manager can change priority, permissions, meeting types and everything else of any group", async () => {
     const form = await formFor(f.groupIds.employee);
 
-    await refused(updateGroup(f.groupIds.employee, { ...form, permissions: [] }, mona));
-    await refused(updateGroup(f.groupIds.employee, { ...form, meetingTypeIds: [f.types.client] }, mona));
+    await updateGroup(f.groupIds.employee, { ...form, priority: 2 }, mona);
+    assert.equal((await groupRow(f.groupIds.employee)).priority, 2);
+
+    for (const key of [PERMISSION.BOOKING_OUTRANKS, PERMISSION.BOOKING_PROTECTED]) {
+      const current = await formFor(f.groupIds.employee);
+
+      await updateGroup(f.groupIds.employee, { ...current, permissions: [...current.permissions, key] }, mona);
+      assert.ok((await groupRow(f.groupIds.employee)).permissions.includes(key));
+    }
+
+    await updateGroup(f.groupIds.employee, { permissions: [], meetingTypeIds: [f.types.client] }, mona);
+
+    const row = await groupRow(f.groupIds.employee);
+    assert.deepEqual(row.permissions, []);
+    assert.deepEqual(row.meetingTypeIds, [f.types.client]);
   });
 
-  it("cannot edit, deactivate or delete a group with administrative permissions", async () => {
-    await refused(updateGroup(f.groupIds.hr, { ...(await formFor(f.groupIds.hr)), description: "x" }, mona));
-    await refused(updateGroup(f.groupIds.leadership, { isActive: false }, mona));
-    await refused(deleteGroup(f.groupIds.hr, mona));
+  it("can edit name, description, order, rooms, status and booking policies of a group with administrative permissions", async () => {
+    const policy = { maxDurationMinutes: null, maxAdvanceDays: null, maxOccurrences: null, maxBookingsPerDay: 2 };
 
-    assert.equal((await groupRow(f.groupIds.leadership)).isActive, true);
-  });
-
-  it("cannot create groups (a new group carries its own priority and permissions)", async () => {
-    await refused(createGroup(newGroup("Shadow Admins", { priority: 1, permissions: [PERMISSION.GROUP_MANAGE] }) as never, mona));
-    await refused(createGroup(newGroup("Interns") as never, mona));
-
-    assert.ok(!(await listGroups()).some((g) => g.name === "Interns" || g.name === "Shadow Admins"));
-  });
-
-  it("cannot change meeting type priorities", async () => {
-    await refused(updateMeetingTypePriority(f.types.others, 1, mona));
-
-    const [type] = await db.select().from(meetingTypes).where(eq(meetingTypes.meetingTypeId, f.types.others));
-    assert.equal(type.priorityRank, 5);
-  });
-
-  it("cannot change their own group, or anyone's into or out of a privileged group", async () => {
-    await refused(assignEmployee(mona, f.groupIds.tl, mona));
-    await refused(unassignEmployee(mona, mona));
-    await refused(assignEmployee(f.users.bob.employeeId, f.groupIds.leadership, mona));
-    await refused(assignEmployee(f.users.bob.employeeId, f.groupIds.hr, mona));
-
-    // Carol placed in HR by an admin cannot be taken out by Mona.
-    await assignEmployee(f.users.carol.employeeId, f.groupIds.hr, admin);
-    await refused(assignEmployee(f.users.carol.employeeId, f.groupIds.employee, mona));
-    await refused(unassignEmployee(f.users.carol.employeeId, mona));
-
-    assert.equal(await activeGroupOf(mona), f.groupIds.manager);
-    assert.equal(await activeGroupOf(f.users.bob.employeeId), f.groupIds.employee);
-    assert.equal(await activeGroupOf(f.users.carol.employeeId), f.groupIds.hr);
-  });
-
-  it("cannot change an administrator's group", async () => {
-    await refused(assignEmployee(admin, f.groupIds.tl, mona));
-    assert.equal(await activeGroupOf(admin), null);
-  });
-
-  it("cannot move people into an ordinary group that ranks above their own", async () => {
-    const vip = await createGroup(newGroup("VIP", { priority: 1 }) as never, admin);
-
-    await refused(assignEmployee(f.users.bob.employeeId, vip.id, mona));
-    assert.equal(await activeGroupOf(f.users.bob.employeeId), f.groupIds.employee);
-  });
-
-  it("cannot make a privileged group the Entra sync default, but can change the schedule", async () => {
-    await refused(
-      updateEntraSettings({ autoSyncEnabled: true, intervalHours: 24, defaultGroupId: f.groupIds.leadership }, mona)
+    const updated = await updateGroup(
+      f.groupIds.leadership,
+      {
+        ...(await formFor(f.groupIds.leadership)),
+        name: "Leadership (renamed)",
+        description: "edited by a group manager",
+        priority: 3,
+        roomIds: [f.rooms.alpha.room_id],
+        settings: policy,
+      },
+      mona
     );
 
-    const [unchanged] = await db.select().from(entraSyncSettings);
-    assert.notEqual(unchanged?.defaultGroupId ?? null, f.groupIds.leadership);
+    assert.equal(updated.name, "Leadership (renamed)");
 
-    // Keeping the current default is fine.
-    await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 24, defaultGroupId: f.groupIds.employee }, mona);
-    const [saved] = await db.select().from(entraSyncSettings);
-    assert.equal(saved.autoSyncEnabled, true);
+    const row = await groupRow(f.groupIds.leadership);
+    assert.equal(row.description, "edited by a group manager");
+    assert.equal(row.priority, 3);
+    assert.deepEqual(row.roomIds, [f.rooms.alpha.room_id]);
+    assert.equal(row.settings.maxBookingsPerDay, 2);
+
+    await updateGroup(f.groupIds.leadership, { isActive: false }, mona);
+    assert.equal((await groupRow(f.groupIds.leadership)).isActive, false);
   });
 
-  it("still does legitimate group management: ordinary edits and moves between ordinary groups", async () => {
-    // The edit form resends unchanged priority, permissions and meeting types.
+  it("can edit their own group, including its administrative permissions", async () => {
+    const form = await formFor(f.groupIds.manager);
+
+    await updateGroup(f.groupIds.manager, { ...form, permissions: [...form.permissions, PERMISSION.BOOKING_OUTRANKS] }, mona);
+    assert.ok((await groupRow(f.groupIds.manager)).permissions.includes(PERMISSION.BOOKING_OUTRANKS));
+  });
+
+  it("can create groups, including privileged ones, and delete an unused group", async () => {
+    const shadow = await createGroup(
+      newGroup("Shadow Admins", { priority: 1, permissions: [PERMISSION.GROUP_MANAGE] }) as never,
+      mona
+    );
+
+    assert.ok((await groupRow(shadow.id)).permissions.includes(PERMISSION.GROUP_MANAGE));
+
+    await deleteGroup(shadow.id, mona);
+    assert.ok(!(await listGroups()).some((g) => g.id === shadow.id));
+  });
+
+  it("can delete a privileged group that has no members or history", async () => {
+    const board = await createGroup(newGroup("Board", { permissions: [PERMISSION.BOOKING_OUTRANKS] }) as never, admin);
+
+    await deleteGroup(board.id, mona);
+    assert.ok(!(await listGroups()).some((g) => g.id === board.id));
+  });
+
+  it("can change meeting type priorities", async () => {
+    await updateMeetingTypePriority(f.types.others, 1, mona);
+
+    const [type] = await db.select().from(meetingTypes).where(eq(meetingTypes.meetingTypeId, f.types.others));
+    assert.equal(type.priorityRank, 1);
+  });
+
+  it("can move anyone, themselves and administrators included, into and out of any group", async () => {
+    await assignEmployee(mona, f.groupIds.tl, mona);
+    assert.equal(await activeGroupOf(mona), f.groupIds.tl);
+    await assignEmployee(mona, f.groupIds.manager, admin);
+
+    await assignEmployee(f.users.bob.employeeId, f.groupIds.leadership, mona);
+    assert.equal(await activeGroupOf(f.users.bob.employeeId), f.groupIds.leadership);
+
+    await assignEmployee(f.users.bob.employeeId, f.groupIds.hr, mona);
+    assert.equal(await activeGroupOf(f.users.bob.employeeId), f.groupIds.hr);
+
+    await unassignEmployee(f.users.bob.employeeId, mona);
+    assert.equal(await activeGroupOf(f.users.bob.employeeId), null);
+
+    await assignEmployee(admin, f.groupIds.tl, mona);
+    assert.equal(await activeGroupOf(admin), f.groupIds.tl);
+  });
+
+  it("can move people into a group that ranks above their own", async () => {
+    const vip = await createGroup(newGroup("VIP", { priority: 1 }) as never, admin);
+
+    await assignEmployee(f.users.bob.employeeId, vip.id, mona);
+    assert.equal(await activeGroupOf(f.users.bob.employeeId), vip.id);
+  });
+
+  it("can make any group the Entra sync default", async () => {
+    await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 24, defaultGroupId: f.groupIds.leadership }, mona);
+
+    const [saved] = await db.select().from(entraSyncSettings);
+    assert.equal(saved.defaultGroupId, f.groupIds.leadership);
+  });
+
+  it("an edit that resends the whole form unchanged is accepted", async () => {
     const form = await formFor(f.groupIds.tl);
     const updated = await updateGroup(
       f.groupIds.tl,
@@ -216,16 +227,47 @@ describe("S-02: a non-Admin group manager cannot escalate privileges", () => {
 
     assert.equal(updated.description, "Team leads (edited)");
     assert.deepEqual((await groupRow(f.groupIds.tl)).roomIds, [f.rooms.alpha.room_id]);
-
-    const moved = await assignEmployee(f.users.bob.employeeId, f.groupIds.tl, mona);
-    assert.equal(moved.changed, true);
-
-    await unassignEmployee(f.users.bob.employeeId, mona);
-    assert.equal(await activeGroupOf(f.users.bob.employeeId), null);
   });
 });
 
-describe("S-02: Admins keep full group management", () => {
+describe("Without the Group Management permission nothing can be changed", () => {
+  // Bob (Employee group) has no group.manage and is not an Admin.
+  let bob: number;
+
+  beforeEach(() => {
+    bob = f.users.bob.employeeId;
+  });
+
+  it("is refused for every group management operation", async () => {
+    const before = await groupRow(f.groupIds.employee);
+
+    await refused(updateGroup(f.groupIds.employee, { ...(await formFor(f.groupIds.employee)), description: "x" }, bob));
+    await refused(updateGroup(f.groupIds.employee, { priority: 1 }, bob));
+    await refused(createGroup(newGroup("Interns") as never, bob));
+    await refused(deleteGroup(f.groupIds.hr, bob));
+    await refused(updateMeetingTypePriority(f.types.others, 1, bob));
+    await refused(assignEmployee(f.users.carol.employeeId, f.groupIds.tl, bob));
+    await refused(unassignEmployee(f.users.carol.employeeId, bob));
+    await refused(
+      updateEntraSettings({ autoSyncEnabled: true, intervalHours: 24, defaultGroupId: f.groupIds.tl }, bob)
+    );
+
+    const after = await groupRow(f.groupIds.employee);
+    assert.equal(after.description, before.description);
+    assert.equal(after.priority, before.priority);
+    assert.ok(!(await listGroups()).some((g) => g.name === "Interns"));
+    assert.equal(await activeGroupOf(f.users.carol.employeeId), f.groupIds.employee);
+  });
+
+  it("is refused for a deactivated employee even with the permission", async () => {
+    await db.update(employee).set({ is_active: false }).where(eq(employee.employee_id, mona));
+
+    await refused(updateGroup(f.groupIds.employee, { priority: 1 }, mona));
+    await refused(assignEmployee(f.users.bob.employeeId, f.groupIds.tl, mona));
+  });
+});
+
+describe("Admins keep full group management", () => {
   it("creates privileged groups, changes priorities and permissions, assigns anyone", async () => {
     const group = await createGroup(
       newGroup("Board", { priority: 1, permissions: [PERMISSION.BOOKING_OUTRANKS, PERMISSION.GROUP_MANAGE] }) as never,

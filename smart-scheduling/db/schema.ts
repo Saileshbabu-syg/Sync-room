@@ -15,7 +15,8 @@
  * Not expressible in Drizzle (so it lives only in migration 0020 — apply
  * schema changes with `migrate`, never `push`): the `meeting_no_room_overlap`
  * EXCLUDE constraint that stops two non-cancelled meetings from overlapping in
- * the same room, and the `meeting_end_after_start` check.
+ * the same room (its range ends the next day for an overnight meeting, migration
+ * 0043), and the `meeting_end_differs_from_start` check.
  */
 import { relations, sql } from "drizzle-orm";
 import {

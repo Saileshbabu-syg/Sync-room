@@ -74,8 +74,8 @@ export const recurringMeetingSchema = z
     message: NOT_BOTH_LISTS_MESSAGE,
     path: ["optionalParticipantEmployeeIds"],
   })
-  .refine((data) => data.start_time < data.end_time, {
-    message: "End time must be after start time",
+  .refine((data) => data.start_time !== data.end_time, {
+    message: "End time must be different from the start time",
     path: ["end_time"],
   })
   .refine((data) => isLongEnough(data.start_time, data.end_time), {

@@ -38,7 +38,7 @@ export type InvitationInfo = {
   closedReason: string | null;
 };
 
-function closedReason(statusId: number, date: string, endTime: string) {
+function closedReason(statusId: number, date: string, startTime: string, endTime: string) {
   if (statusId === MEETING_STATUS.CANCELLED) return "This meeting was cancelled.";
   if (statusId === MEETING_STATUS.PREEMPTED) {
     return "This booking was replaced by a higher-priority booking and no longer holds the room.";
@@ -46,7 +46,7 @@ function closedReason(statusId: number, date: string, endTime: string) {
   if (statusId === MEETING_STATUS.PENDING_RESCHEDULE) {
     return "This meeting is waiting to be rescheduled.";
   }
-  if (statusId === MEETING_STATUS.COMPLETED || isMeetingEnded(date, endTime)) {
+  if (statusId === MEETING_STATUS.COMPLETED || isMeetingEnded(date, startTime, endTime)) {
     return "This meeting is over.";
   }
 
@@ -100,7 +100,7 @@ export async function getInvitationInfo(
     endTime: row.end,
     participantName: row.participant,
     response: row.response,
-    closedReason: closedReason(row.statusId, row.date, row.end),
+    closedReason: closedReason(row.statusId, row.date, row.start, row.end),
   };
 }
 
@@ -123,6 +123,7 @@ export async function respondToInvitation(
       .select({
         statusId: meeting.meetingStatusId,
         date: meeting.meeting_date,
+        start: meeting.start_time,
         end: meeting.end_time,
         seriesId: meeting.recurringMeetingId,
         response: meeting_attendees.response_status,
@@ -143,7 +144,7 @@ export async function respondToInvitation(
       return { status: "already" as const, response: row.response };
     }
 
-    const reason = closedReason(row.statusId, row.date, row.end);
+    const reason = closedReason(row.statusId, row.date, row.start, row.end);
 
     if (reason) return { status: "closed" as const, reason };
 

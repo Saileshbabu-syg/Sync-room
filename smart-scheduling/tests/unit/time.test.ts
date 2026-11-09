@@ -54,8 +54,9 @@ describe("timeRangesOverlap (half-open [start, end))", () => {
 });
 
 describe("durationMinutes", () => {
-  it("is negative for invalid ordering and zero for identical times", () => {
-    assert.equal(durationMinutes("11:00", "10:00"), -60);
+  it("runs across midnight when the end is earlier than the start, and is zero for identical times", () => {
+    assert.equal(durationMinutes("11:00", "10:00"), 23 * 60);
+    assert.equal(durationMinutes("23:00", "01:00"), 120);
     assert.equal(durationMinutes("10:00", "10:00"), 0);
     assert.equal(durationMinutes("10:00", "10:15:00"), 15);
   });
@@ -93,11 +94,22 @@ describe("application timezone (Asia/Kolkata)", () => {
   it("knows when a meeting has ended", () => {
     const now = new Date("2026-03-01T06:30:00Z"); // 12:00:00 IST
 
-    assert.equal(isMeetingEnded("2026-03-01", "11:59:59", now), true);
-    assert.equal(isMeetingEnded("2026-03-01", "12:00:00", now), true);
-    assert.equal(isMeetingEnded("2026-03-01", "12:00:01", now), false);
-    assert.equal(isMeetingEnded("2026-02-28", "23:59:59", now), true);
-    assert.equal(isMeetingEnded("2026-03-02", "00:30:00", now), false);
+    assert.equal(isMeetingEnded("2026-03-01", "09:00:00", "11:59:59", now), true);
+    assert.equal(isMeetingEnded("2026-03-01", "09:00:00", "12:00:00", now), true);
+    assert.equal(isMeetingEnded("2026-03-01", "09:00:00", "12:00:01", now), false);
+    assert.equal(isMeetingEnded("2026-02-28", "09:00:00", "23:59:59", now), true);
+    assert.equal(isMeetingEnded("2026-03-02", "00:00:00", "00:30:00", now), false);
+  });
+
+  it("an overnight meeting ends on the day after its date", () => {
+    // 2026-03-01 12:00 IST: last night's 23:00 -> 13:00 meeting (dated 02-28) is
+    // still running until 13:00; tonight's 23:00 -> 01:00 has not even started.
+    const now = new Date("2026-03-01T06:30:00Z");
+
+    assert.equal(isMeetingEnded("2026-02-28", "23:00:00", "13:00:00", now), false);
+    assert.equal(isMeetingEnded("2026-02-28", "23:00:00", "11:00:00", now), true);
+    assert.equal(isMeetingEnded("2026-03-01", "23:00:00", "01:00:00", now), false);
+    assert.equal(isMeetingEnded("2026-02-27", "23:00:00", "23:30:00", now), true);
   });
 });
 
