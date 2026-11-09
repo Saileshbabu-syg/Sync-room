@@ -8,6 +8,7 @@ import {
   meeting_attendees,
   meetingTypes,
   recurrence_frequency_master,
+  recurringMeetingSkippedDates,
   recurring_meetings,
   room,
 } from "@/db/schema";
@@ -15,9 +16,16 @@ import {
   AVAILABILITY_STATUS,
   MEETING_STATUS,
   PERMISSION,
+  PROTECTED_RANK,
 } from "@/lib/constants";
 import { dbErrorCode, PG_EXCLUSION_VIOLATION } from "@/lib/api";
-import type { Tx } from "@/lib/db-types";
+import type { DbExecutor, Tx } from "@/lib/db-types";
+import {
+  LEAD_TIME_MESSAGE,
+  MIN_DURATION_MESSAGE,
+  hasMinimumLead,
+  isLongEnough,
+} from "@/lib/validations/date-time";
 import {
   isSlotStartInPast,
   normalizeTime,
@@ -33,15 +41,25 @@ import {
   queueMeetingNotification,
 } from "./notification.service";
 import { getPriorityContext } from "./group-context.service";
+import { checkBookingLimits, lockGroupBookings } from "./booking-limits.service";
 import { checkBookingPolicy, getBookingPolicy } from "./booking-policy.service";
 import {
   canBumpAll,
+  claimantRank,
   findSlotHolders,
+  hasMemberWithPermission,
   recordBumps,
   releaseSlots,
   type ReleasedSlot,
 } from "./priority.service";
 import { createRemindersForMeetings } from "./reminder.service";
+import {
+  ONLINE_STATUS,
+  dispatchOnlineCleanup,
+  dispatchOnlineProvisioning,
+  pendingOnlineOutcome,
+  type OnlineBookingOutcome,
+} from "./online-meeting.service";
 
 // The single place meetings are created — one-off and recurring bookings both
 // come through here, so they share one set of rules:
@@ -64,6 +82,11 @@ import { createRemindersForMeetings } from "./reminder.service";
 
 // The message for "this single slot is taken".
 export const SLOT_TAKEN_MESSAGE = "Room is already booked for the selected time slot";
+
+// A meeting in the way includes someone whose group protects its meetings, so
+// no booking can take the room, whatever its priority.
+export const PROTECTED_SLOT_MESSAGE =
+  "Room is held by a protected meeting (it includes a member whose group protects its meetings) and cannot be taken over. Choose another room or time.";
 
 export class BookingError extends Error {
   status: number;
@@ -105,10 +128,27 @@ export type BookingInput = {
   // Invited, but not essential: they get the same invitation (marked optional)
   // and their answer never affects the booking.
   optionalParticipantEmployeeIds?: number[];
-  recurrence?: { frequencyId: number; occurrenceCount: number };
+  recurrence?: {
+    frequencyId: number;
+    occurrenceCount: number;
+    // The pattern and its exceptions (stored on the new series).
+    patternStartDate?: string;
+    interval?: number;
+    untilDate?: string | null;
+    skippedDates?: string[];
+    // Add these occurrences to an EXISTING series instead of creating one
+    // (extending a series); its row must already be locked by the caller.
+    appendToSeriesId?: number;
+  };
   // How many occurrences the user asked for (some may be skipped later), for
   // the group's series-length limit.
   requestedOccurrences?: number;
+  // Online Teams Meeting: every occurrence is booked with Teams provisioning
+  // PENDING; the background worker creates one Teams event per occurrence
+  // after the commit (never inside it, never in the request). The e-mails are
+  // queued with the booking and wait for the links (online-meeting.service).
+  // The booking never depends on Microsoft being reachable.
+  online?: boolean;
   // Runs inside the booking transaction, after the meetings are inserted; if
   // it throws, the whole booking rolls back.
   inTransaction?: (tx: Tx, meetings: Meeting[]) => Promise<void>;
@@ -134,6 +174,11 @@ export async function createBooking(input: BookingInput) {
     throw new BookingError("End time must be after start time", 400);
   }
 
+  // Same rule as the request schemas, for every caller of the service.
+  if (!isLongEnough(startTime, endTime)) {
+    throw new BookingError(MIN_DURATION_MESSAGE, 400);
+  }
+
   if (input.occurrenceDates.length === 0) {
     throw new BookingError("At least one meeting date is required", 400);
   }
@@ -142,7 +187,12 @@ export async function createBooking(input: BookingInput) {
     throw new BookingError("Meetings cannot be booked in the past", 400);
   }
 
-  const requestedAttendees = [...new Set(input.participantEmployeeIds ?? [])];
+  // The organizer is always included and counted once, so listing them as a
+  // participant as well neither counts twice nor changes anything (the edit
+  // route treats it the same way).
+  const requestedAttendees = [
+    ...new Set(input.participantEmployeeIds ?? []),
+  ].filter((id) => id !== input.organizerEmployeeId);
   const optionalAttendees = [
     ...new Set(input.optionalParticipantEmployeeIds ?? []),
   ];
@@ -189,6 +239,12 @@ export async function createBooking(input: BookingInput) {
         sql`SELECT pg_advisory_xact_lock(${ROOM_LOCK_NAMESPACE}, ${input.roomId})`
       );
 
+      // At least 15 minutes ahead (B-09), checked now that the room is locked,
+      // i.e. right before the booking is written.
+      if (!hasMinimumLead(input.occurrenceDates[0], startTime, input.now)) {
+        throw new BookingError(LEAD_TIME_MESSAGE, 400);
+      }
+
       const [roomDetails] = await tx
         .select()
         .from(room)
@@ -200,6 +256,14 @@ export async function createBooking(input: BookingInput) {
       }
 
       // Current status, read under lock — not whatever the page showed earlier.
+      // Archived rooms are kept only for the meetings held in them.
+      if (roomDetails.archived_at !== null) {
+        throw new BookingError(
+          "This room has been archived and can no longer be booked.",
+          409
+        );
+      }
+
       if (roomDetails.availabilityStatusId !== AVAILABILITY_STATUS.AVAILABLE) {
         throw new BookingError(
           "This room is currently unavailable for booking.",
@@ -222,8 +286,13 @@ export async function createBooking(input: BookingInput) {
 
       // The group's own rules: room list, recurring permission, longest
       // meeting, how far ahead, series length. Read under the room lock.
+      const bookingPolicy = await getBookingPolicy(
+        input.organizerEmployeeId,
+        tx,
+        claimant
+      );
       const policyProblem = checkBookingPolicy(
-        await getBookingPolicy(input.organizerEmployeeId, tx, claimant),
+        bookingPolicy,
         {
           roomId: input.roomId,
           startTime,
@@ -239,9 +308,30 @@ export async function createBooking(input: BookingInput) {
         throw new BookingError(policyProblem.message, policyProblem.status);
       }
 
+      // The group's day / week / month allowance. The group lock (taken after
+      // the room lock, always in that order) makes the count and the insert
+      // below one step, so concurrent requests cannot both take the last
+      // place. Every occurrence of a series is counted together, and the whole
+      // booking is refused (nothing is written) if any period would overflow.
+      if (claimant.groupId !== null) {
+        await lockGroupBookings(tx, claimant.groupId);
+      }
+
+      const limitProblem = await checkBookingLimits(tx, {
+        groupId: claimant.groupId,
+        limits: bookingPolicy.limits,
+        dates: input.occurrenceDates,
+        isSeries,
+      });
+
+      if (limitProblem) {
+        throw new BookingError(limitProblem.message, limitProblem.status);
+      }
+
       const [meetingTypeRow] = await tx
         .select({
           id: meetingTypes.meetingTypeId,
+          priorityRank: meetingTypes.priorityRank,
         })
         .from(meetingTypes)
         .where(eq(meetingTypes.meetingTypeId, input.meetingTypeId));
@@ -249,6 +339,13 @@ export async function createBooking(input: BookingInput) {
       if (!meetingTypeRow) {
         throw new BookingError("Meeting type not found", 404);
       }
+
+      // The meeting type decides priority for every meeting, except that
+      // inviting anyone from Leadership (required or optional) outranks all.
+      const rank = claimantRank(
+        meetingTypeRow.priorityRank,
+        await hasMemberWithPermission(tx, attendeeIds, PERMISSION.BOOKING_OUTRANKS)
+      );
 
       if (
         !(await isMeetingTypeAllowed(
@@ -312,11 +409,17 @@ export async function createBooking(input: BookingInput) {
 
         // Only a booking that outranks EVERY other meeting in the way may
         // proceed.
-        if (!canBumpAll(holders, claimant, input.now)) {
+        if (!canBumpAll(holders, rank, input.now)) {
+          const blockedByProtected = holders.some(
+            (h) => h.priority === PROTECTED_RANK
+          );
+
           throw new BookingError(
-            isSeries
-              ? "Room is already booked for one or more occurrences"
-              : SLOT_TAKEN_MESSAGE,
+            blockedByProtected
+              ? PROTECTED_SLOT_MESSAGE
+              : isSeries
+                ? "Room is already booked for one or more occurrences"
+                : SLOT_TAKEN_MESSAGE,
             409,
             isSeries ? conflictingDates : undefined,
             isSeries ? input.occurrenceDates : undefined
@@ -328,7 +431,9 @@ export async function createBooking(input: BookingInput) {
 
       let recurringMeetingId: number | null = null;
 
-      if (input.recurrence) {
+      if (input.recurrence?.appendToSeriesId !== undefined) {
+        recurringMeetingId = input.recurrence.appendToSeriesId;
+      } else if (input.recurrence) {
         const [series] = await tx
           .insert(recurring_meetings)
           .values({
@@ -336,10 +441,24 @@ export async function createBooking(input: BookingInput) {
             occurrence_count: input.recurrence.occurrenceCount,
             recurrence_end_date:
               input.occurrenceDates[input.occurrenceDates.length - 1],
+            pattern_start_date:
+              input.recurrence.patternStartDate ?? input.occurrenceDates[0],
+            recurrence_interval: input.recurrence.interval ?? 1,
+            until_date: input.recurrence.untilDate ?? null,
           })
           .returning();
 
         recurringMeetingId = series.recurring_meeting_id;
+
+        // Dates of the pattern deliberately left out: never re-created.
+        if (input.recurrence.skippedDates?.length) {
+          await tx.insert(recurringMeetingSkippedDates).values(
+            input.recurrence.skippedDates.map((skippedDate) => ({
+              recurringMeetingId: series.recurring_meeting_id,
+              skippedDate,
+            }))
+          );
+        }
       }
 
       const insertedMeetings = await tx
@@ -362,6 +481,14 @@ export async function createBooking(input: BookingInput) {
             // priority changes never rewrite it.
             groupIdAtBooking: claimant.groupId,
             priorityAtBooking: claimant.priority,
+            online_requested: input.online === true,
+            ...(input.online
+              ? {
+                  online_status: ONLINE_STATUS.PENDING,
+                  online_version: 1,
+                  online_next_attempt_at: new Date(),
+                }
+              : {}),
           }))
         )
         .returning();
@@ -381,7 +508,7 @@ export async function createBooking(input: BookingInput) {
           actorEmployeeId: input.organizerEmployeeId,
           groupId: claimant.groupId,
           groupName: claimant.groupName,
-          priority: claimant.priority,
+          priority: rank,
         }
       );
 
@@ -421,37 +548,20 @@ export async function createBooking(input: BookingInput) {
         );
       }
 
-      // One confirmation e-mail per booking. It is anchored on the first
-      // occurrence; for a series, delivery loads the whole series from the
-      // database and lists every occurrence.
-      const notificationId = await queueMeetingNotification(
+      // Queued with the booking, online or not. For an online meeting the
+      // delivery waits for the Teams links (notification.service).
+      const queued = await queueBookingNotifications(
         tx,
         insertedMeetings[0].meeting_id,
-        "BOOKED"
+        input.organizerEmployeeId,
+        attendeeIds
       );
-
-      // One invitation per invited participant (anchored on the first
-      // occurrence; their answer covers a whole series).
-      const invitationNotificationIds: number[] = [];
-
-      for (const employeeId of attendeeIds) {
-        if (employeeId === input.organizerEmployeeId) continue;
-
-        invitationNotificationIds.push(
-          await queueMeetingNotification(
-            tx,
-            insertedMeetings[0].meeting_id,
-            "INVITED",
-            employeeId
-          )
-        );
-      }
 
       return {
         meetings: insertedMeetings,
         recurringMeetingId,
-        notificationId,
-        invitationNotificationIds,
+        notificationId: queued.notificationId,
+        invitationNotificationIds: queued.invitationNotificationIds,
         // Side e-mails to organizers who lost their slot (bumped).
         otherNotificationIds: bumpNotificationIds,
       };
@@ -495,14 +605,68 @@ export async function createBooking(input: BookingInput) {
     throw error;
   }
 
+  // Preempted meetings may have had a Teams event: remove it (outside the
+  // transaction; a failure is retried by the cron sweep).
+  if (result.otherNotificationIds.length > 0) dispatchOnlineCleanup();
+
+  const { notificationId, invitationNotificationIds, meetings } = result;
+  let online: OnlineBookingOutcome | undefined;
+
+  if (input.online) {
+    online = pendingOnlineOutcome(meetings.length);
+
+    // Start on it now rather than at the next minute (background, leased).
+    dispatchOnlineProvisioning();
+  }
+
   if (input.notify !== false) {
-    dispatchNotification(result.notificationId);
+    dispatchNotification(notificationId!);
 
     for (const id of result.otherNotificationIds) dispatchNotification(id);
-    for (const id of result.invitationNotificationIds) {
+    for (const id of invitationNotificationIds) {
       dispatchNotification(id);
     }
   }
 
-  return result;
+  return {
+    ...result,
+    meetings,
+    notificationId: notificationId!,
+    invitationNotificationIds,
+    online,
+  };
+}
+
+// One confirmation e-mail per booking, anchored on the first occurrence (for a
+// series, delivery loads the whole series from the database and lists every
+// occurrence), plus one invitation per invited participant (anchored on the
+// first occurrence; their answer covers a whole series).
+async function queueBookingNotifications(
+  executor: DbExecutor,
+  firstMeetingId: number,
+  organizerEmployeeId: number,
+  attendeeIds: number[]
+) {
+  const notificationId = await queueMeetingNotification(
+    executor,
+    firstMeetingId,
+    "BOOKED"
+  );
+
+  const invitationNotificationIds: number[] = [];
+
+  for (const employeeId of attendeeIds) {
+    if (employeeId === organizerEmployeeId) continue;
+
+    invitationNotificationIds.push(
+      await queueMeetingNotification(
+        executor,
+        firstMeetingId,
+        "INVITED",
+        employeeId
+      )
+    );
+  }
+
+  return { notificationId, invitationNotificationIds };
 }

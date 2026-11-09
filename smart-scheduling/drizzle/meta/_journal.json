@@ -225,6 +225,83 @@
       "when": 1793712936391,
       "tag": "0031_group_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793715113603,
+      "tag": "0032_online_meetings",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793720000000,
+      "tag": "0033_outranks_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793777953983,
+      "tag": "0034_sync_interval_presets",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1793779742544,
+      "tag": "0035_sync_default_group",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793789038668,
+      "tag": "0036_employee_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793792571912,
+      "tag": "0037_delivery_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793794288737,
+      "tag": "0038_calendar_sequence",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793795828211,
+      "tag": "0039_series_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793852751413,
+      "tag": "0040_online_provisioning",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793859088140,
+      "tag": "0041_room_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794209376407,
+      "tag": "0042_booking_policies",
+      "breakpoints": true
     }
   ]
 }

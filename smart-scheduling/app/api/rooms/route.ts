@@ -1,39 +1,48 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { availabilityMaster, room } from "@/db/schema";
-import { like } from "drizzle-orm";
+
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import { guardMutation, jsonError, readJson } from "@/lib/api";
 import { canManageRooms } from "@/lib/services/group-context.service";
+import { RoomError, createRoom, listRoomsFor } from "@/lib/services/room.service";
 import { roomBodySchema } from "@/lib/validations/room.validator";
 
+// The rooms the signed-in person may see: room managers every room
+// (`?archived=1` adds archived ones), everyone else the active rooms their
+// group may book. `?facility=` filters by a facility (substring).
 export async function GET(request: Request) {
-  const organizer = await getCurrentOrganizer();
+  try {
+    const organizer = await getCurrentOrganizer();
 
-  if (!organizer) {
-    return NextResponse.json(
-      { message: "Unauthorized" },
-      { status: 401 }
+    if (!organizer) {
+      return NextResponse.json(
+        { message: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const facility = searchParams.get("facility")?.trim().slice(0, 100) || undefined;
+
+    const { rooms } = await listRoomsFor(
+      { employeeId: organizer.employeeId, role: organizer.role },
+      { facility, includeArchived: searchParams.get("archived") === "1" }
     );
+
+    // The same row shape as before (statusCode is only for the Rooms page).
+    return NextResponse.json(
+      rooms.map((r) => {
+        const row: Partial<typeof r> = { ...r };
+
+        delete row.statusCode;
+
+        return row;
+      })
+    );
+  } catch (error) {
+    console.error(error);
+
+    return jsonError(500, "Failed to load rooms.");
   }
-
-  const { searchParams } = new URL(request.url);
-
-  const facility = searchParams.get("facility");
-
-  if (facility) {
-    const filteredRooms = await db
-      .select()
-      .from(room)
-      .where(like(room.facilities, `%${facility}%`));
-
-    return NextResponse.json(filteredRooms);
-  }
-
-  const allRooms = await db.select().from(room);
-
-  return NextResponse.json(allRooms);
 }
 
 export async function POST(request: Request) {
@@ -72,34 +81,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const data = parsed.data;
+    const newRoom = await createRoom(parsed.data);
 
-    const [status] = await db
-      .select({ id: availabilityMaster.availabilityStatusId })
-      .from(availabilityMaster)
-      .where(eq(availabilityMaster.availabilityStatusId, data.availabilityStatusId));
-
-    if (!status) {
-      return jsonError(400, "Invalid availability status.");
-    }
-
-    const newRoom = await db
-      .insert(room)
-      .values({
-        room_name: data.roomName,
-        room_capacity: data.roomCapacity,
-        roomLocation: data.roomLocation,
-        facilities: data.facilities,
-        availabilityStatusId: data.availabilityStatusId,
-        roomDescription: data.roomDescription,
-      })
-      .returning();
-
-    return NextResponse.json(newRoom, {
+    return NextResponse.json([newRoom], {
       status: 201,
     });
 
   } catch (error) {
+    if (error instanceof RoomError) return jsonError(error.status, error.message);
+
     console.error(error);
 
     return NextResponse.json(

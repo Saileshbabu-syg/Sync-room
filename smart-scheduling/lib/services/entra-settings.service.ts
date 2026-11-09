@@ -1,53 +1,57 @@
-import { asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import {
-  entraGroupMappings,
-  entraSyncSettings,
-  groupAuditLogs,
-  groups,
-} from "@/db/schema";
-import { GroupError } from "./group.service";
+import { entraSyncSettings, groupAuditLogs, groups } from "@/db/schema";
+import { DEFAULT_GROUP_NAME } from "@/lib/constants";
+
+import { assertMaySetDefaultGroup, GroupError } from "./group.service";
 
 // Admin-editable settings of the Entra ID sync: whether it runs by itself and
-// how often, and which Entra security group puts a first-time person into which
-// app group. Mappings never move anyone who already has a group.
+// how often, and which group new people start in. A sync can always be started by hand, whatever these say.
 
 export type EntraSettings = {
   autoSyncEnabled: boolean;
   intervalHours: number;
-  mappings: {
-    entraGroupId: string;
-    entraGroupName: string;
-    groupId: number;
-    groupName: string;
-  }[];
+  // Group that people without one are placed in; null only if neither a chosen
+  // group nor the built-in Employee group exists.
+  defaultGroupId: number | null;
 };
 
 export type EntraSettingsInput = {
   autoSyncEnabled: boolean;
   intervalHours: number;
-  mappings: { entraGroupId: string; entraGroupName: string; groupId: number }[];
+  defaultGroupId: number;
 };
+
+// The group new people land in: the one chosen in the settings while it is
+// still active, otherwise the built-in Employee group.
+export async function resolveDefaultGroupId(): Promise<number | null> {
+  const [settings] = await db.select().from(entraSyncSettings);
+
+  const [chosen] = settings?.defaultGroupId
+    ? await db
+        .select({ id: groups.id })
+        .from(groups)
+        .where(and(eq(groups.id, settings.defaultGroupId), eq(groups.isActive, true)))
+    : [];
+
+  if (chosen) return chosen.id;
+
+  const [fallback] = await db
+    .select({ id: groups.id })
+    .from(groups)
+    .where(and(eq(groups.name, DEFAULT_GROUP_NAME), eq(groups.isActive, true)));
+
+  return fallback?.id ?? null;
+}
 
 export async function getEntraSettings(): Promise<EntraSettings> {
   const [settings] = await db.select().from(entraSyncSettings);
 
-  const mappings = await db
-    .select({
-      entraGroupId: entraGroupMappings.entraGroupId,
-      entraGroupName: entraGroupMappings.entraGroupName,
-      groupId: entraGroupMappings.groupId,
-      groupName: groups.name,
-    })
-    .from(entraGroupMappings)
-    .innerJoin(groups, eq(groups.id, entraGroupMappings.groupId))
-    .orderBy(asc(entraGroupMappings.entraGroupName), asc(entraGroupMappings.id));
-
   return {
     autoSyncEnabled: settings?.autoSyncEnabled ?? false,
     intervalHours: settings?.intervalHours ?? 24,
-    mappings: mappings.map((m) => ({ ...m, entraGroupName: m.entraGroupName ?? "" })),
+    defaultGroupId: await resolveDefaultGroupId(),
   };
 }
 
@@ -55,23 +59,27 @@ export async function updateEntraSettings(
   input: EntraSettingsInput,
   actorEmployeeId: number
 ) {
+  const [target] = await db
+    .select({ id: groups.id })
+    .from(groups)
+    .where(and(eq(groups.id, input.defaultGroupId), eq(groups.isActive, true)));
+
+  if (!target) throw new GroupError("Choose an active group.", 400);
+
+  // Only a change of default group is checked, so keeping a default an admin
+  // chose does not stop anyone from changing the schedule.
+  if (input.defaultGroupId !== (await resolveDefaultGroupId())) {
+    await assertMaySetDefaultGroup(actorEmployeeId, input.defaultGroupId);
+  }
+
   await db.transaction(async (tx) => {
-    const wanted = [...new Set(input.mappings.map((m) => m.groupId))];
-
-    if (wanted.length > 0) {
-      const known = new Set((await tx.select({ id: groups.id }).from(groups)).map((g) => g.id));
-
-      if (!wanted.every((id) => known.has(id))) {
-        throw new GroupError("One or more groups do not exist.", 400);
-      }
-    }
-
     await tx
       .insert(entraSyncSettings)
       .values({
         id: 1,
         autoSyncEnabled: input.autoSyncEnabled,
         intervalHours: input.intervalHours,
+        defaultGroupId: input.defaultGroupId,
         updatedBy: actorEmployeeId,
       })
       .onConflictDoUpdate({
@@ -79,22 +87,11 @@ export async function updateEntraSettings(
         set: {
           autoSyncEnabled: input.autoSyncEnabled,
           intervalHours: input.intervalHours,
+          defaultGroupId: input.defaultGroupId,
           updatedAt: new Date(),
           updatedBy: actorEmployeeId,
         },
       });
-
-    await tx.delete(entraGroupMappings);
-
-    if (input.mappings.length > 0) {
-      await tx.insert(entraGroupMappings).values(
-        input.mappings.map((m) => ({
-          entraGroupId: m.entraGroupId,
-          entraGroupName: m.entraGroupName || null,
-          groupId: m.groupId,
-        }))
-      );
-    }
 
     await tx.insert(groupAuditLogs).values({
       actorEmployeeId,
@@ -102,10 +99,7 @@ export async function updateEntraSettings(
       details: {
         autoSyncEnabled: input.autoSyncEnabled,
         intervalHours: input.intervalHours,
-        mappings: input.mappings.map((m) => ({
-          entraGroupId: m.entraGroupId,
-          groupId: m.groupId,
-        })),
+        defaultGroupId: input.defaultGroupId,
       },
     });
   });

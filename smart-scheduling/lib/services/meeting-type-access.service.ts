@@ -10,7 +10,6 @@ import {
   userGroups,
 } from "@/db/schema";
 import type { DbExecutor } from "@/lib/db-types";
-import { effectiveRank } from "@/lib/priority-rank";
 
 // Which meeting types a person may book.
 //
@@ -24,9 +23,8 @@ import { effectiveRank } from "@/lib/priority-rank";
 // Routes, the type picker and edit all ask this one service, so the frontend and
 // the backend can never disagree.
 //
-// `priorityRank` is the rank this role gets when booking the type: the type's
-// rank minus the role's boost. A booking can rank higher still if a boosted
-// attendee joins; booking.service decides that.
+// `priorityRank` is the type's own rank (1 = highest). Inviting Leadership
+// outranks every type; booking.service decides that.
 
 export type MeetingTypeSubject = {
   employeeId: number;
@@ -54,13 +52,6 @@ export async function getAllowedMeetingTypes(
   executor: DbExecutor = db
 ) {
   const groupId = await activeGroupId(employeeId, executor);
-
-  const [role] = await executor
-    .select({ boost: roles.priorityBoost })
-    .from(roles)
-    .where(eq(roles.roleName, roleName));
-
-  const boost = role?.boost ?? 0;
 
   const rows =
     groupId !== null
@@ -91,10 +82,7 @@ export async function getAllowedMeetingTypes(
           .where(eq(roles.roleName, roleName));
 
   return rows
-    .map(({ typeRank, ...type }) => ({
-      ...type,
-      priorityRank: effectiveRank(typeRank, boost),
-    }))
+    .map(({ typeRank, ...type }) => ({ ...type, priorityRank: typeRank }))
     .sort((a, b) => a.meetingTypeId - b.meetingTypeId);
 }
 

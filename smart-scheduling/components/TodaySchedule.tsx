@@ -7,6 +7,9 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import JoinMeetingButton, { TeamsBadge } from "@/components/JoinMeetingButton";
+import { TeamsStatusBadge } from "@/components/StatusBadge";
+import { formatTimeRange } from "@/lib/format";
 
 type Meeting = {
   meetingId: number;
@@ -15,102 +18,113 @@ type Meeting = {
   startTime: string;
   endTime: string;
   roomName: string | null;
+  isOnline?: boolean;
+  onlineJoinUrl?: string | null;
+  onlineRequested?: boolean;
+  onlineStatus?: string | null;
 };
 
 type Props = {
   meetings: Meeting[];
 };
 
+// Today's scheduled meetings. A fixed height on large screens (side by side
+// with Upcoming Meeting); on small screens it grows with its content.
 export default function TodaySchedule({
   meetings,
 }: Props) {
 
   return (
-   
-     <div className="h-[360px] rounded-3xl border bg-white p-8 shadow">
 
-        <h2 className="mb-6 flex items-center gap-3 text-2xl font-bold">
+    <div className="flex flex-col rounded-3xl border bg-white p-4 shadow sm:p-8 lg:h-[360px]">
 
-          <CalendarClock className="h-7 w-7 text-blue-600" />
+      <h2 className="mb-6 flex items-center gap-3 text-2xl font-bold">
 
-          Today&apos;s Schedule
+        <CalendarClock className="h-7 w-7 text-blue-600" aria-hidden />
 
-        </h2>
+        Today&apos;s Schedule
 
-        {meetings.length === 0 ? (
+      </h2>
 
-          <div className="py-10 text-center">
+      {meetings.length === 0 ? (
 
-            <h3 className="text-lg font-semibold">
-              No meetings scheduled today
-            </h3>
+        <div className="py-10 text-center">
 
-            <p className="mt-2 text-gray-500">
-              Enjoy your free day!
-            </p>
+          <h3 className="text-lg font-semibold">
+            No meetings scheduled today
+          </h3>
 
-          </div>
+          <p className="mt-2 text-gray-500">
+            Enjoy your free day!
+          </p>
 
-        ) : (
+        </div>
 
-          <div className="mt-6 h-[240px] space-y-4 overflow-y-auto pr-2">
+      ) : (
 
-            {meetings.map((meeting) => (
+        <ul className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
 
-              <div
-                key={meeting.meetingId}
-                className="flex items-center justify-between rounded-xl border p-5 transition hover:bg-slate-50"
-              >
+          {meetings.map((meeting) => (
 
-                <div>
+            <li
+              key={meeting.meetingId}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 transition hover:bg-slate-50 sm:p-5"
+            >
 
-                  <h3 className="text-lg font-semibold">
-                    {meeting.title}
-                  </h3>
+              <div className="min-w-0">
 
-                  <div className="mt-3 flex flex-wrap gap-6 text-sm text-gray-600">
+                <h3 className="flex flex-wrap items-center gap-2 break-words text-lg font-semibold">
+                  {meeting.title}
+                  {meeting.isOnline && <TeamsBadge />}
+                  <TeamsStatusBadge
+                    onlineRequested={meeting.onlineRequested && !meeting.isOnline}
+                    onlineStatus={meeting.onlineStatus}
+                  />
+                </h3>
 
-                    <div className="flex items-center gap-2">
+                <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600">
 
-                      <Clock className="h-4 w-4 text-blue-600" />
+                  <div className="flex items-center gap-2">
 
-                      {meeting.startTime} - {meeting.endTime}
+                    <Clock className="h-4 w-4 text-blue-600" aria-hidden />
 
-                    </div>
+                    {formatTimeRange(meeting.startTime, meeting.endTime)}
 
-                    <div className="flex items-center gap-2">
+                  </div>
 
-                      <Building2 className="h-4 w-4 text-blue-600" />
+                  <div className="flex items-center gap-2">
 
-                      {meeting.roomName ?? "-"}
+                    <Building2 className="h-4 w-4 text-blue-600" aria-hidden />
 
-                    </div>
+                    {meeting.roomName ?? "-"}
 
                   </div>
 
                 </div>
 
-                <Link
-                  href={`/bookings/${meeting.meetingId}`}
-                >
+              </div>
 
-                  <Button
-                    variant="outline"
-                  >
-                    View
-                  </Button>
+              <div className="flex gap-2">
 
-                </Link>
+                {meeting.isOnline && meeting.onlineJoinUrl && (
+                  <JoinMeetingButton joinUrl={meeting.onlineJoinUrl} />
+                )}
+
+                <Button variant="outline" asChild>
+                  <Link href={`/bookings/${meeting.meetingId}`}>View</Link>
+                </Button>
 
               </div>
 
-            ))}
+            </li>
 
-          </div>
+          ))}
 
-        )}
+        </ul>
 
-      </div>
+      )}
+
+    </div>
 
   );
 }

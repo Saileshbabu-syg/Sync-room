@@ -1,3 +1,31 @@
+// How long a sign-in lasts. Auth.js re-signs the session cookie on every
+// request, so its own maxAge is only an IDLE limit; `capSessionAge` (the jwt
+// callback in auth.ts) adds the absolute limit counted from the sign-in itself.
+export const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
+
+type SessionToken = { authTime?: unknown; iat?: unknown; [key: string]: unknown };
+
+// Stamps the sign-in time on a new token and ends the session (null clears the
+// cookie) once it is older than SESSION_MAX_AGE_SECONDS. Tokens issued before
+// this existed have no stamp: their current `iat` becomes the start.
+export function capSessionAge<T extends SessionToken>(
+  token: T,
+  isSignIn: boolean,
+  nowSeconds: number = Math.floor(Date.now() / 1000)
+): (T & { authTime: number }) | null {
+  const start = isSignIn
+    ? nowSeconds
+    : typeof token.authTime === "number"
+      ? token.authTime
+      : typeof token.iat === "number"
+        ? token.iat
+        : nowSeconds;
+
+  if (nowSeconds - start > SESSION_MAX_AGE_SECONDS) return null;
+
+  return { ...token, authTime: start };
+}
+
 // Startup check for the Auth.js / Google OAuth environment, so a production
 // deployment with a missing or unsafe setting is reported at boot instead of as
 // a confusing sign-in failure. Returns readable messages that name variables,

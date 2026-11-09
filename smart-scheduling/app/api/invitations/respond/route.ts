@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { guardMutation, jsonError, readJson } from "@/lib/api";
+import { clientIp, guardMutation, jsonError, readJson } from "@/lib/api";
 import { isValidInvitationToken } from "@/lib/invitation-token";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { respondToInvitation } from "@/lib/services/invitation.service";
@@ -22,8 +22,9 @@ export async function POST(request: Request) {
 
     if (blocked) return blocked;
 
-    const ip =
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    // Per client IP behind a trusted proxy; otherwise one shared bucket, since
+    // a header the client controls must not pick (or reset) its own bucket.
+    const ip = clientIp(request) ?? "local";
     const limit = checkRateLimit(`invite:${ip}`, 30, 60_000);
 
     if (!limit.allowed) {

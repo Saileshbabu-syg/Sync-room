@@ -142,10 +142,20 @@ export const employee = pgTable(
     // Microsoft Entra ID object id. The stable key for directory sync; null
     // for people added by hand and not yet matched to a directory account.
     entra_object_id: uuid("entra_object_id").unique(),
+    // False once the person has left: they can no longer sign in or act as an
+    // organizer. Set by the Entra sync (people missing from, or disabled in,
+    // the directory) and reversed by it if they come back. Rows are never
+    // deleted: bookings and history refer to them.
+    is_active: boolean("is_active").notNull().default(true),
+    deactivated_at: timestamp("deactivated_at", { withTimezone: true }),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
-  (t) => [index("employee_role_id_idx").on(t.role_id)]
+  (t) => [
+    index("employee_role_id_idx").on(t.role_id),
+    // Sign-in and session lookups compare e-mails case-insensitively.
+    index("employee_email_lower_idx").on(sql`lower(${t.email})`),
+  ]
 );
 
 // One row per Entra ID sync attempt, so the screen can show progress, the last
@@ -165,6 +175,10 @@ export const employeeSyncRuns = pgTable(
     updated: integer("updated").notNull().default(0),
     linked: integer("linked").notNull().default(0),
     skipped: integer("skipped").notNull().default(0),
+    deactivated: integer("deactivated").notNull().default(0),
+    // Why people missing from the directory were NOT deactivated on this run
+    // (empty directory, over the safety threshold), if that happened.
+    deactivation_note: text("deactivation_note"),
     error: text("error"),
   },
   (t) => [
@@ -196,7 +210,10 @@ export const organizers = pgTable(
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
   },
-  (t) => [index("organizer_employee_id_idx").on(t.employeeId)]
+  (t) => [
+    index("organizer_employee_id_idx").on(t.employeeId),
+    index("organizer_email_lower_idx").on(sql`lower(${t.email})`),
+  ]
 );
 
 export const accounts = pgTable(
@@ -249,6 +266,9 @@ export const room = pgTable(
     ),
     roomDescription: varchar("room_description", { length: 255 }),
     imageUrl: varchar("image_url", { length: 255 }),
+    // Set when the room is archived: it can no longer be booked or offered,
+    // but stays in the database for the meetings that were held in it.
+    archived_at: timestamp("archived_at", { withTimezone: true }),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
@@ -268,7 +288,17 @@ export const recurring_meetings = pgTable(
       .notNull()
       .references(() => recurrence_frequency_master.frequency_id),
     occurrence_count: integer("occurrence_count").notNull(),
+    // Date of the last booked occurrence (kept up to date when the series is
+    // shortened or extended).
     recurrence_end_date: date("recurrence_end_date"),
+    // The pattern the occurrences come from: its first date (the grid every
+    // later date is computed from), "every N weeks" for WEEKLY (1 otherwise),
+    // and the end-by date the organizer chose, if any. Null pattern_start_date
+    // = a series booked before the pattern was stored: its first booked date
+    // is used instead.
+    pattern_start_date: date("pattern_start_date"),
+    recurrence_interval: integer("recurrence_interval").notNull().default(1),
+    until_date: date("until_date"),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
@@ -277,6 +307,35 @@ export const recurring_meetings = pgTable(
     check(
       "recurring_meetings_occurrence_count_positive",
       sql`${t.occurrence_count} >= 1`
+    ),
+    check(
+      "recurring_meetings_interval_range",
+      sql`${t.recurrence_interval} BETWEEN 1 AND 12`
+    ),
+  ]
+);
+
+// Dates of a series' pattern that are deliberately NOT booked (left out at
+// booking time). Kept so that extending or regenerating the series never
+// re-creates them, and so the e-mails can list them exactly.
+export const recurringMeetingSkippedDates = pgTable(
+  "recurring_meeting_skipped_dates",
+  {
+    id: serial("id").primaryKey(),
+    recurringMeetingId: integer("recurring_meeting_id")
+      .notNull()
+      .references(() => recurring_meetings.recurring_meeting_id, {
+        onDelete: "cascade",
+      }),
+    skippedDate: date("skipped_date").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("recurring_meeting_skipped_dates_uq").on(
+      t.recurringMeetingId,
+      t.skippedDate
     ),
   ]
 );
@@ -360,6 +419,13 @@ export const groupMeetingTypes = pgTable(
 
 // Per-group booking limits. A null column means "no extra limit" (the system
 // maximum still applies); limits can only tighten the system ones.
+//
+// Booking policies (see lib/booking-limits.ts for how they are resolved with
+// the application-wide ones in app_booking_settings):
+//  * overnight_policy is an explicit choice, so "inherit" is its own value:
+//    INHERIT (follow the application), ALLOWED or NOT_ALLOWED;
+//  * every numeric limit uses null for "no limit of this group's own" - the
+//    application's limit, if any, still applies (the stricter one wins).
 export const groupSettings = pgTable(
   "group_settings",
   {
@@ -369,8 +435,30 @@ export const groupSettings = pgTable(
     maxDurationMinutes: integer("max_duration_minutes"),
     maxAdvanceDays: integer("max_advance_days"),
     maxOccurrences: integer("max_occurrences"),
+    overnightPolicy: varchar("overnight_policy", { length: 12 })
+      .notNull()
+      .default("INHERIT"),
+    maxBookingsPerDay: integer("max_bookings_per_day"),
+    maxBookingsPerWeek: integer("max_bookings_per_week"),
+    maxBookingsPerMonth: integer("max_bookings_per_month"),
   },
   (t) => [
+    check(
+      "group_settings_overnight_valid",
+      sql`${t.overnightPolicy} IN ('INHERIT', 'ALLOWED', 'NOT_ALLOWED')`
+    ),
+    check(
+      "group_settings_per_day_range",
+      sql`${t.maxBookingsPerDay} IS NULL OR ${t.maxBookingsPerDay} BETWEEN 1 AND 1000`
+    ),
+    check(
+      "group_settings_per_week_range",
+      sql`${t.maxBookingsPerWeek} IS NULL OR ${t.maxBookingsPerWeek} BETWEEN 1 AND 5000`
+    ),
+    check(
+      "group_settings_per_month_range",
+      sql`${t.maxBookingsPerMonth} IS NULL OR ${t.maxBookingsPerMonth} BETWEEN 1 AND 20000`
+    ),
     check(
       "group_settings_duration_range",
       sql`${t.maxDurationMinutes} IS NULL OR ${t.maxDurationMinutes} BETWEEN 15 AND 1440`
@@ -405,6 +493,48 @@ export const groupRooms = pgTable(
   ]
 );
 
+// Application-wide booking policies (a single row, id = 1; no row = the
+// defaults below, which keep the behaviour from before these settings existed).
+// They are the upper boundary for every group's own settings: the effective
+// rule for a group is always the stricter of the two. Null = unlimited.
+export const appBookingSettings = pgTable(
+  "app_booking_settings",
+  {
+    id: integer("id").primaryKey().default(1),
+    // Master switch for meetings that continue past midnight.
+    allowOvernight: boolean("allow_overnight").notNull().default(false),
+    // The longest meeting anywhere, in minutes.
+    maxDurationMinutes: integer("max_duration_minutes"),
+    // Bookings one GROUP may hold per calendar day / week (Mon-Sun) / month.
+    maxBookingsPerDay: integer("max_bookings_per_day"),
+    maxBookingsPerWeek: integer("max_bookings_per_week"),
+    maxBookingsPerMonth: integer("max_bookings_per_month"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedBy: integer("updated_by").references(() => employee.employee_id),
+  },
+  (t) => [
+    check("app_booking_settings_single_row", sql`${t.id} = 1`),
+    check(
+      "app_booking_settings_duration_range",
+      sql`${t.maxDurationMinutes} IS NULL OR ${t.maxDurationMinutes} BETWEEN 15 AND 1440`
+    ),
+    check(
+      "app_booking_settings_per_day_range",
+      sql`${t.maxBookingsPerDay} IS NULL OR ${t.maxBookingsPerDay} BETWEEN 1 AND 1000`
+    ),
+    check(
+      "app_booking_settings_per_week_range",
+      sql`${t.maxBookingsPerWeek} IS NULL OR ${t.maxBookingsPerWeek} BETWEEN 1 AND 5000`
+    ),
+    check(
+      "app_booking_settings_per_month_range",
+      sql`${t.maxBookingsPerMonth} IS NULL OR ${t.maxBookingsPerMonth} BETWEEN 1 AND 20000`
+    ),
+  ]
+);
+
 // Entra ID sync settings (a single row, id = 1).
 export const entraSyncSettings = pgTable(
   "entra_sync_settings",
@@ -412,6 +542,10 @@ export const entraSyncSettings = pgTable(
     id: integer("id").primaryKey().default(1),
     autoSyncEnabled: boolean("auto_sync_enabled").notNull().default(false),
     intervalHours: integer("interval_hours").notNull().default(24),
+    // Where people with no group land after a sync; null = the Employee group.
+    defaultGroupId: integer("default_group_id").references(() => groups.id, {
+      onDelete: "set null",
+    }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -421,24 +555,9 @@ export const entraSyncSettings = pgTable(
     check("entra_sync_settings_single_row", sql`${t.id} = 1`),
     check(
       "entra_sync_settings_interval_range",
-      sql`${t.intervalHours} BETWEEN 1 AND 168`
+      sql`${t.intervalHours} IN (1, 24, 168, 720)`
     ),
   ]
-);
-
-// Which app group a person starts in on their first sync, by Entra security
-// group. Only used for people with no active group; never moves anyone.
-export const entraGroupMappings = pgTable(
-  "entra_group_mappings",
-  {
-    id: serial("id").primaryKey(),
-    entraGroupId: uuid("entra_group_id").notNull().unique(),
-    entraGroupName: varchar("entra_group_name", { length: 200 }),
-    groupId: integer("group_id")
-      .notNull()
-      .references(() => groups.id, { onDelete: "cascade" }),
-  },
-  (t) => [index("entra_group_mappings_group_idx").on(t.groupId)]
 );
 
 export const groupPermissions = pgTable(
@@ -490,17 +609,66 @@ export const meeting = pgTable(
       { onDelete: "restrict" }
     ),
     priorityAtBooking: integer("priority_at_booking"),
+    // Version of this meeting's calendar entry (iCalendar SEQUENCE). Raised in
+    // the same transaction as a change that moves or renames the entry (date,
+    // time, room, title), so every invite sent afterwards supersedes the
+    // earlier ones; a cancellation goes out as this + 1 (calendar.service).
+    ics_sequence: integer("ics_sequence").notNull().default(0),
+    // Online (Microsoft Teams) meeting. Every occurrence of a series has its
+    // own event and link. `is_online` is true only while a valid join URL and
+    // event id are stored (see the consistency check below);
+    // `online_requested` records that the organizer asked for Teams, so a
+    // failed creation can be retried.
+    online_requested: boolean("online_requested").notNull().default(false),
+    is_online: boolean("is_online").notNull().default(false),
+    online_provider: varchar("online_provider", { length: 40 }),
+    online_join_url: text("online_join_url"),
+    online_event_id: varchar("online_event_id", { length: 255 }),
+    // Teams provisioning, done by the background worker (online-meeting.service):
+    //   NONE    - no online meeting asked for;
+    //   PENDING - the Teams event must be created or brought up to date;
+    //   READY   - the event matches the meeting (link stored);
+    //   FAILED  - automatic retries are used up; a person can retry.
+    // `online_version` rises whenever the event must change (booking, move,
+    // rename, retry); a worker only marks READY if it is still the version it
+    // worked on, so stale work never overwrites a newer change.
+    online_status: varchar("online_status", { length: 10 }).notNull().default("NONE"),
+    online_version: integer("online_version").notNull().default(0),
+    online_attempts: integer("online_attempts").notNull().default(0),
+    online_next_attempt_at: timestamp("online_next_attempt_at", { withTimezone: true }),
+    online_locked_until: timestamp("online_locked_until", { withTimezone: true }),
+    online_last_error: text("online_last_error"),
+    online_synced_at: timestamp("online_synced_at", { withTimezone: true }),
     created_at: timestamp("created_at").defaultNow(),
     updated_at: timestamp("updated_at").defaultNow(),
   },
   (t) => [
+    check(
+      "meeting_online_status_valid",
+      sql`${t.online_status} IN ('NONE', 'PENDING', 'READY', 'FAILED')`
+    ),
+    // The worker's queue: due PENDING rows.
+    index("meeting_online_pending_idx")
+      .on(t.online_status, t.online_next_attempt_at)
+      .where(sql`${t.online_status} = 'PENDING'`),
+    check(
+      "meeting_online_consistent",
+      sql`NOT ${t.is_online} OR (${t.online_join_url} IS NOT NULL AND ${t.online_event_id} IS NOT NULL AND ${t.online_provider} IS NOT NULL)`
+    ),
+    // One Teams event belongs to exactly one meeting (duplicate guard).
+    uniqueIndex("meeting_online_event_id_uq")
+      .on(t.online_event_id)
+      .where(sql`${t.online_event_id} IS NOT NULL`),
     // Hot path: conflict checks and availability lookups filter by room + date.
     index("meeting_room_date_idx").on(t.room_id, t.meeting_date),
+    // The group booking limits count a group's meetings per day/week/month.
+    index("meeting_group_date_idx").on(t.groupIdAtBooking, t.meeting_date),
     index("meeting_organizer_employee_id_idx").on(t.organizerEmployeeId),
     index("meeting_status_id_idx").on(t.meetingStatusId),
     index("meeting_type_id_idx").on(t.meetingTypeId),
     index("meeting_recurring_meeting_id_idx").on(t.recurringMeetingId),
     check("meeting_participant_count_positive", sql`${t.participantCount} >= 1`),
+    check("meeting_ics_sequence_nonneg", sql`${t.ics_sequence} >= 0`),
   ]
 );
 
@@ -552,18 +720,30 @@ export const notifications = pgTable(
     recipient_employee_id: integer("recipient_employee_id").references(
       () => employee.employee_id
     ),
-    // Delivery attempts so far; PENDING rows are retried until the limit,
-    // then parked as FAILED.
+    // Delivery attempts so far, counted when a worker CLAIMS the row (so a
+    // worker that keeps crashing mid-send still uses up attempts). PENDING rows
+    // are retried until the limit, then parked as FAILED.
     attempts: integer("attempts").notNull().default(0),
+    // PENDING rows are not picked up before this (exponential backoff).
+    next_attempt_at: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // While SENDING: the claiming worker's lease. Past it, another worker may
+    // take the row over (the first one is presumed dead).
+    locked_until: timestamp("locked_until", { withTimezone: true }),
+    // Why the last attempt failed or why the row was skipped; addresses are
+    // never stored here (lib/delivery-policy.ts).
+    last_error: text("last_error"),
     sent_at: timestamp("sent_at"),
     created_at: timestamp("created_at").defaultNow(),
   },
   (t) => [
     index("notifications_meeting_id_idx").on(t.meeting_id),
     index("notifications_type_id_idx").on(t.notification_type_id),
+    index("notifications_status_next_idx").on(t.status, t.next_attempt_at),
     check(
       "notifications_status_valid",
-      sql`${t.status} IN ('PENDING', 'SENT', 'FAILED', 'SKIPPED')`
+      sql`${t.status} IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'SKIPPED')`
     ),
     check("notifications_attempts_nonneg", sql`${t.attempts} >= 0`),
   ]
@@ -577,9 +757,16 @@ export const reminder_logs = pgTable(
       .notNull()
       .references(() => meeting.meeting_id),
     reminder_time: timestamp("reminder_time", { withTimezone: true }).notNull(),
-    // PENDING (due at reminder_time) -> SENT | SKIPPED | FAILED
+    // PENDING (due at reminder_time) -> SENDING (claimed) -> SENT | SKIPPED |
+    // FAILED; a failed attempt goes back to PENDING until the limit.
     status: varchar("status", { length: 20 }).default("PENDING"),
+    // Same meaning as on `notifications`.
     attempts: integer("attempts").notNull().default(0),
+    next_attempt_at: timestamp("next_attempt_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    locked_until: timestamp("locked_until", { withTimezone: true }),
+    last_error: text("last_error"),
     created_at: timestamp("created_at").defaultNow(),
   },
   (t) => [
@@ -589,7 +776,7 @@ export const reminder_logs = pgTable(
     index("reminder_logs_status_time_idx").on(t.status, t.reminder_time),
     check(
       "reminder_logs_status_valid",
-      sql`${t.status} IN ('PENDING', 'SENT', 'SKIPPED', 'FAILED')`
+      sql`${t.status} IN ('PENDING', 'SENDING', 'SENT', 'SKIPPED', 'FAILED')`
     ),
     check("reminder_logs_attempts_nonneg", sql`${t.attempts} >= 0`),
   ]
@@ -850,7 +1037,8 @@ export const bookingPriorityHistory = pgTable(
   ]
 );
 
-// Admin changes to groups, priorities, permissions and memberships.
+// Admin changes to groups, priorities, permissions and memberships, Entra
+// settings, and dashboard report exports (REPORT_EXPORTED).
 // Append-only (trigger in migration 0027).
 export const groupAuditLogs = pgTable(
   "group_audit_logs",
@@ -1094,7 +1282,6 @@ export type Group = typeof groups.$inferSelect;
 export type NewGroup = typeof groups.$inferInsert;
 export type UserGroup = typeof userGroups.$inferSelect;
 export type GroupSettings = typeof groupSettings.$inferSelect;
-export type EntraGroupMapping = typeof entraGroupMappings.$inferSelect;
 export type GroupMeetingType = typeof groupMeetingTypes.$inferSelect;
 export type EmployeeSyncRun = typeof employeeSyncRuns.$inferSelect;
 export type GroupPermission = typeof groupPermissions.$inferSelect;

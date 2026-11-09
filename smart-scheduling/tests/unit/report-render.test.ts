@@ -20,12 +20,12 @@ const metrics: DashboardMetrics = {
   confirmedBookings: 2,
   cancelledBookings: 1,
   bumpedBookings: 1,
+  pendingBookings: 0,
   totalMeetingHours: 2.5,
   activeRooms: 1,
 };
 
 type Row = ReportInput["rows"] extends AsyncIterable<infer R> ? R : never;
-type Person = ReportInput["participants"] extends AsyncIterable<infer R> ? R : never;
 
 const row = (over: Partial<Row>): Row => ({
   bookingId: 1,
@@ -77,13 +77,10 @@ const data = [
   }),
 ];
 
+type Person = NonNullable<Row["participants"]>[number];
+
 const people: Person[] = [
   {
-    bookingId: 1,
-    title: "Sync",
-    meetingDate: "2031-03-05",
-    startTime: "10:00:00",
-    endTime: "11:30:00",
     employeeId: 12,
     name: "Carol Employee",
     email: "carol@example.test",
@@ -91,11 +88,6 @@ const people: Person[] = [
     isOptional: false,
   },
   {
-    bookingId: 1,
-    title: "Sync",
-    meetingDate: "2031-03-05",
-    startTime: "10:00:00",
-    endTime: "11:30:00",
     employeeId: 13,
     name: "Dave, Optional",
     email: "dave@example.test",
@@ -103,31 +95,27 @@ const people: Person[] = [
     isOptional: true,
   },
   {
-    bookingId: 2,
-    title: "=HYPERLINK",
-    meetingDate: "2031-03-05",
-    startTime: "10:00:00",
-    endTime: "11:30:00",
     employeeId: 14,
-    name: "Erin",
+    name: "=Erin",
     email: "erin@example.test",
     response: "NO_RESPONSE",
     isOptional: false,
   },
 ];
 
-async function* rows() {
-  for (const r of data) yield r;
-}
+// Booking 1 has Carol and Dave, booking 2 has Erin, the rest nobody.
+const withPeople = (r: Row): Row => ({
+  ...r,
+  participants: r.bookingId === 1 ? people.slice(0, 2) : r.bookingId === 2 ? people.slice(2) : [],
+});
 
-async function* participants() {
-  for (const p of people) yield p;
+async function* rows() {
+  for (const r of data) yield withPeople(r);
 }
 
 async function render(
   format: ReportFormat,
-  source: AsyncIterable<Row> = rows(),
-  persons: AsyncIterable<Person> = participants()
+  source: AsyncIterable<Row> = rows()
 ) {
   const out = new PassThrough();
   const chunks: Buffer[] = [];
@@ -144,7 +132,6 @@ async function render(
     metrics,
     generatedBy: "Report Viewer <viewer@example.test>",
     rows: source,
-    participants: persons,
   });
 
   await done;
@@ -153,7 +140,7 @@ async function render(
 }
 
 describe("report rendering", () => {
-  it("CSV: summary, bookings, then one participant row per person; escaped and formula-safe", async () => {
+  it("CSV: summary, then bookings with their participants listed beneath each; escaped and formula-safe", async () => {
     const text = (await render("csv")).toString("utf8");
 
     assert.ok(text.startsWith("﻿"));
@@ -163,6 +150,7 @@ describe("report rendering", () => {
     assert.match(text, /Confirmed bookings,2\r\n/);
     assert.match(text, /Cancelled bookings,1\r\n/);
     assert.match(text, /Replaced bookings,1\r\n/);
+    assert.match(text, /Pending reschedule,0\r\n/);
     assert.match(text, /Total meeting hours,2.5\r\n/);
     assert.match(text, /Active meeting rooms,1\r\n/);
 
@@ -173,7 +161,7 @@ describe("report rendering", () => {
     );
     assert.ok(
       text.includes(
-        "\r\n1,Bob Employee,bob@example.test,Employee,Team Meeting,5,Sync,Alpha,2031-03-05,10:00,11:30,Scheduled,,\r\n"
+        "\r\n1,Bob Employee,bob@example.test,Employee,Team Meeting,5,Sync,Alpha,2031-03-05,10:00 AM,11:30 AM,Scheduled,,\r\n"
       )
     );
     assert.ok(
@@ -186,27 +174,23 @@ describe("report rendering", () => {
     assert.ok(text.includes(",'=1+1,"), "text that looks like a formula is neutralized");
     assert.ok(!/Duration|Created/.test(text), "no duration or created columns");
 
-    // Participants: their own table after the bookings.
-    const [bookings, people] = text.split("\r\nParticipants\r\n");
-
-    assert.ok(people, "a Participants section follows the bookings");
-    assert.ok(!bookings.includes("Carol Employee"));
+    // Participants sit directly under their own meeting, not in a separate table.
+    assert.ok(!text.includes("\r\nParticipants\r\n"));
     assert.ok(
-      people.startsWith(
-        "Booking ID,Meeting title,Date,Start time,End time,Employee name,Employee ID,Email,Invitation category,Response\r\n"
-      )
+      text.includes(
+        "\r\n1,Bob Employee,bob@example.test,Employee,Team Meeting,5,Sync,Alpha,2031-03-05,10:00 AM,11:30 AM,Scheduled,,\r\n" +
+          ",Participant,Email,Invitation category,Response\r\n" +
+          ",Carol Employee (ID 12),carol@example.test,Primary Invitee,Accepted\r\n" +
+          ',"Dave, Optional (ID 13)",dave@example.test,Additional Invitee,Declined\r\n' +
+          "2,Bob Employee,"
+      ),
+      "booking 1 is followed by its two participants, then booking 2"
     );
-    assert.ok(
-      people.includes("1,Sync,2031-03-05,10:00,11:30,Carol Employee,12,carol@example.test,Primary Invitee,Accepted\r\n")
-    );
-    assert.ok(
-      people.includes('1,Sync,2031-03-05,10:00,11:30,"Dave, Optional",13,dave@example.test,Additional Invitee,Declined\r\n')
-    );
-    assert.ok(people.includes("2,'=HYPERLINK,"), "participant text is formula-safe too");
-    assert.ok(people.includes(",Primary Invitee,No Response\r\n"));
+    assert.ok(text.includes(",'=Erin (ID 14),erin@example.test,Primary Invitee,No Response\r\n"));
+    assert.equal((text.match(/,Participant,Email,/g) ?? []).length, 2, "no header for meetings without invitees");
   });
 
-  it("XLSX: Summary, Bookings and a separate Participants sheet", async () => {
+  it("XLSX: Summary and one Bookings sheet with grouped participant rows", async () => {
     const buffer = await render("xlsx");
 
     assert.equal(buffer.subarray(0, 2).toString(), "PK");
@@ -216,7 +200,7 @@ describe("report rendering", () => {
 
     assert.deepEqual(
       book.worksheets.map((w) => w.name),
-      ["Summary", "Bookings", "Participants"]
+      ["Summary", "Bookings"]
     );
 
     const summary = book.getWorksheet("Summary")!;
@@ -233,48 +217,47 @@ describe("report rendering", () => {
     assert.equal(sheet.getRow(1).getCell(1).value, "Booking ID");
     assert.equal(sheet.getRow(1).getCell(12).value, "Status");
     assert.equal(sheet.getRow(1).getCell(13).value, "Replaced by");
-    assert.equal(sheet.rowCount, 5);
+    // 4 bookings + (header + 2 people) + (header + 1 person) + title row.
+    assert.equal(sheet.rowCount, 1 + 4 + 3 + 2);
+
+    // Rows: 2 booking 1, 3 sub-header, 4 Carol, 5 Dave, 6 booking 2, 7 sub-header, 8 Erin, 9 booking 3, 10 booking 4.
+    assert.equal(sheet.getRow(2).getCell(1).value, 1);
     assert.equal(sheet.getRow(2).getCell(2).value, "Bob Employee");
     assert.equal(sheet.getRow(2).getCell(5).value, "Team Meeting");
-    assert.equal(sheet.getRow(3).getCell(12).value, "Completed");
-    assert.equal(sheet.getRow(4).getCell(7).value, "'=1+1");
-    assert.equal(sheet.getRow(5).getCell(12).value, "Replaced");
-    assert.equal(sheet.getRow(5).getCell(13).value, "Mona Manager");
+    assert.equal(sheet.getRow(2).outlineLevel, 0);
 
-    const sheet2 = book.getWorksheet("Participants")!;
+    assert.equal(sheet.getRow(3).getCell(2).value, "Participant");
+    assert.equal(sheet.getRow(3).getCell(5).value, "Response");
+    assert.equal(sheet.getRow(4).getCell(1).value, null);
+    assert.equal(sheet.getRow(4).getCell(2).value, "Carol Employee (ID 12)");
+    assert.equal(sheet.getRow(4).getCell(4).value, "Primary Invitee");
+    assert.equal(sheet.getRow(4).getCell(5).value, "Accepted");
+    assert.equal(sheet.getRow(4).outlineLevel, 1);
+    assert.equal(sheet.getRow(5).getCell(4).value, "Additional Invitee");
+    assert.equal(sheet.getRow(5).getCell(5).value, "Declined");
 
-    assert.equal(sheet2.getRow(1).getCell(6).value, "Employee name");
-    assert.equal(sheet2.getRow(1).getCell(9).value, "Invitation category");
-    assert.equal(sheet2.rowCount, 4);
-    assert.equal(sheet2.getRow(2).getCell(1).value, 1);
-    assert.equal(sheet2.getRow(2).getCell(6).value, "Carol Employee");
-    assert.equal(sheet2.getRow(2).getCell(9).value, "Primary Invitee");
-    assert.equal(sheet2.getRow(2).getCell(10).value, "Accepted");
-    assert.equal(sheet2.getRow(3).getCell(9).value, "Additional Invitee");
-    assert.equal(sheet2.getRow(3).getCell(10).value, "Declined");
-    assert.equal(sheet2.getRow(4).getCell(2).value, "'=HYPERLINK");
+    assert.equal(sheet.getRow(6).getCell(1).value, 2);
+    assert.equal(sheet.getRow(6).getCell(12).value, "Completed");
+    assert.equal(sheet.getRow(8).getCell(2).value, "'=Erin (ID 14)");
+    assert.equal(sheet.getRow(9).getCell(7).value, "'=1+1");
+    assert.equal(sheet.getRow(10).getCell(12).value, "Replaced");
+    assert.equal(sheet.getRow(10).getCell(13).value, "Mona Manager");
   });
 
-  it("PDF: a valid document with the bookings and a participants section", async () => {
+  it("PDF: a valid document with participants listed under their meetings", async () => {
     const pdf = await render("pdf");
 
     assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
     assert.ok(pdf.subarray(-1024).toString("latin1").includes("%%EOF"));
 
-    // Bookings page plus a separate page for the participants.
-    const pages = (pdf.toString("latin1").match(/\/Type \/Page\b/g) ?? []).length;
-
-    assert.ok(pages >= 2);
-
-    // Many records: the tables must flow onto more pages without failing.
+    // Many records, each with participants: the table must flow onto more pages.
     const long = (
       await render(
         "pdf",
         (async function* () {
-          for (let i = 1; i <= 400; i++) yield row({ bookingId: i, title: `Meeting ${i}` });
-        })(),
-        (async function* () {
-          for (let i = 1; i <= 400; i++) yield { ...people[0], bookingId: i };
+          for (let i = 1; i <= 400; i++) {
+            yield { ...row({ bookingId: i, title: `Meeting ${i}` }), participants: people };
+          }
         })()
       )
     ).toString("latin1");
@@ -283,11 +266,15 @@ describe("report rendering", () => {
   });
 
   it("works with no participants at all", async () => {
-    const empty = (async function* (): AsyncGenerator<Person> {})();
-    const text = (await render("csv", rows(), empty)).toString("utf8");
+    const none = () =>
+      (async function* () {
+        for (const r of data) yield r;
+      })();
+    const text = (await render("csv", none())).toString("utf8");
 
-    assert.ok(text.includes("\r\nParticipants\r\n"));
-    assert.equal((await render("xlsx", rows(), (async function* (): AsyncGenerator<Person> {})())).subarray(0, 2).toString(), "PK");
+    assert.ok(!text.includes("Participant"));
+    assert.equal((await render("xlsx", none())).subarray(0, 2).toString(), "PK");
+    assert.equal((await render("pdf", none())).subarray(0, 5).toString(), "%PDF-");
   });
 
   it("names the file after the period", () => {

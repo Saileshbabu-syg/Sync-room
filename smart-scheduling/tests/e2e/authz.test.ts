@@ -165,6 +165,112 @@ describe("room input validation (F-16)", () => {
 
     assert.equal(res.status, 409);
   });
+
+  it("taking a room out of service lists its upcoming meetings on both update paths, and cancels none (R-3/R-4)", async () => {
+    const id = await bobsMeeting("08:00", "09:00", dateFromToday(22));
+
+    for (const [path, body] of [
+      [`/api/rooms/${f.rooms.alpha.room_id}`, { roomName: "Alpha", roomCapacity: 10, roomLocation: "Floor 1", availabilityStatusId: 2 }],
+      [`/api/rooms/${f.rooms.alpha.room_id}/edit`, { room_name: "Alpha", room_capacity: 10, roomLocation: "Floor 1", availabilityStatusId: 2 }],
+    ] as const) {
+      const res = await app.call("PATCH", path, { ...admin(), body });
+
+      assert.equal(res.status, 409, path);
+      assert.ok((res.json!.conflicts as { meetingId: number }[]).some((c) => c.meetingId === id), path);
+    }
+
+    assert.equal((await db.select().from(room).where(eq(room.room_id, f.rooms.alpha.room_id)))[0].availabilityStatusId, 1);
+    assert.equal((await db.select().from(meeting).where(eq(meeting.meeting_id, id)))[0].meetingStatusId, 1);
+  });
+
+  it("an invalid availability status on the edit path is 400", async () => {
+    const res = await app.call("PATCH", `/api/rooms/${f.rooms.alpha.room_id}/edit`, {
+      ...admin(),
+      body: { room_name: "Alpha", room_capacity: 10, roomLocation: "Floor 1", availabilityStatusId: 999 },
+    });
+
+    assert.equal(res.status, 400);
+  });
+});
+
+describe("not-found states (D-16)", () => {
+  it("an unknown room on the booking form is a 404 page inside the app, an unknown URL the global 404", async () => {
+    const room = await app.call("GET", "/booking/details?roomId=99999", { as: f.users.bob });
+    assert.equal(room.status, 404);
+    // The signed-in not-found page (app/(app)/not-found.tsx), not the global one.
+    assert.match(room.text, /What you are looking for does not exist/);
+
+    const page = await app.call("GET", "/no-such-page", { as: f.users.bob });
+    assert.equal(page.status, 404);
+    assert.match(page.text, /Page not found/);
+  });
+});
+
+describe("My Bookings paging (D-09 / D-10)", () => {
+  it("malformed tab, page and date fall back to defaults; a page past the end shows the last one", async () => {
+    for (const qs of ["", "?tab=cancelled&page=999", "?tab=bogus&page=abc&date=2026-1-1", "?tab=__proto__", "?date=2031-02-30"]) {
+      const res = await app.call("GET", `/bookings${qs}`, { as: f.users.bob });
+      assert.equal(res.status, 200, `${qs} -> ${res.status}`);
+    }
+
+    const page = await app.call("GET", "/bookings?tab=cancelled&page=999", { as: f.users.bob });
+    assert.match(page.text, /Page <!-- -->1<!-- --> of <!-- -->1|Page 1 of 1|No cancelled meetings found/);
+  });
+});
+
+describe("room archiving (R-2)", () => {
+  const archive = (roomId: number, archived: boolean, as = f.users.admin) =>
+    app.call("PATCH", `/api/rooms/${roomId}/archive`, { as, body: { archived } });
+
+  it("only room managers may archive", async () => {
+    for (const user of [f.users.bob, f.users.manager]) {
+      assert.equal((await archive(f.rooms.beta.room_id, true, user)).status, 403);
+    }
+    assert.equal((await db.select().from(room).where(eq(room.room_id, f.rooms.beta.room_id)))[0].archived_at, null);
+  });
+
+  it("validates the body and the room", async () => {
+    assert.equal((await app.call("PATCH", `/api/rooms/${f.rooms.beta.room_id}/archive`, { as: f.users.admin, body: {} })).status, 400);
+    assert.equal((await app.call("PATCH", "/api/rooms/abc/archive", { as: f.users.admin, body: { archived: true } })).status, 400);
+    assert.equal((await archive(99_999, true)).status, 404);
+  });
+
+  it("is refused while meetings are booked in the room", async () => {
+    const res = await archive(f.rooms.alpha.room_id, true);
+
+    assert.equal(res.status, 409);
+    assert.ok((res.json!.conflicts as unknown[]).length > 0);
+  });
+
+  it("an archived room disappears for employees and cannot be booked; restoring brings it back", async () => {
+    const beta = f.rooms.beta.room_id;
+    const listed = async () =>
+      ((await app.call("GET", "/api/rooms", { as: f.users.bob })).json as unknown as { room_id: number }[]).some((r) => r.room_id === beta);
+
+    assert.equal((await archive(beta, true)).status, 200);
+
+    try {
+      assert.equal(await listed(), false);
+
+      const book = await app.call("POST", "/api/meetings/booking", {
+        as: f.users.bob,
+        body: {
+          title: "In an archived room",
+          meeting_date: dateFromToday(23),
+          room_id: beta,
+          participant_count: 2,
+          meeting_type_id: f.types.team,
+          start_time: "10:00",
+          end_time: "11:00",
+        },
+      });
+      assert.equal(book.status, 409, book.text);
+    } finally {
+      assert.equal((await archive(beta, false)).status, 200);
+    }
+
+    assert.equal(await listed(), true);
+  });
 });
 
 describe("ownership of meetings", () => {

@@ -21,6 +21,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Pagination from "@/components/Pagination";
 import {
+  AppBookingPolicyPanel,
+  DEFAULT_GROUP_POLICY,
+  bookingPolicySummary,
+  GroupBookingPolicySection,
+  groupPolicyFormProblem,
+  type AppBookingSettingsView,
+} from "@/components/BookingPolicyFields";
+import type { GroupBookingPolicy, OvernightSetting } from "@/lib/booking-limits";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -29,6 +38,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatDateTime } from "@/lib/format";
 
 export type GroupRow = {
   id: number;
@@ -44,6 +54,10 @@ export type GroupRow = {
     maxDurationMinutes: number | null;
     maxAdvanceDays: number | null;
     maxOccurrences: number | null;
+    overnightPolicy: OvernightSetting;
+    maxBookingsPerDay: number | null;
+    maxBookingsPerWeek: number | null;
+    maxBookingsPerMonth: number | null;
   };
   // Empty = every room.
   roomIds: number[];
@@ -54,15 +68,10 @@ export type RoomOption = { id: number; name: string };
 type EntraSettings = {
   autoSyncEnabled: boolean;
   intervalHours: number;
-  mappings: {
-    entraGroupId: string;
-    entraGroupName: string;
-    groupId: number;
-    groupName: string;
-  }[];
+  defaultGroupId: number | null;
 };
 
-export type MeetingTypeOption = { id: number; name: string };
+export type MeetingTypeOption = { id: number; name: string; priorityRank: number };
 
 type EmployeeRow = {
   employeeId: number;
@@ -109,7 +118,6 @@ type SyncSummary = {
   updated: number;
   linked: number;
   skipped: number;
-  mappedToGroup: number;
   assignedToDefault: number;
   notInDirectory: number;
 };
@@ -120,8 +128,15 @@ const PERMISSION_OPTIONS = [
   { key: "booking.create", label: "Create bookings" },
   { key: "booking.view", label: "View bookings" },
   { key: "booking.cancel", label: "Cancel bookings" },
-  { key: "booking.priority", label: "Booking priority (may preempt)" },
   { key: "booking.recurring", label: "Recurring meetings" },
+  {
+    key: "booking.outranks",
+    label: "Outranks all meetings (a meeting that invites a member always gets the room)",
+  },
+  {
+    key: "booking.protected",
+    label: "Protected meetings (a meeting that invites a member can never be taken over)",
+  },
   { key: "rooms.manage", label: "Room management (add, edit, delete rooms)" },
 ];
 
@@ -138,17 +153,8 @@ const date = (value: string | null) =>
       })
     : "-";
 
-const dateTime = (value: string | null) =>
-  value
-    ? new Date(value).toLocaleString("en-IN", {
-        timeZone: "Asia/Kolkata",
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "-";
+// The same 12-hour format, in the application timezone, as everywhere else.
+const dateTime = (value: string | null) => formatDateTime(value);
 
 async function api<T = unknown>(
   url: string,
@@ -180,26 +186,119 @@ type FormState = {
   isActive: boolean;
   permissions: string[];
   meetingTypeIds: number[];
-  // Blank = no extra limit.
-  maxDuration: string;
-  maxAdvance: string;
-  maxOccurrences: string;
   allRooms: boolean;
   roomIds: number[];
+  // Booking policies (overnight, longest meeting, bookings per day/week/month)
+  // and the values the form opened with, to tell what the admin changed.
+  policy: GroupBookingPolicy;
+  initialPolicy: GroupBookingPolicy;
 };
 
-const limitValue = (text: string) => (text.trim() === "" ? null : Number(text));
+// Groups no longer set days-ahead or series-length limits here; the API still
+// takes them (empty). The booking policies are separate fields below.
+const NO_LIMITS = { maxAdvanceDays: null, maxOccurrences: null };
+
+const policyOf = (g: GroupRow): GroupBookingPolicy => ({
+  overnight: g.settings.overnightPolicy,
+  maxDurationMinutes: g.settings.maxDurationMinutes,
+  maxBookingsPerDay: g.settings.maxBookingsPerDay,
+  maxBookingsPerWeek: g.settings.maxBookingsPerWeek,
+  maxBookingsPerMonth: g.settings.maxBookingsPerMonth,
+});
+
+// A dropdown of rooms with a checkbox each, so an admin can give a group some
+// rooms and not others. "All rooms" (the default) also covers rooms added later;
+// picking a particular room switches it off, ticking it again clears the rest.
+function RoomPicker({
+  rooms,
+  allRooms,
+  roomIds,
+  onChange,
+}: {
+  rooms: RoomOption[];
+  allRooms: boolean;
+  roomIds: number[];
+  onChange: (allRooms: boolean, roomIds: number[]) => void;
+}) {
+  const chosen = rooms.filter((r) => roomIds.includes(r.id));
+
+  const summary = allRooms
+    ? "All rooms (including rooms added later)"
+    : chosen.length === 0
+      ? "Choose rooms"
+      : chosen.length <= 2
+        ? chosen.map((r) => r.name).join(", ")
+        : `${chosen.length} rooms selected`;
+
+  return (
+    <details className="group/rooms relative rounded-md border border-input bg-background shadow-xs">
+      <summary
+        className="flex h-9 cursor-pointer list-none items-center justify-between gap-2 px-3 text-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        data-testid="room-picker"
+      >
+        <span className={allRooms || chosen.length > 0 ? "" : "text-muted-foreground"}>
+          {summary}
+        </span>
+        <span aria-hidden className="text-xs text-muted-foreground transition-transform group-open/rooms:rotate-180">
+          ▾
+        </span>
+      </summary>
+
+      <div className="max-h-56 space-y-2 overflow-y-auto border-t p-3">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <Checkbox
+            checked={allRooms}
+            onCheckedChange={(checked) => onChange(checked === true, [])}
+          />
+          All rooms (including rooms added later)
+        </label>
+
+        {rooms.map((r) => (
+          <label key={r.id} className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={!allRooms && roomIds.includes(r.id)}
+              onCheckedChange={(checked) =>
+                onChange(
+                  false,
+                  checked === true
+                    ? roomIds.includes(r.id)
+                      ? roomIds
+                      : [...roomIds, r.id]
+                    : roomIds.filter((id) => id !== r.id)
+                )
+              }
+            />
+            {r.name}
+          </label>
+        ))}
+
+        {rooms.length === 0 && <p className="text-xs text-gray-500">No rooms exist yet.</p>}
+      </div>
+
+      {!allRooms && roomIds.length === 0 && (
+        <p className="border-t px-3 py-2 text-xs text-amber-700">
+          Choose at least one room, or All rooms.
+        </p>
+      )}
+    </details>
+  );
+}
 
 function GroupsTab({
   groups,
   meetingTypes,
   rooms,
   reload,
+  appSettings,
+  onAppSettings,
 }: {
   groups: GroupRow[];
   meetingTypes: MeetingTypeOption[];
   rooms: RoomOption[];
   reload: () => Promise<void>;
+  // The booking policies, for people who may manage groups.
+  appSettings: AppBookingSettingsView | null;
+  onAppSettings: (settings: AppBookingSettingsView) => void;
 }) {
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
@@ -235,16 +334,23 @@ function GroupsTab({
       permissions: form.permissions,
       meetingTypeIds: form.meetingTypeIds,
       settings: {
-        maxDurationMinutes: limitValue(form.maxDuration),
-        maxAdvanceDays: limitValue(form.maxAdvance),
-        maxOccurrences: limitValue(form.maxOccurrences),
+        ...NO_LIMITS,
+        // Everyone keeps the group's stored duration; only an administrator
+        // (who sees the policy section) sends the new policy fields.
+        maxDurationMinutes: form.policy.maxDurationMinutes,
+        ...(appSettings && {
+          overnightPolicy: form.policy.overnight,
+          maxBookingsPerDay: form.policy.maxBookingsPerDay,
+          maxBookingsPerWeek: form.policy.maxBookingsPerWeek,
+          maxBookingsPerMonth: form.policy.maxBookingsPerMonth,
+        }),
       },
       // An empty list means every room.
       roomIds: form.allRooms ? [] : form.roomIds,
     };
 
     if (!form.allRooms && form.roomIds.length === 0) {
-      toast.error("Tick at least one room, or choose All rooms.");
+      toast.error("Choose at least one room, or choose All rooms.");
 
       return;
     }
@@ -278,15 +384,14 @@ function GroupsTab({
               description: "",
               priority: "5",
               isActive: true,
-              permissions: ["booking.create", "booking.view", "booking.cancel", "booking.priority"],
+              permissions: ["booking.create", "booking.view", "booking.cancel"],
               // A new group starts able to book every type; untick what it
               // must not use.
               meetingTypeIds: meetingTypes.map((t) => t.id),
-              maxDuration: "",
-              maxAdvance: "",
-              maxOccurrences: "",
               allRooms: true,
               roomIds: [],
+              policy: DEFAULT_GROUP_POLICY,
+              initialPolicy: DEFAULT_GROUP_POLICY,
             })
           }
           data-testid="add-group"
@@ -296,12 +401,17 @@ function GroupsTab({
         </Button>
       </div>
 
+      {appSettings && (
+        <AppBookingPolicyPanel settings={appSettings} onSaved={onAppSettings} />
+      )}
+
       <div className="overflow-x-auto rounded-xl border">
-        <table className="w-full min-w-[760px] text-left text-sm">
+        <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase text-gray-500">
             <tr>
               <th className="p-3">Group</th>
               <th className="p-3">Description</th>
+              {appSettings && <th className="p-3">Booking policies</th>}
               <th className="p-3">Employees</th>
               <th className="p-3">Status</th>
               <th className="p-3">Created</th>
@@ -319,6 +429,14 @@ function GroupsTab({
                 >
                   {g.description || "-"}
                 </td>
+                {appSettings && (
+                  <td
+                    className="max-w-[260px] p-3 text-xs text-gray-600"
+                    data-testid={`group-policy-${g.id}`}
+                  >
+                    {bookingPolicySummary(appSettings, policyOf(g))}
+                  </td>
+                )}
                 <td className="p-3" data-testid={`group-count-${g.id}`}>
                   {g.employeeCount}
                 </td>
@@ -341,13 +459,14 @@ function GroupsTab({
                           description: g.description ?? "",
                           priority: String(g.priority),
                           isActive: g.isActive,
-                          permissions: g.permissions,
+                          permissions: g.permissions.filter((key) =>
+                            PERMISSION_OPTIONS.some((o) => o.key === key)
+                          ),
                           meetingTypeIds: g.meetingTypeIds,
-                          maxDuration: g.settings.maxDurationMinutes?.toString() ?? "",
-                          maxAdvance: g.settings.maxAdvanceDays?.toString() ?? "",
-                          maxOccurrences: g.settings.maxOccurrences?.toString() ?? "",
                           allRooms: g.roomIds.length === 0,
                           roomIds: g.roomIds,
+                          policy: policyOf(g),
+                          initialPolicy: policyOf(g),
                         })
                       }
                     >
@@ -371,7 +490,7 @@ function GroupsTab({
 
             {groups.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-10 text-center text-gray-500">
+                <td colSpan={7} className="p-10 text-center text-gray-500">
                   No groups yet. Use Add Group to create the first one.
                 </td>
               </tr>
@@ -414,7 +533,7 @@ function GroupsTab({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="group-priority">Booking priority (1 = highest)</Label>
+                <Label htmlFor="group-priority">Group order (1 = first)</Label>
                 <Input
                   id="group-priority"
                   type="number"
@@ -423,6 +542,11 @@ function GroupsTab({
                   value={form.priority}
                   onChange={(e) => setForm({ ...form, priority: e.target.value })}
                 />
+                <p className="text-xs text-gray-500">
+                  Only decides which group wins when an employee is in several
+                  mapped Entra groups. It does not affect room booking: that is
+                  set by meeting type priority (see the Meeting types tab).
+                </p>
               </div>
 
               <fieldset className="space-y-2">
@@ -469,88 +593,25 @@ function GroupsTab({
                 )}
               </fieldset>
 
-              <fieldset className="space-y-3" data-testid="booking-limits">
-                <legend className="text-sm font-medium">Booking limits</legend>
-                <p className="text-xs text-gray-500">
-                  Leave a box empty for no extra limit. These can only be stricter than the system limits.
-                </p>
-
-                <div className="space-y-1">
-                  <Label htmlFor="limit-duration">Longest meeting (minutes)</Label>
-                  <Input
-                    id="limit-duration"
-                    type="number"
-                    min={15}
-                    max={1440}
-                    placeholder="No limit"
-                    value={form.maxDuration}
-                    onChange={(e) => setForm({ ...form, maxDuration: e.target.value })}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor="limit-advance">Book at most this many days ahead (1 to 92)</Label>
-                  <Input
-                    id="limit-advance"
-                    type="number"
-                    min={1}
-                    max={92}
-                    placeholder="No limit (3 months)"
-                    value={form.maxAdvance}
-                    onChange={(e) => setForm({ ...form, maxAdvance: e.target.value })}
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <Label htmlFor="limit-occurrences">Most occurrences in a recurring series (1 to 12)</Label>
-                  <Input
-                    id="limit-occurrences"
-                    type="number"
-                    min={1}
-                    max={12}
-                    placeholder="No limit (12)"
-                    value={form.maxOccurrences}
-                    onChange={(e) => setForm({ ...form, maxOccurrences: e.target.value })}
-                  />
-                </div>
-              </fieldset>
-
               <fieldset className="space-y-2" data-testid="room-access">
                 <legend className="text-sm font-medium">Rooms this group can book</legend>
 
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={form.allRooms}
-                    onCheckedChange={(checked) =>
-                      setForm({ ...form, allRooms: checked === true })
-                    }
-                  />
-                  All rooms (including rooms added later)
-                </label>
-
-                {!form.allRooms && (
-                  <div className="space-y-2 rounded-lg border p-3">
-                    {rooms.map((r) => (
-                      <label key={r.id} className="flex items-center gap-2 text-sm">
-                        <Checkbox
-                          checked={form.roomIds.includes(r.id)}
-                          onCheckedChange={(checked) =>
-                            setForm({
-                              ...form,
-                              roomIds: toggleIn(form.roomIds, r.id, checked === true),
-                            })
-                          }
-                        />
-                        {r.name}
-                      </label>
-                    ))}
-
-                    {form.roomIds.length === 0 && (
-                      <p className="text-xs text-amber-700">Tick at least one room.</p>
-                    )}
-                  </div>
-                )}
+                <RoomPicker
+                  rooms={rooms}
+                  allRooms={form.allRooms}
+                  roomIds={form.roomIds}
+                  onChange={(allRooms, roomIds) => setForm({ ...form, allRooms, roomIds })}
+                />
               </fieldset>
+
+              {appSettings && (
+                <GroupBookingPolicySection
+                  app={appSettings}
+                  value={form.policy}
+                  initial={form.initialPolicy}
+                  onChange={(policy) => setForm({ ...form, policy })}
+                />
+              )}
 
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox
@@ -565,7 +626,16 @@ function GroupsTab({
           )}
 
           <SheetFooter>
-            <Button disabled={saving || !form?.name.trim()} onClick={submit}>
+            <Button
+              disabled={
+                saving ||
+                !form?.name.trim() ||
+                (appSettings !== null &&
+                  form !== null &&
+                  groupPolicyFormProblem(appSettings, form.policy, form.initialPolicy) !== null)
+              }
+              onClick={submit}
+            >
               {saving ? "Saving..." : "Save group"}
             </Button>
           </SheetFooter>
@@ -744,9 +814,6 @@ function EntraSync({ onSynced }: { onSynced: () => Promise<void> }) {
         <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-green-800" data-testid="sync-summary">
           Done. {summary.fetched} accounts read: {summary.created} added, {summary.linked} linked to
           existing employees, {summary.updated} updated, {summary.skipped} skipped.{" "}
-          {summary.mappedToGroup > 0
-            ? `${summary.mappedToGroup} placed in a group from their Entra group. `
-            : ""}
           {summary.assignedToDefault} placed in the Employee group.
           {summary.notInDirectory > 0
             ? ` ${summary.notInDirectory} synced employees are no longer in the directory (kept).`
@@ -766,17 +833,18 @@ function EntraSync({ onSynced }: { onSynced: () => Promise<void> }) {
 
 /* --------------------------- Entra sync settings --------------------------- */
 
-const INTERVALS = [1, 3, 6, 12, 24, 48, 168];
+const INTERVALS = [
+  { hours: 1, label: "1 hour" },
+  { hours: 24, label: "1 day" },
+  { hours: 168, label: "1 week" },
+  { hours: 720, label: "1 month" },
+];
 
+// Saved as soon as it changes; the manual "Sync from Entra ID" button above
+// works whether or not automatic sync is on.
 function EntraSettingsPanel({ groups }: { groups: GroupRow[] }) {
   const [settings, setSettings] = useState<EntraSettings | null>(null);
   const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [directory, setDirectory] = useState<{ id: string; name: string }[] | null>(null);
-  const [loadingDirectory, setLoadingDirectory] = useState(false);
-  const [entraId, setEntraId] = useState("");
-  const [entraName, setEntraName] = useState("");
-  const [targetGroup, setTargetGroup] = useState("");
 
   useEffect(() => {
     api<{ settings: EntraSettings }>("/api/admin/entra/settings")
@@ -786,71 +854,21 @@ function EntraSettingsPanel({ groups }: { groups: GroupRow[] }) {
 
   if (!settings) return null;
 
-  const change = (next: EntraSettings) => {
+  const save = async (next: EntraSettings) => {
+    const previous = settings;
+
     setSettings(next);
-    setDirty(true);
-  };
-
-  const loadDirectory = async () => {
-    setLoadingDirectory(true);
-
-    try {
-      const data = await api<{ groups: { id: string; name: string }[] }>("/api/admin/entra/groups");
-
-      setDirectory(data.groups);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not load the Entra groups.");
-    } finally {
-      setLoadingDirectory(false);
-    }
-  };
-
-  const addMapping = () => {
-    const target = groups.find((g) => String(g.id) === targetGroup);
-
-    if (!entraId.trim() || !target) return;
-
-    if (settings.mappings.some((m) => m.entraGroupId === entraId.trim().toLowerCase())) {
-      toast.error("That Entra group is already mapped.");
-
-      return;
-    }
-
-    change({
-      ...settings,
-      mappings: [
-        ...settings.mappings,
-        {
-          entraGroupId: entraId.trim().toLowerCase(),
-          entraGroupName: entraName,
-          groupId: target.id,
-          groupName: target.name,
-        },
-      ],
-    });
-    setEntraId("");
-    setEntraName("");
-    setTargetGroup("");
-  };
-
-  const save = async () => {
     setSaving(true);
 
     try {
-      const data = await api<{ settings: EntraSettings }>("/api/admin/entra/settings", "PUT", {
-        autoSyncEnabled: settings.autoSyncEnabled,
-        intervalHours: settings.intervalHours,
-        mappings: settings.mappings.map((m) => ({
-          entraGroupId: m.entraGroupId,
-          entraGroupName: m.entraGroupName,
-          groupId: m.groupId,
-        })),
-      });
+      if (next.defaultGroupId === null) return;
+
+      const data = await api<{ settings: EntraSettings }>("/api/admin/entra/settings", "PUT", next);
 
       setSettings(data.settings);
-      setDirty(false);
       toast.success("Sync settings saved.");
     } catch (err) {
+      setSettings(previous);
       toast.error(err instanceof Error ? err.message : "Could not save the settings.");
     } finally {
       setSaving(false);
@@ -858,143 +876,56 @@ function EntraSettingsPanel({ groups }: { groups: GroupRow[] }) {
   };
 
   return (
-    <details className="rounded-xl border bg-white p-4" data-testid="entra-settings">
-      <summary className="cursor-pointer text-sm font-medium">Sync settings</summary>
+    <div
+      className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border bg-white p-4"
+      data-testid="entra-settings"
+    >
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox
+          checked={settings.autoSyncEnabled}
+          disabled={saving}
+          onCheckedChange={(checked) => void save({ ...settings, autoSyncEnabled: checked === true })}
+        />
+        Sync automatically
+      </label>
 
-      <div className="mt-4 space-y-5">
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={settings.autoSyncEnabled}
-              onCheckedChange={(checked) =>
-                change({ ...settings, autoSyncEnabled: checked === true })
-              }
-            />
-            Sync automatically
-          </label>
-
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Label htmlFor="sync-interval">Every</Label>
-            <select
-              id="sync-interval"
-              className={selectClass}
-              value={settings.intervalHours}
-              disabled={!settings.autoSyncEnabled}
-              onChange={(e) => change({ ...settings, intervalHours: Number(e.target.value) })}
-            >
-              {INTERVALS.map((h) => (
-                <option key={h} value={h}>
-                  {h === 168 ? "week" : h === 1 ? "hour" : h + " hours"}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <p className="text-sm font-medium">Starting group by Entra security group</p>
-            <p className="text-xs text-gray-500">
-              The first time a person is synced and has no group, they start in the mapped group
-              (the highest priority one if they are in several). Nobody who already has a group is
-              moved; everyone else goes to the Employee group.
-            </p>
-          </div>
-
-          {settings.mappings.length > 0 && (
-            <ul className="divide-y rounded-lg border text-sm">
-              {settings.mappings.map((m) => (
-                <li key={m.entraGroupId} className="flex items-center justify-between gap-3 p-2">
-                  <span className="min-w-0">
-                    <span className="font-medium">{m.entraGroupName || m.entraGroupId}</span>
-                    <span className="text-gray-500"> → {m.groupName}</span>
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      change({
-                        ...settings,
-                        mappings: settings.mappings.filter((x) => x.entraGroupId !== m.entraGroupId),
-                      })
-                    }
-                  >
-                    Remove
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="space-y-1">
-              <Label htmlFor="map-entra">Entra group</Label>
-              {directory ? (
-                <select
-                  id="map-entra"
-                  className={selectClass}
-                  value={entraId}
-                  onChange={(e) => {
-                    const found = directory.find((d) => d.id === e.target.value);
-
-                    setEntraId(e.target.value);
-                    setEntraName(found?.name ?? "");
-                  }}
-                >
-                  <option value="">Choose...</option>
-                  {directory.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <Input
-                  id="map-entra"
-                  className="w-72"
-                  placeholder="Entra group object id (GUID)"
-                  value={entraId}
-                  onChange={(e) => setEntraId(e.target.value)}
-                />
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <Label htmlFor="map-group">App group</Label>
-              <select
-                id="map-group"
-                className={selectClass}
-                value={targetGroup}
-                onChange={(e) => setTargetGroup(e.target.value)}
-              >
-                <option value="">Choose...</option>
-                {groups
-                  .filter((g) => g.isActive)
-                  .map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <Button variant="outline" onClick={addMapping} disabled={!entraId.trim() || !targetGroup}>
-              Add
-            </Button>
-
-            {!directory && (
-              <Button variant="ghost" onClick={() => void loadDirectory()} disabled={loadingDirectory}>
-                {loadingDirectory ? "Loading..." : "Load groups from Entra"}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <Button onClick={() => void save()} disabled={!dirty || saving} data-testid="save-entra-settings">
-          {saving ? "Saving..." : "Save sync settings"}
-        </Button>
+      <div className="flex items-center gap-2 text-sm">
+        <Label htmlFor="sync-default-group">New members join</Label>
+        <select
+          id="sync-default-group"
+          className={selectClass}
+          value={settings.defaultGroupId ?? ""}
+          disabled={saving}
+          onChange={(e) => void save({ ...settings, defaultGroupId: Number(e.target.value) })}
+        >
+          {settings.defaultGroupId === null && <option value="">Choose...</option>}
+          {groups
+            .filter((g) => g.isActive || g.id === settings.defaultGroupId)
+            .map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+        </select>
       </div>
-    </details>
+
+      <div className="flex items-center gap-2 text-sm">
+        <Label htmlFor="sync-interval">Every</Label>
+        <select
+          id="sync-interval"
+          className={selectClass}
+          value={settings.intervalHours}
+          disabled={!settings.autoSyncEnabled || saving}
+          onChange={(e) => void save({ ...settings, intervalHours: Number(e.target.value) })}
+        >
+          {INTERVALS.map((i) => (
+            <option key={i.hours} value={i.hours}>
+              {i.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
   );
 }
 
@@ -1285,18 +1216,112 @@ function EmployeesTab({
   );
 }
 
+/* ---------------------------- Meeting types tab --------------------------- */
+
+// How meeting types rank when two bookings want the same room. A smaller number
+// wins; equal numbers are first-come-first-served. Saved per row.
+function MeetingTypesTab({
+  types,
+  onSaved,
+}: {
+  types: MeetingTypeOption[];
+  onSaved: (type: MeetingTypeOption) => void;
+}) {
+  const [draft, setDraft] = useState<Record<number, string>>({});
+  const [savingId, setSavingId] = useState<number | null>(null);
+
+  const valueOf = (t: MeetingTypeOption) => draft[t.id] ?? String(t.priorityRank);
+
+  const save = async (t: MeetingTypeOption) => {
+    setSavingId(t.id);
+
+    try {
+      const data = await api<{ meetingType: { id: number; name: string; priorityRank: number } }>(
+        `/api/admin/meeting-types/${t.id}`,
+        "PATCH",
+        { priorityRank: Number(valueOf(t)) }
+      );
+
+      onSaved({ ...t, priorityRank: data.meetingType.priorityRank });
+      setDraft((current) =>
+        Object.fromEntries(Object.entries(current).filter(([id]) => Number(id) !== t.id))
+      );
+      toast.success(`${t.name} priority saved.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Request failed.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="meeting-type-priorities">
+      <p className="text-sm text-gray-500">
+        When two meetings want the same room, the one whose type has the smaller
+        number gets it (1 is the highest, 5 the lowest). Equal numbers: whoever
+        booked first keeps the room. A change applies at once, to meetings
+        already booked as well as new ones. A meeting with a member of a group
+        that has the Outranks or Protected permission is handled separately.
+      </p>
+
+      <div className="divide-y rounded-lg border bg-white">
+        {types.map((t) => {
+          const changed = valueOf(t) !== String(t.priorityRank);
+
+          return (
+            <div key={t.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <span className="font-medium">{t.name}</span>
+
+              <div className="flex items-center gap-2">
+                <Label htmlFor={`type-rank-${t.id}`} className="text-sm text-gray-500">
+                  Priority
+                </Label>
+                <select
+                  id={`type-rank-${t.id}`}
+                  className={selectClass}
+                  value={valueOf(t)}
+                  onChange={(e) => setDraft({ ...draft, [t.id]: e.target.value })}
+                >
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                      {n === 1 ? " (highest)" : n === 5 ? " (lowest)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  disabled={!changed || savingId === t.id}
+                  onClick={() => save(t)}
+                >
+                  {savingId === t.id ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* --------------------------------- Page ----------------------------------- */
 
 export default function GroupManagement({
   initialGroups,
   meetingTypes,
   rooms,
+  initialAppSettings = null,
 }: {
   initialGroups: GroupRow[];
   meetingTypes: MeetingTypeOption[];
   rooms: RoomOption[];
+  // The application booking policies, for people who may manage groups.
+  initialAppSettings?: AppBookingSettingsView | null;
 }) {
+  const [appSettings, setAppSettings] = useState(initialAppSettings);
   const [groups, setGroups] = useState(initialGroups);
+  const [types, setTypes] = useState(meetingTypes);
 
   const reload = useCallback(async () => {
     try {
@@ -1314,7 +1339,7 @@ export default function GroupManagement({
         <h1 className="text-3xl font-bold">Group Management</h1>
         <p className="mt-2 text-gray-500">
           Manage groups, their permissions, the meeting types and rooms they can
-          book, their booking limits, and who belongs to each group.
+          book, who belongs to each group, and how meeting types rank for rooms.
         </p>
       </div>
 
@@ -1329,14 +1354,34 @@ export default function GroupManagement({
         <TabsList>
           <TabsTrigger value="groups">Groups</TabsTrigger>
           <TabsTrigger value="employees">Employees</TabsTrigger>
+          <TabsTrigger value="meeting-types">Meeting types</TabsTrigger>
         </TabsList>
 
         <TabsContent value="groups" className="pt-4">
-          <GroupsTab groups={groups} meetingTypes={meetingTypes} rooms={rooms} reload={reload} />
+          <GroupsTab
+            groups={groups}
+            meetingTypes={types}
+            rooms={rooms}
+            reload={reload}
+            appSettings={appSettings}
+            onAppSettings={(next) => {
+              setAppSettings(next);
+              void reload();
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="employees" className="pt-4">
           <EmployeesTab groups={groups} reloadGroups={reload} />
+        </TabsContent>
+
+        <TabsContent value="meeting-types" className="pt-4">
+          <MeetingTypesTab
+            types={types}
+            onSaved={(saved) =>
+              setTypes((current) => current.map((t) => (t.id === saved.id ? saved : t)))
+            }
+          />
         </TabsContent>
       </Tabs>
     </div>

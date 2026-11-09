@@ -1,0 +1,2 @@
+ALTER TABLE "entra_sync_settings" ADD COLUMN "default_group_id" integer;--> statement-breakpoint
+ALTER TABLE "entra_sync_settings" ADD CONSTRAINT "entra_sync_settings_default_group_id_groups_id_fk" FOREIGN KEY ("default_group_id") REFERENCES "public"."groups"("id") ON DELETE set null ON UPDATE no action;

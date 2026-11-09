@@ -8,7 +8,6 @@ import {
   type BookingPolicy,
 } from "@/lib/services/booking-policy.service";
 import { entraSettingsSchema, createGroupSchema, updateGroupSchema } from "@/lib/validations/group.validator";
-import { fetchEntraGroups } from "@/lib/services/entra-sync.service";
 
 const open: BookingPolicy = { groupId: 1, canBookRecurring: true, ...NO_LIMITS };
 
@@ -117,54 +116,20 @@ describe("group settings requests", () => {
 });
 
 describe("Entra settings request", () => {
-  const guid = "11111111-1111-4111-8111-111111111111";
+  it("accepts each interval preset", () => {
+    for (const intervalHours of [1, 24, 168, 720]) {
+      assert.equal(entraSettingsSchema.parse({ autoSyncEnabled: true, defaultGroupId: 1, intervalHours }).intervalHours, intervalHours);
+    }
 
-  it("accepts a valid schedule and mapping, normalising the GUID", () => {
-    const parsed = entraSettingsSchema.parse({
-      autoSyncEnabled: true,
-      intervalHours: 6,
-      mappings: [{ entraGroupId: guid.toUpperCase(), entraGroupName: " Staff ", groupId: 2 }],
-    });
-
-    assert.equal(parsed.mappings[0].entraGroupId, guid);
-    assert.equal(parsed.mappings[0].entraGroupName, "Staff");
+    assert.equal(entraSettingsSchema.parse({ autoSyncEnabled: false, defaultGroupId: 1, intervalHours: 24 }).autoSyncEnabled, false);
   });
 
-  it("rejects a bad interval, a bad GUID and a group mapped twice", () => {
-    const base = { autoSyncEnabled: true, intervalHours: 6, mappings: [] as unknown[] };
+  it("rejects anything that is not one of the presets", () => {
+    for (const intervalHours of [0, 6, 169, 721, "24"]) {
+      assert.equal(entraSettingsSchema.safeParse({ autoSyncEnabled: true, defaultGroupId: 1, intervalHours }).success, false);
+    }
 
-    assert.equal(entraSettingsSchema.safeParse({ ...base, intervalHours: 0 }).success, false);
-    assert.equal(entraSettingsSchema.safeParse({ ...base, intervalHours: 169 }).success, false);
-    assert.equal(entraSettingsSchema.safeParse({ ...base, mappings: [{ entraGroupId: "nope", groupId: 1 }] }).success, false);
-    assert.equal(
-      entraSettingsSchema.safeParse({
-        ...base,
-        mappings: [
-          { entraGroupId: guid, groupId: 1 },
-          { entraGroupId: guid.toUpperCase(), groupId: 2 },
-        ],
-      }).success,
-      false
-    );
-  });
-});
-
-describe("reading Entra security groups", () => {
-  it("lists them by name, dropping malformed entries", async () => {
-    const env = { ENTRA_TENANT_ID: "t", ENTRA_CLIENT_ID: "c", ENTRA_CLIENT_SECRET: "s" };
-    const doFetch = (async (url: string) =>
-      url.includes("login.microsoftonline.com")
-        ? Response.json({ access_token: "tok" })
-        : Response.json({
-            value: [
-              { id: "22222222-2222-4222-8222-222222222222", displayName: "Zebra" },
-              { id: "11111111-1111-4111-8111-111111111111", displayName: "Alpha" },
-              { id: "bad", displayName: "Broken" },
-            ],
-          })) as unknown as typeof fetch;
-
-    const groups = await fetchEntraGroups(env, doFetch);
-
-    assert.deepEqual(groups.map((g) => g.name), ["Alpha", "Zebra"]);
+    assert.equal(entraSettingsSchema.safeParse({ defaultGroupId: 1, intervalHours: 24 }).success, false);
+    assert.equal(entraSettingsSchema.safeParse({ autoSyncEnabled: true, intervalHours: 24 }).success, false, "a default group is required");
   });
 });

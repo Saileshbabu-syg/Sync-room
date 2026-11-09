@@ -66,7 +66,7 @@ describe("invitation e-mail", () => {
 
     assert.equal(subject, "Meeting Invitation - Budget review");
 
-    for (const value of ["Budget review", "Bob Employee", "Alpha", "2031-03-05", "10:00:00", "11:00:00"]) {
+    for (const value of ["Budget review", "Bob Employee", "Alpha", "2031-03-05", "10:00 AM", "11:00 AM"]) {
       assert.ok(html.includes(value), `html: ${value}`);
       assert.ok(text.includes(value), `text: ${value}`);
     }

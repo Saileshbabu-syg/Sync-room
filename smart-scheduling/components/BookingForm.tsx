@@ -11,7 +11,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import TimeSelect from "@/components/TimeSelect";
 import { focusNextOnEnter } from "@/lib/focusNextOnEnter";
+import { formatTime } from "@/lib/format";
 import { usePersistedForm } from "@/lib/hooks/usePersistedForm";
+import { nowInAppTimezone } from "@/lib/time";
+import {
+  MIN_DURATION_MESSAGE,
+  bookingWindowEnd,
+  isLongEnough,
+} from "@/lib/validations/date-time";
 
 const EMPTY_FORM = {
   meetingDate: "",
@@ -31,17 +38,11 @@ export default function BookingForm() {
     EMPTY_FORM
   );
 
-  // Today's date
-const today = new Date();
+  // Today's date in the application's time zone (the server's rule), not the
+  // browser's: the bookable range is today .. today + 3 months.
+const minDate = nowInAppTimezone().date;
 
-// Minimum selectable date (Today)
-const minDate = today.toISOString().split("T")[0];
-
-// Maximum selectable date (Today + 3 Months)
-const maxDateObject = new Date(today);
-maxDateObject.setMonth(maxDateObject.getMonth() + 3);
-
-const maxDate = maxDateObject.toISOString().split("T")[0];
+const maxDate = bookingWindowEnd(minDate);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement>
@@ -72,12 +73,10 @@ const maxDate = maxDateObject.toISOString().split("T")[0];
   return;
 }
 
-    // Validate meeting date
-const selectedDate = new Date(formData.meetingDate);
-
+    // Validate meeting date ("YYYY-MM-DD" strings compare in date order)
 if (
-  selectedDate < new Date(minDate) ||
-  selectedDate > new Date(maxDate)
+  formData.meetingDate < minDate ||
+  formData.meetingDate > maxDate
 ) {
   toast.warning(
     "Meeting date must be between today and the next 3 months."
@@ -85,45 +84,35 @@ if (
   return;
 }
 
-// Validate Start Time (Minimum 15 minutes from now)
-const now = new Date();
+// Validate Start Time (Minimum 15 minutes from now), on the application's
+// clock: date and time as the server sees them.
+const nowApp = nowInAppTimezone();
 
-const todayString = now.toISOString().split("T")[0];
+if (formData.meetingDate === nowApp.date) {
 
-if (formData.meetingDate === todayString) {
-
-  // Add 15 minutes to current time
-  now.setMinutes(now.getMinutes() + 15);
+  // 15 minutes from now; past midnight nothing is left today.
+  const lead = nowInAppTimezone(new Date(Date.now() + 15 * 60_000));
 
   const minimumTime =
-    now.getHours().toString().padStart(2, "0") +
-    ":" +
-    now.getMinutes().toString().padStart(2, "0");
+    lead.date === nowApp.date ? lead.time.slice(0, 5) : "24:00";
 
   if (formData.startTime < minimumTime) {
     toast.warning(
-      `Start time must be at least 15 minutes after the current time (${minimumTime}).`
+      `Start time must be at least 15 minutes after the current time (${
+        minimumTime === "24:00" ? "12:00 AM" : formatTime(minimumTime)
+      }).`
     );
     return;
   }
 }
     // Validate meeting duration
 
-const start = new Date(
-  `${formData.meetingDate}T${formData.startTime}`
-);
-
-const end = new Date(
-  `${formData.meetingDate}T${formData.endTime}`
-);
-
-const duration =
-  (end.getTime() - start.getTime()) / 60000;
-
-if (duration < 15) {
-  toast.warning(
-    "Meeting duration must be at least 15 minutes."
-  );
+// Same rule as the server (lib/validations/date-time).
+if (
+  formData.endTime <= formData.startTime ||
+  !isLongEnough(formData.startTime, formData.endTime)
+) {
+  toast.warning(MIN_DURATION_MESSAGE);
   return;
 }
 

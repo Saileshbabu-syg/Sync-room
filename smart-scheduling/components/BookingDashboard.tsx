@@ -1,7 +1,9 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Download } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, Download, Loader2 } from "lucide-react";
+import { DropdownMenu } from "radix-ui";
+import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Pagination from "@/components/Pagination";
+import { StatusBadge } from "@/components/StatusBadge";
 import { invitationCategory } from "@/lib/constants";
+import { formatDate, formatTime, formatTimeRange } from "@/lib/format";
 import { addDays } from "@/lib/report-period";
 
 type Option = { id: number; name: string };
@@ -26,9 +30,33 @@ type Metrics = {
   confirmedBookings: number;
   cancelledBookings: number;
   bumpedBookings: number;
+  pendingBookings: number;
   totalMeetingHours: number;
   activeRooms: number;
 };
+
+const CARDS: { key: keyof Metrics; label: string }[] = [
+  { key: "totalBookings", label: "Total Bookings" },
+  { key: "confirmedBookings", label: "Confirmed Bookings" },
+  { key: "pendingBookings", label: "Pending Reschedule" },
+  { key: "cancelledBookings", label: "Cancelled Bookings" },
+  { key: "bumpedBookings", label: "Replaced Bookings" },
+  { key: "totalMeetingHours", label: "Total Meeting Hours" },
+  { key: "activeRooms", label: "Active Meeting Rooms" },
+];
+
+type ReportFormat = "csv" | "xlsx" | "pdf";
+
+const FORMATS: [ReportFormat, string][] = [
+  ["xlsx", "Excel (.xlsx)"],
+  ["csv", "CSV (.csv)"],
+  ["pdf", "PDF (.pdf)"],
+];
+
+// filename="booking-report_2031-03-05.csv" from Content-Disposition.
+function attachmentName(header: string | null): string | null {
+  return header?.match(/filename="([^"]+)"/)?.[1] ?? null;
+}
 
 type Participant = {
   employeeId: number;
@@ -90,14 +118,6 @@ const PAGE_SIZE = 10;
 
 const selectClass =
   "h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50";
-
-const STATUS_STYLE: Record<number, string> = {
-  1: "bg-blue-100 text-blue-800",
-  2: "bg-green-100 text-green-800",
-  3: "bg-gray-200 text-gray-700",
-  4: "bg-amber-100 text-amber-800",
-  6: "bg-orange-100 text-orange-800",
-};
 
 const RESPONSE_STYLE: Record<string, { label: string; className: string }> = {
   ACCEPTED: { label: "Accepted", className: "bg-green-100 text-green-800" },
@@ -169,7 +189,7 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
   const [statusId, setStatusId] = useState("");
   const [sort, setSort] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [downloading, setDownloading] = useState<ReportFormat | null>(null);
   const [open, setOpen] = useState<Set<number>>(new Set());
 
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -206,7 +226,16 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
     return p;
   }, [mode, date, rangeStart, rangeEnd, query, groupId, roomId, statusId, sort]);
 
+  // The request in flight. Starting a new one (filters changed, Retry) aborts
+  // it, so a slow earlier response can never overwrite a newer result.
+  const request = useRef<AbortController | null>(null);
+
   const load = useCallback(async () => {
+    request.current?.abort();
+
+    const controller = new AbortController();
+
+    request.current = controller;
     setLoading(true);
     setError(null);
 
@@ -216,8 +245,12 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
       params.set("page", String(page));
       params.set("pageSize", String(PAGE_SIZE));
 
-      const response = await fetch(`/api/dashboard/bookings?${params}`);
+      const response = await fetch(`/api/dashboard/bookings?${params}`, {
+        signal: controller.signal,
+      });
       const data = await response.json().catch(() => ({}));
+
+      if (controller.signal.aborted) return;
 
       if (!response.ok) {
         throw new Error(data.message ?? "Could not load bookings.");
@@ -227,10 +260,22 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
       setRows(data.rows);
       setTotal(data.total);
       setOpen(new Set());
+
+      // Fewer results than before (e.g. a booking was cancelled meanwhile):
+      // go to the last page that still exists instead of an empty one.
+      const lastPage = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+
+      if (page > lastPage) setPage(lastPage);
     } catch (err) {
+      if (controller.signal.aborted) return;
+
+      // Nothing stale is left on screen looking current.
+      setMetrics(null);
+      setRows([]);
+      setTotal(0);
       setError(err instanceof Error ? err.message : "Could not load bookings.");
     } finally {
-      setLoading(false);
+      if (request.current === controller) setLoading(false);
     }
   }, [filterParams, page]);
 
@@ -238,6 +283,17 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  // The report download in progress, if any (cancelled on leaving the page).
+  const report = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      request.current?.abort();
+      report.current?.abort();
+    },
+    []
+  );
 
   const reset = (action: () => void) => {
     action();
@@ -279,30 +335,61 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
       return next;
     });
 
-  const download = (format: "csv" | "xlsx" | "pdf") => {
-    setMenuOpen(false);
+  // Fetched rather than opened as a link, so a refusal (too many rows, rate
+  // limit, permission withdrawn) is shown as a message instead of a broken
+  // file, and the user sees when it is being prepared and when it is done.
+  // The server caps the rows, which bounds what is held in memory here.
+  const download = async (format: ReportFormat) => {
+    if (report.current) return;
 
-    // A plain link click: the browser streams the file to disk, nothing is
-    // buffered in the page.
-    const link = document.createElement("a");
+    const controller = new AbortController();
+    const label = FORMATS.find(([f]) => f === format)?.[1] ?? format;
 
-    link.href = `/api/dashboard/report?${filterParams}&format=${format}`;
-    link.download = "";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    report.current = controller;
+    setDownloading(format);
+
+    const toastId = toast.loading(`Preparing the ${label} report...`, {
+      action: { label: "Cancel", onClick: () => controller.abort() },
+    });
+
+    try {
+      const response = await fetch(`/api/dashboard/report?${filterParams}&format=${format}`, {
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+
+        throw new Error(data.message ?? "The report could not be created.");
+      }
+
+      const blob = await response.blob();
+      const name = attachmentName(response.headers.get("content-disposition")) ?? `booking-report.${format}`;
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = href;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 10_000);
+
+      toast.success("Report downloaded.", { id: toastId, description: name, action: undefined });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        toast.info("Download cancelled.", { id: toastId, action: undefined });
+      } else {
+        toast.error(err instanceof Error ? err.message : "The report could not be created.", {
+          id: toastId,
+          action: undefined,
+        });
+      }
+    } finally {
+      report.current = null;
+      setDownloading(null);
+    }
   };
-
-  const cards: { label: string; value: string | number }[] = metrics
-    ? [
-        { label: "Total Bookings", value: metrics.totalBookings },
-        { label: "Confirmed Bookings", value: metrics.confirmedBookings },
-        { label: "Cancelled Bookings", value: metrics.cancelledBookings },
-        { label: "Replaced Bookings", value: metrics.bumpedBookings },
-        { label: "Total Meeting Hours", value: metrics.totalMeetingHours },
-        { label: "Active Meeting Rooms", value: metrics.activeRooms },
-      ]
-    : [];
 
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -316,38 +403,44 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
           </p>
         </div>
 
-        <div className="relative">
-          <Button size="lg" onClick={() => setMenuOpen((value) => !value)} aria-expanded={menuOpen}>
-            <Download className="mr-2 h-4 w-4" />
-            Download Report
-          </Button>
+        {/* Radix menu: Escape and a click outside close it, arrow keys move
+            between formats, focus returns to the button. */}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <Button size="lg" disabled={downloading !== null} data-testid="download-report">
+              {downloading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="mr-2 h-4 w-4" aria-hidden />
+              )}
+              {downloading ? "Preparing report..." : "Download Report"}
+            </Button>
+          </DropdownMenu.Trigger>
 
-          {menuOpen && (
-            <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-lg border bg-white shadow-lg">
-              {(
-                [
-                  ["xlsx", "Excel (.xlsx)"],
-                  ["csv", "CSV (.csv)"],
-                  ["pdf", "PDF (.pdf)"],
-                ] as const
-              ).map(([format, text]) => (
-                <button
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={8}
+              className="z-50 w-48 overflow-hidden rounded-lg border bg-white p-1 shadow-lg"
+            >
+              {FORMATS.map(([format, text]) => (
+                <DropdownMenu.Item
                   key={format}
-                  className="block w-full px-4 py-2 text-left text-sm hover:bg-slate-100"
-                  onClick={() => download(format)}
+                  onSelect={() => void download(format)}
+                  className="cursor-pointer rounded-md px-3 py-2 text-sm outline-none data-[highlighted]:bg-slate-100"
                 >
                   {text}
-                </button>
+                </DropdownMenu.Item>
               ))}
-            </div>
-          )}
-        </div>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
 
       {/* Period toolbar */}
       <div className="space-y-3 rounded-xl border bg-slate-50 p-4">
         <Tabs value={mode} onValueChange={(value) => reset(() => setMode(value as Mode))}>
-          <TabsList>
+          <TabsList className="h-auto flex-wrap">
             <TabsTrigger value="day">Daily</TabsTrigger>
             <TabsTrigger value="week">Weekly</TabsTrigger>
             <TabsTrigger value="month">Monthly</TabsTrigger>
@@ -410,16 +503,31 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
         </div>
       )}
 
-      {/* Cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        {(metrics ? cards : Array.from({ length: 6 }, () => ({ label: "...", value: "-" }))).map(
-          (card, i) => (
-            <div key={i} className="rounded-xl border bg-white p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wide text-gray-500">{card.label}</p>
-              <p className="mt-2 text-2xl font-bold">{card.value}</p>
-            </div>
-          )
-        )}
+      {/* Cards: a placeholder while the first figures load, the previous
+          figures dimmed while new ones load, and "unavailable" (not 0) when
+          loading failed - an error never looks like an empty period. */}
+      <div
+        className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7"
+        aria-busy={loading}
+      >
+        {CARDS.map((card) => (
+          <div key={card.key} className="rounded-xl border bg-white p-4 shadow-sm" data-testid={`kpi-${card.key}`}>
+            <p className="text-xs uppercase tracking-wide text-gray-500">{card.label}</p>
+
+            {metrics ? (
+              <p className={`mt-2 text-2xl font-bold transition-opacity ${loading ? "opacity-50" : ""}`}>
+                {metrics[card.key]}
+              </p>
+            ) : loading ? (
+              <div className="mt-3 h-7 w-16 animate-pulse rounded bg-slate-200" aria-hidden />
+            ) : (
+              <p className="mt-2 text-2xl font-bold text-gray-300" title="Could not be loaded">
+                <span aria-hidden>-</span>
+                <span className="sr-only">Unavailable</span>
+              </p>
+            )}
+          </div>
+        ))}
       </div>
 
       {/* Filters */}
@@ -427,6 +535,7 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
         <Input
           className="max-w-xs"
           placeholder="Search organizer, email or title"
+          maxLength={100}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search bookings"
@@ -517,13 +626,11 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
                       </td>
                       <td className="max-w-[220px] truncate p-3" title={r.title}>{r.title}</td>
                       <td className="p-3">{r.roomName}</td>
-                      <td className="whitespace-nowrap p-3">{r.meetingDate}</td>
-                      <td className="p-3">{r.startTime.slice(0, 5)}</td>
-                      <td className="p-3">{r.endTime.slice(0, 5)}</td>
+                      <td className="whitespace-nowrap p-3">{formatDate(r.meetingDate)}</td>
+                      <td className="p-3">{formatTime(r.startTime)}</td>
+                      <td className="p-3">{formatTime(r.endTime)}</td>
                       <td className="p-3">
-                        <Badge className={STATUS_STYLE[r.statusId] ?? ""} variant="outline">
-                          {r.status}
-                        </Badge>
+                        <StatusBadge statusId={r.statusId} />
                       </td>
                     </tr>
 
@@ -552,12 +659,10 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
                                 <div><dt className="inline font-medium">Meeting title: </dt><dd className="inline">{r.bumped.title}</dd></div>
                                 <div><dt className="inline font-medium">Meeting type: </dt><dd className="inline">{r.bumped.meetingType}</dd></div>
                                 <div><dt className="inline font-medium">Room: </dt><dd className="inline">{r.bumped.roomName}</dd></div>
-                                <div><dt className="inline font-medium">Date: </dt><dd className="inline">{r.bumped.meetingDate}</dd></div>
+                                <div><dt className="inline font-medium">Date: </dt><dd className="inline">{formatDate(r.bumped.meetingDate)}</dd></div>
                                 <div>
                                   <dt className="inline font-medium">Time: </dt>
-                                  <dd className="inline">
-                                    {r.bumped.startTime.slice(0, 5)} - {r.bumped.endTime.slice(0, 5)}
-                                  </dd>
+                                  <dd className="inline">{formatTimeRange(r.bumped.startTime, r.bumped.endTime)}</dd>
                                 </div>
                                 <div className="sm:col-span-2">
                                   <dt className="inline font-medium">Reason: </dt>
@@ -597,10 +702,10 @@ export default function BookingDashboard({ today, groups, rooms, statuses }: Pro
                                     </div>
                                     <div><dt className="inline font-medium">Meeting type: </dt><dd className="inline">{o.meetingType}</dd></div>
                                     <div><dt className="inline font-medium">Room: </dt><dd className="inline">{o.roomName}</dd></div>
-                                    <div><dt className="inline font-medium">Date: </dt><dd className="inline">{o.meetingDate}</dd></div>
+                                    <div><dt className="inline font-medium">Date: </dt><dd className="inline">{formatDate(o.meetingDate)}</dd></div>
                                     <div>
                                       <dt className="inline font-medium">Time: </dt>
-                                      <dd className="inline">{o.startTime.slice(0, 5)} - {o.endTime.slice(0, 5)}</dd>
+                                      <dd className="inline">{formatTimeRange(o.startTime, o.endTime)}</dd>
                                     </div>
                                   </dl>
 

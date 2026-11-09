@@ -117,7 +117,15 @@ describe("outgoing e-mail through the real SMTP path (F-04, F-10)", () => {
     });
     const id = created.json!.meetingId as number;
 
-    await waitForMail(3);
+    // Wait for THIS booking's confirmation, not for a message count: earlier
+    // tests' mail may still be arriving.
+    const deadline = Date.now() + 8000;
+    while (
+      !app.sink.messages.some((m) => /Subject: Meeting Scheduled - Edit me/.test(m.data)) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
     const before = app.sink.messages.length;
 
     const edited = await app.call("PATCH", `/api/meetings/edit/${id}`, {
@@ -127,8 +135,8 @@ describe("outgoing e-mail through the real SMTP path (F-04, F-10)", () => {
     assert.equal(edited.status, 200);
 
     const messages = await waitForMail(before + 1);
-    const last = messages[messages.length - 1];
-    assert.match(last.data, /Meeting Updated/);
+    const updated = messages.slice(before).find((m) => /Meeting Updated/.test(m.data));
+    assert.ok(updated, "an 'updated' e-mail was sent for the edit");
 
     const crlf = await app.call("POST", "/api/meetings/booking", {
       as: f.users.bob,

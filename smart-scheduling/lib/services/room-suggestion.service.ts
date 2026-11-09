@@ -1,4 +1,4 @@
-import { and, eq, exists, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, exists, notInArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 
@@ -61,8 +61,9 @@ export async function getAvailableRooms(
       // Capacity is not a filter: a room smaller than the headcount is still
       // offered, and the booking screen warns the organizer instead.
 
-      // Room should be Available
+      // Room should be Available, and not archived
       && roomDetails.availabilityStatusId === AVAILABILITY_STATUS.AVAILABLE
+      && roomDetails.archived_at === null
   );
 
 }
@@ -94,7 +95,8 @@ export async function isRoomAvailable(
   // Room must be Available
 
   if (
-    roomDetails.availabilityStatusId !== AVAILABILITY_STATUS.AVAILABLE
+    roomDetails.availabilityStatusId !== AVAILABILITY_STATUS.AVAILABLE ||
+    roomDetails.archived_at !== null
   ) {
 
     return {
@@ -167,7 +169,7 @@ export async function getRoomSchedule(
       startTime: meeting.start_time,
       endTime: meeting.end_time,
       status: meetingStatuses.meetingStatusName,
-      // Group priority snapshot of the booking (1 = highest).
+      // Rank of the booking: its meeting type, or Leadership (1 = highest).
       priorityRank: bookedPriority,
       meetingTypeName: meetingTypes.meetingTypeName,
       organizerEmployeeId: meeting.organizerEmployeeId,
@@ -207,7 +209,9 @@ export async function getRoomSchedule(
           SLOT_FREE_STATUSES
         )
       )
-    );
+    )
+    // Earliest first: the form lists these slots as the day's timeline.
+    .orderBy(asc(meeting.start_time), asc(meeting.meeting_id));
 
   const visible =
     // If selected date is today, remove meetings that have already ended.

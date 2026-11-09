@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 
 import {
   Select,
@@ -38,6 +39,7 @@ import { formKeyNavigation } from "@/lib/focusNextOnEnter";
 import { toast } from "sonner";
 import { isSlotStartInPast, nowInAppTimezone } from "@/lib/time";
 import { addDays } from "@/lib/report-period";
+import { formatDuration, formatTimeRange } from "@/lib/format";
 
 // Occurrence dates of a recurring series, and which of them the room cannot
 // take. Shown in a dialog when a series is rejected.
@@ -154,19 +156,69 @@ export default function MeetingDetailsForm({
     maxDurationMinutes: number | null;
     maxAdvanceDays: number | null;
     maxOccurrences: number | null;
+    // The effective booking policies (application and group combined).
+    allowOvernight: boolean;
+    maxBookingsPerDay: number | null;
+    maxBookingsPerWeek: number | null;
+    maxBookingsPerMonth: number | null;
   }>({
     canBookRecurring: true,
     maxDurationMinutes: null,
     maxAdvanceDays: null,
     maxOccurrences: null,
+    allowOvernight: false,
+    maxBookingsPerDay: null,
+    maxBookingsPerWeek: null,
+    maxBookingsPerMonth: null,
   });
 
+  // The restrictions worth telling the person about, one line each.
+  const policyNotes = [
+    ...(policy.allowOvernight ? [] : ["Overnight bookings are not permitted for your group."]),
+    ...(policy.maxDurationMinutes !== null
+      ? [`Maximum meeting duration: ${formatDuration(policy.maxDurationMinutes)}.`]
+      : []),
+    ...(policy.maxBookingsPerDay !== null
+      ? [`Daily booking limit for your group: ${policy.maxBookingsPerDay}.`]
+      : []),
+    ...(policy.maxBookingsPerWeek !== null
+      ? [`Weekly booking limit for your group (Monday to Sunday): ${policy.maxBookingsPerWeek}.`]
+      : []),
+    ...(policy.maxBookingsPerMonth !== null
+      ? [`Monthly booking limit for your group: ${policy.maxBookingsPerMonth}.`]
+      : []),
+  ];
+
+  // Online Teams Meeting: off unless the organizer asks for it.
+  const [onlineMeeting, setOnlineMeeting] = useState(false);
+  const [onlineAvailable, setOnlineAvailable] = useState(false);
+
+  // Whether a priority guest is invited (the organizer included): a member of a
+  // group that outranks all meetings, e.g. Leadership. Such a
+  // meeting outranks every meeting type. Advisory: the server decides again.
+  const [priorityGuest, setPriorityGuest] = useState(false);
+
+  const invitedKey = [...attendeeIds, ...optionalIds].sort((a, b) => a - b).join(",");
+
   useEffect(() => {
-    fetch("/api/booking-policy")
+    let cancelled = false;
+
+    fetch(`/api/booking-policy?attendees=${invitedKey}`)
       .then((res) => res.json())
-      .then((data) => data.policy && setPolicy(data.policy))
+      .then((data) => {
+        if (cancelled) return;
+
+        if (data.policy) setPolicy(data.policy);
+        setPriorityGuest(data.priorityGuest === true);
+
+        setOnlineAvailable(data.onlineMeetingAvailable === true);
+      })
       .catch(() => undefined);
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [invitedKey]);
 
   const occurrenceLimit = Math.min(MAX_OCCURRENCES, policy.maxOccurrences ?? MAX_OCCURRENCES);
 
@@ -181,6 +233,11 @@ export default function MeetingDetailsForm({
 
   const [occurrenceCount, setOccurrenceCount] =
     useState("2");
+
+  // "Every N weeks" (weekly series only) and an optional end-by date; the
+  // server computes the dates (lib/recurrence), the form only collects them.
+  const [intervalWeeks, setIntervalWeeks] = useState("1");
+  const [endDate, setEndDate] = useState("");
 
   useEffect(() => {
     fetch("/api/meeting-types")
@@ -198,6 +255,8 @@ export default function MeetingDetailsForm({
 
   useEffect(() => {
     if (!meetingDate || !/^\d{4}-\d{2}-\d{2}$/.test(meetingDate)) {
+      // No valid date, so no schedule to show (the effect re-runs on change).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBookedSlots([]);
       return;
     }
@@ -228,6 +287,10 @@ export default function MeetingDetailsForm({
   const [seriesConflict, setSeriesConflict] =
     useState<SeriesConflict | null>(null);
 
+  const isWeeklyFrequency =
+    frequencies.find((f) => String(f.frequency_id) === frequencyId)
+      ?.frequency_name === "WEEKLY";
+
   const isDailyFrequency =
     frequencies.find((f) => String(f.frequency_id) === frequencyId)
       ?.frequency_name === "DAILY";
@@ -253,7 +316,7 @@ export default function MeetingDetailsForm({
             (Number(endTime.slice(0, 2)) * 60 + Number(endTime.slice(3, 5))) -
               (Number(startTime.slice(0, 2)) * 60 + Number(startTime.slice(3, 5))) >
               policy.maxDurationMinutes
-          ? `Your group can book meetings of at most ${policy.maxDurationMinutes} minutes.`
+          ? `Meetings can be at most ${formatDuration(policy.maxDurationMinutes)} for your group.`
           : meetingDate &&
               policy.maxAdvanceDays !== null &&
               meetingDate > addDays(todayDate, policy.maxAdvanceDays)
@@ -278,10 +341,15 @@ export default function MeetingDetailsForm({
         )
       : [];
 
-  // The chosen type outranks a booking when its rank number is lower. Those
-  // bookings are listed apart: the room can be taken over from them.
+  // Same rule as the server: the chosen meeting type must have a strictly
+  // higher rank (a smaller number) than the booking, unless a priority guest is
+  // invited (outranks everything), and the booking must not have started.
+  // Those bookings are listed apart: the room can be taken over from them.
   const isLowerPriority = (slot: BookedSlot) =>
-    selectedType !== undefined && slot.priorityRank > selectedType.priorityRank;
+    (priorityGuest ||
+      (selectedType !== undefined &&
+        slot.priorityRank > selectedType.priorityRank)) &&
+    !isSlotStartInPast(meetingDate, slot.startTime.slice(0, 5));
 
   const takeoverSlots = bookedSlots.filter(isLowerPriority);
   const fixedSlots = bookedSlots.filter((slot) => !isLowerPriority(slot));
@@ -347,6 +415,10 @@ const bookAvailableDates = async () => {
 
     setSeriesConflict(null);
     toast.success(`${result.data.length} meetings scheduled.`);
+
+    if (result.online?.warning) {
+      toast.warning(result.online.warning, { duration: 15000 });
+    }
 
     finishBooking();
   } catch (error) {
@@ -435,8 +507,13 @@ const handleSubmit = async (takeoverConfirmed = false) => {
       end_time: endTime,
       frequency_id: Number(frequencyId),
       occurrence_count: Number(occurrenceCount),
+      ...(isWeeklyFrequency && Number(intervalWeeks) > 1
+        ? { interval: Number(intervalWeeks) }
+        : {}),
+      ...(endDate ? { end_date: endDate } : {}),
       participantEmployeeIds,
       optionalParticipantEmployeeIds,
+      ...(onlineMeeting && onlineAvailable ? { onlineMeeting: true } : {}),
     };
 
     const response = isRecurring && policy.canBookRecurring
@@ -477,6 +554,8 @@ const handleSubmit = async (takeoverConfirmed = false) => {
             participantEmployeeIds,
 
             optionalParticipantEmployeeIds,
+
+            ...(onlineMeeting && onlineAvailable ? { onlineMeeting: true } : {}),
           }),
         });
 
@@ -505,6 +584,12 @@ if (isRecurring) {
   toast.success(
     `${result.data.length} meetings scheduled.`
   );
+}
+
+// Teams failed but the booking stands as a normal meeting: say so (the
+// details page offers a retry).
+if (result.online?.warning) {
+  toast.warning(result.online.warning, { duration: 15000 });
 }
 
 finishBooking();
@@ -704,6 +789,18 @@ finishBooking();
           </p>
         )}
 
+        {policyNotes.length > 0 && (
+          <ul
+            className="list-disc space-y-1 rounded-md border bg-slate-50 py-3 pl-8 pr-3 text-xs text-gray-600 md:col-span-2"
+            aria-label="Booking policies that apply to you"
+            data-testid="booking-policy-notes"
+          >
+            {policyNotes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        )}
+
       </div>
 
       {/* Booked slots for the chosen date. Bookings the chosen meeting type
@@ -769,7 +866,7 @@ finishBooking();
                     className="rounded-lg bg-red-50 px-4 py-3 text-red-700"
                   >
                     <p className="font-semibold">
-                      {slot.startTime.slice(0, 5)} - {slot.endTime.slice(0, 5)}
+                      {formatTimeRange(slot.startTime, slot.endTime)}
                     </p>
                     <p className="text-sm">
                       {slot.title} · {slot.meetingTypeName}
@@ -782,8 +879,9 @@ finishBooking();
             {takeoverSlots.length > 0 && (
               <div className="space-y-2" data-testid="takeover-slots">
                 <p className="text-sm font-medium text-amber-800">
-                  Lower priority than {selectedType?.meetingTypeName} - you can
-                  take these slots
+                  {priorityGuest
+                    ? "A priority guest is invited - you can take these slots"
+                    : `Lower priority than ${selectedType?.meetingTypeName} - you can take these slots`}
                 </p>
                 {takeoverSlots.map((slot, index) => (
                   <div
@@ -791,7 +889,7 @@ finishBooking();
                     className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900"
                   >
                     <p className="font-semibold">
-                      {slot.startTime.slice(0, 5)} - {slot.endTime.slice(0, 5)}
+                      {formatTimeRange(slot.startTime, slot.endTime)}
                     </p>
                     <p className="text-sm">
                       {slot.title} · {slot.meetingTypeName}
@@ -929,8 +1027,80 @@ finishBooking();
 
               </div>
 
+              {isWeeklyFrequency && (
+                <div>
+                  <Label>Repeat Every (Weeks)</Label>
+
+                  <Input
+                    type="number"
+                    min={1}
+                    max={12}
+                    step={1}
+                    value={intervalWeeks}
+                    onWheel={(e) => e.currentTarget.blur()}
+                    onChange={(e) => setIntervalWeeks(e.target.value)}
+                  />
+
+                  <p className="mt-2 text-sm text-gray-500">
+                    1 = every week, 2 = every other week, and so on.
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <Label>End By (Optional)</Label>
+
+                <Input
+                  type="date"
+                  min={meetingDate || undefined}
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+
+                <p className="mt-2 text-sm text-gray-500">
+                  No occurrence after this date. With both, the series stops at
+                  whichever comes first.
+                </p>
+              </div>
+
             </div>
 
+          )}
+
+        </div>
+
+        {/* Online Teams Meeting: the room stays booked, so a hybrid meeting
+            (some in the room, some online) works. */}
+
+        <div>
+
+          <div className="flex items-center gap-3">
+
+            <Switch
+              id="onlineMeeting"
+              data-testid="online-meeting"
+              checked={onlineMeeting && onlineAvailable}
+              disabled={!onlineAvailable}
+              onCheckedChange={setOnlineMeeting}
+            />
+
+            <Label htmlFor="onlineMeeting" className="cursor-pointer">
+              Online Teams Meeting
+            </Label>
+
+          </div>
+
+          <p className="mt-2 text-sm text-gray-500">
+            Enable this option to automatically create a Microsoft Teams
+            meeting and share the joining link with attendees. The room stays
+            booked, so people can attend in the room or online.
+          </p>
+
+          {!onlineAvailable && (
+            <p className="mt-1 text-sm text-amber-700" data-testid="online-not-configured">
+              Teams meetings are not set up on this server yet. Ask an
+              administrator to configure the Microsoft Teams integration.
+            </p>
           )}
 
         </div>
@@ -958,13 +1128,14 @@ finishBooking();
             </AlertDialogTitle>
 
             <AlertDialogDescription>
-              {selectedType?.meetingTypeName} has a higher priority than the
-              booking{overlapping.length === 1 ? "" : "s"} below. Confirming
-              takes the room now. The organizer
-              {overlapping.length === 1 ? " is" : "s are"} e-mailed to change
-              the room or time; otherwise the meeting
-              {overlapping.length === 1 ? " is" : "s are"} cancelled
-              automatically 30 minutes before {overlapping.length === 1 ? "it starts" : "they start"}.
+              {priorityGuest
+                ? "This meeting includes a priority guest, which"
+                : selectedType?.meetingTypeName}{" "}
+              has a higher priority than the booking
+              {overlapping.length === 1 ? "" : "s"} below. Confirming takes the
+              room now and the {overlapping.length === 1 ? "meeting is" : "meetings are"}{" "}
+              replaced; the organizer
+              {overlapping.length === 1 ? " is" : "s are"} e-mailed.
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -975,7 +1146,7 @@ finishBooking();
                 className="rounded-lg border bg-slate-50 p-3 text-sm"
               >
                 <p className="font-semibold">
-                  {slot.startTime.slice(0, 5)} - {slot.endTime.slice(0, 5)}
+                  {formatTimeRange(slot.startTime, slot.endTime)}
                 </p>
                 <p>{slot.title} · {slot.meetingTypeName}</p>
               </div>
@@ -1004,10 +1175,7 @@ finishBooking();
           if (!open && !loading) setSeriesConflict(null);
         }}
       >
-        <AlertDialogContent
-          data-testid="series-conflict-dialog"
-          className="sm:w-[min(64rem,calc(100vw-4rem))] sm:max-w-none"
-        >
+        <AlertDialogContent data-testid="series-conflict-dialog" size="wide">
           {seriesConflict && (
             <>
               <AlertDialogHeader>

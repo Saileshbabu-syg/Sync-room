@@ -13,7 +13,7 @@ import { canUseRoom, getBookingPolicy } from "@/lib/services/booking-policy.serv
 import { jsonError, rateLimit, readJson } from "@/lib/api";
 import { suggestionsSchema } from "@/lib/validations/suggestions.validator";
 
-import { desc } from "drizzle-orm";
+import { desc, isNull } from "drizzle-orm";
 
 export async function POST(
   req: NextRequest
@@ -129,6 +129,7 @@ export async function POST(
         capacity: room.room_capacity,
       })
       .from(room)
+      .where(isNull(room.archived_at))
       .orderBy(
         desc(room.room_capacity)
       )

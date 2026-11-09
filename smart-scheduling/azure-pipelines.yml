@@ -60,9 +60,20 @@ jobs:
         displayName: Lint
         workingDirectory: $(appDir)
 
+      # Migration journal, snapshots and the Drizzle schema must agree (no
+      # database needed).
+      - script: npx drizzle-kit check
+        displayName: Drizzle migration consistency
+        workingDirectory: $(appDir)
+
+      # tests/setup.ts requires the isolated test database variables even for
+      # unit tests (it refuses to start without them); CI has no .env.test.
       - script: npm run test:unit
         displayName: Unit tests
         workingDirectory: $(appDir)
+        env:
+          TEST_ADMIN_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/postgres
+          TEST_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/ss_test_main
 
       # Fails the build on any high/critical vulnerability in production
       # dependencies. Dev-only advisories are reviewed, not gated (see
@@ -79,10 +90,11 @@ jobs:
           TEST_ADMIN_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/postgres
           TEST_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/ss_test_main
 
-      # build:test builds with the isolated test environment, so a CI build can
-      # never see a real database URL.
+      # build:test is a production-mode `next build` (same compiler and output
+      # as `npm run build`) run with the isolated test environment, so a CI
+      # build can never see a real database URL.
       - script: npm run build:test
-        displayName: Production build
+        displayName: Production-mode build (isolated test environment)
         workingDirectory: $(appDir)
         env:
           TEST_ADMIN_DATABASE_URL: postgresql://postgres:$(CI_POSTGRES_PASSWORD)@localhost:5432/postgres

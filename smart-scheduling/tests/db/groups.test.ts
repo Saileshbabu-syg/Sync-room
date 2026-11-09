@@ -80,6 +80,10 @@ const newGroup = (name: string, extra: Record<string, unknown> = {}) => ({
   priority: 6,
   isActive: true,
   permissions: [PERMISSION.BOOKING_CREATE, PERMISSION.BOOKING_VIEW],
+  // What createGroupSchema fills in for a request that leaves these out.
+  meetingTypeIds: [],
+  settings: { maxDurationMinutes: null, maxAdvanceDays: null, maxOccurrences: null },
+  roomIds: [],
   ...extra,
 });
 
@@ -326,7 +330,6 @@ describe("employee assignment", () => {
 
     const context = await getPriorityContext(f.users.bob.employeeId);
     assert.equal(context.groupId, null);
-    assert.equal(context.canPreempt, false);
 
     const error = await failure(unassignEmployee(f.users.bob.employeeId, admin));
     assert.equal((error as GroupError).status, 404);
@@ -371,7 +374,6 @@ describe("priority context (trusted standing)", () => {
 
     assert.equal(context.groupName, "Manager");
     assert.equal(context.priority, 3);
-    assert.equal(context.canPreempt, true);
     assert.equal(context.permissions.has(PERMISSION.DASHBOARD_VIEW), false);
   });
 
@@ -382,7 +384,6 @@ describe("priority context (trusted standing)", () => {
 
     assert.equal(context.permissions.has(PERMISSION.DASHBOARD_VIEW), true);
     assert.equal(context.permissions.has(PERMISSION.BOOKING_CREATE), false);
-    assert.equal(context.canPreempt, false);
   });
 
   it("gives an unassigned employee the lowest priority, booking basics and nothing more", async () => {
@@ -391,11 +392,12 @@ describe("priority context (trusted standing)", () => {
     assert.equal(context.groupId, null);
     assert.equal(context.priority, 5, "the lowest active group, never the highest");
     assert.deepEqual([...context.permissions].sort(), [...DEFAULT_PERMISSIONS].sort());
-    assert.equal(context.canPreempt, false);
   });
 
   it("follows the lowest ACTIVE group when the bottom group is deactivated", async () => {
+    // Employee and Admin share the lowest priority (5); both go, so TL (4) is next.
     await updateGroup(f.groupIds.employee, { isActive: false }, admin);
+    await db.update(groups).set({ isActive: false }).where(eq(groups.name, "Admin"));
 
     assert.equal((await getPriorityContext(f.users.dave.employeeId)).priority, 4);
     assert.equal(
@@ -430,7 +432,7 @@ describe("append-only audit tables", () => {
       notify: false,
     };
 
-    await createBooking({ ...base, title: "Low", organizerEmployeeId: f.users.bob.employeeId });
+    await createBooking({ ...base, title: "Low", meetingTypeId: f.types.others, organizerEmployeeId: f.users.bob.employeeId });
     await createBooking({ ...base, title: "High", organizerEmployeeId: f.users.manager.employeeId });
 
     assert.equal((await db.select().from(bookingPriorityHistory)).length, 1);

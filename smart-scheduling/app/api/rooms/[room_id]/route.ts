@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { availabilityMaster, room } from "@/db/schema";
+import { room } from "@/db/schema";
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import {
   dbErrorCode,
@@ -13,6 +13,7 @@ import {
   readJson,
 } from "@/lib/api";
 import { canManageRooms } from "@/lib/services/group-context.service";
+import { RoomError, updateRoom } from "@/lib/services/room.service";
 import { roomBodySchema } from "@/lib/validations/room.validator";
 
 type Context = { params: Promise<{ room_id: string }> };
@@ -58,37 +59,22 @@ export async function PATCH(request: Request, { params }: Context) {
       );
     }
 
-    const data = parsed.data;
+    // The same update (and checks) as the room edit form's route.
+    const updatedRoom = await updateRoom(roomId, parsed.data);
 
-    const [status] = await db
-      .select({ id: availabilityMaster.availabilityStatusId })
-      .from(availabilityMaster)
-      .where(eq(availabilityMaster.availabilityStatusId, data.availabilityStatusId));
-
-    if (!status) {
-      return jsonError(400, "Invalid availability status.");
-    }
-
-    const updatedRoom = await db
-      .update(room)
-      .set({
-        room_name: data.roomName,
-        room_capacity: data.roomCapacity,
-        roomLocation: data.roomLocation,
-        facilities: data.facilities,
-        availabilityStatusId: data.availabilityStatusId,
-        roomDescription: data.roomDescription,
-        updated_at: new Date(),
-      })
-      .where(eq(room.room_id, roomId))
-      .returning();
-
-    if (updatedRoom.length === 0) {
-      return jsonError(404, "Room not found.");
-    }
-
-    return NextResponse.json(updatedRoom);
+    return NextResponse.json([updatedRoom]);
   } catch (error) {
+    if (error instanceof RoomError) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: error.message,
+          ...(error.conflicts ? { conflicts: error.conflicts } : {}),
+        },
+        { status: error.status }
+      );
+    }
+
     console.error(error);
 
     return NextResponse.json(
@@ -145,7 +131,7 @@ export async function DELETE(request: Request, { params }: Context) {
     if (dbErrorCode(error) === PG_FOREIGN_KEY_VIOLATION) {
       return jsonError(
         409,
-        "This room has meetings and cannot be deleted."
+        "This room has meetings and cannot be deleted. Archive it instead."
       );
     }
 

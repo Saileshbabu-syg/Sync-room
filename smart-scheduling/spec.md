@@ -6,7 +6,7 @@ An internal meeting-room booking app: employees book rooms for meetings, admins 
 
 ## Project structure
 
-- `app/` — pages and API routes (App Router). Key folders: `booking/`, `bookings/` (edit/cancel), `dashboard/`, `rooms/`, `login/`, `signup/`, `api/` (all backend routes).
+- `app/` — pages and API routes (App Router). Key folders: `booking/`, `bookings/` (edit/cancel), `dashboard/`, `rooms/`, `admin/`, `login/`, `invite/`, `api/` (all backend routes).
 - `db/schema.ts` — all Drizzle table definitions, relations and types in one file.
 - `lib/services/` — business logic (conflict checking, room suggestions, dashboard stats, audit logging, notifications, reminders).
 - `lib/validations/` — Zod schemas for request validation.
@@ -18,10 +18,10 @@ An internal meeting-room booking app: employees book rooms for meetings, admins 
 There's no self-signup and no public credentials — get these from whoever set up the project before you can run it:
 - The shared Neon `DATABASE_URL` (direct endpoint, see below)
 - Google OAuth `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
-- `NEXTAUTH_SECRET` (any shared secret string, ask the team)
+- `AUTH_SECRET` (any shared secret string, ask the team; `NEXTAUTH_SECRET` is still read as a fallback)
 - An SMTP relay and sender address (`SMTP_HOST`, `EMAIL_FROM`; see "Email" below) for booking e-mail
 
-**Becoming a test user**: since login requires a pre-existing `Employee` row (there's no self-signup and no employee-management UI yet), ask an admin to insert your row directly — either via the Neon SQL console/dashboard or `psql`:
+**Becoming a test user**: since login requires a pre-existing `Employee` row (there's no self-signup and no form to add an employee by hand; Entra ID sync under Group Management → Employees creates rows when configured), ask an admin to insert your row directly — either via the Neon SQL console/dashboard or `psql`:
 ```sql
 INSERT INTO "Employee" (role_id, employee_name, email)
 VALUES (<role_id>, 'Your Name', 'your.email@gmail.com');
@@ -51,7 +51,7 @@ Meeting types are simplified to in-person only concepts: e.g. `Team Meeting`, `I
 
 ## Auth model
 
-- `auth.ts`: Google OAuth via NextAuth. Sign-in is gated — the user's email must already exist in the `Employee` table (joined to `roles`), or login is rejected with `/login?error=not-authorized`. There is **no self-signup** — new employees must be added to the `Employee` table directly (no admin UI for this exists yet).
+- `auth.ts`: Google OAuth via NextAuth. Sign-in is gated — the user's email must already exist in the `Employee` table (joined to `roles`), or login is rejected with `/login?error=not-authorized`. There is **no self-signup** — new employees must be added to the `Employee` table directly or created by Entra ID sync (Group Management → Employees).
 - On first successful sign-in, an `Organizer` row is auto-created from the `Employee`/`roles` data.
 
 ## Security & integrity model (current)
@@ -70,9 +70,9 @@ Meeting types are simplified to in-person only concepts: e.g. `Team Meeting`, `I
 - **Dependencies are behind security fixes** (`next`, `next-auth`, `nodemailer`, `zod`, shadcn tree) — see REMEDIATION_REPORT.md for the upgrade plan; nothing has been upgraded yet.
 - **Leftover `Organizer.password` column** from the removed credentials path.
 - **Recurring series** have no series-level edit/cancel, and only the first date is checked against the 3-month window (product decisions pending).
-- **No employee management UI** — since login requires a pre-existing `Employee` row, there's currently no way to onboard a new teammate except inserting directly into the DB.
-- **No CI** is configured; run `npm run typecheck && npm run lint && npm test && npm run build:test && npm run test:e2e` locally (see tests/README.md).
-- **`lib/cron/reminder-job.ts`** is imported as a side-effect in `app/layout.tsx`. In dev, Next.js lazily compiles routes, so the cron doesn't start ticking until the first page request hits the server.
+- **No form to add an employee by hand** — login requires a pre-existing `Employee` row, created by Entra ID sync (Group Management → Employees) or inserted directly into the DB.
+- **CI** is defined in `azure-pipelines.yml` but has not yet been run in an Azure DevOps org; until then run `npm run typecheck && npm run lint && npm test && npm run build:test && npm run test:e2e` locally (see tests/README.md).
+- **`lib/cron/reminder-job.ts`** is started from `instrumentation.ts` when the server boots.
 
 ## Running locally
 
@@ -80,7 +80,7 @@ Meeting types are simplified to in-person only concepts: e.g. `Team Meeting`, `I
 npm install
 npm run dev
 ```
-`.env` needs `DATABASE_URL` (Neon direct endpoint), `GOOGLE_CLIENT_ID`/`SECRET`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `EMAIL_FROM` and `SMTP_HOST` (+ `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` if the relay needs them) for booking e-mail.
+`.env` needs `DATABASE_URL` (Neon direct endpoint), `GOOGLE_CLIENT_ID`/`SECRET`, `AUTH_URL`, `AUTH_SECRET` (`NEXTAUTH_*` still read as a fallback), `EMAIL_FROM` and `SMTP_HOST` (+ `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` if the relay needs them) for booking e-mail.
 
 ## Email
 
@@ -114,6 +114,6 @@ database), plus any skipped or cancelled dates; one-time bookings keep the singl
 - **Replaced bookings**: stored as status `PREEMPTED` (6), shown everywhere as **Replaced** (`MEETING_STATUS_LABEL`); participants are shown as **Primary Invitee** (Participants field) or **Additional Invitee** (Optional Participants field), see `invitationCategory`. `lib/services/bump-info.service.ts` reads `booking_priority_history` to say who took the room (organizer, group, meeting title/type, room, date, time, reason). The dashboard lists bumped bookings (status filter, "Replaced" card, expandable details with the people invited to both meetings, and the reverse "this booking replaced…" panel, export columns) and My Bookings has a "Replaced Bookings" tab with an expandable panel; the bumped booking itself is never changed or deleted.
 - **Participants**: `meeting_attendees.is_optional` marks optional participants. Both kinds get the invitation e-mail (optional ones are told so) with Accept / Decline; answers are tracked per person. An optional person's answer never affects the meeting, and nobody can be in both lists (checked by the validators, `createBooking` and the edit route).
 - **Dashboard reports** contain the bookings AND the participants (separate "Participants" sheet in XLSX, separate table in PDF, second table in CSV), for every booking matching the active filters, not just the visible page.
-- **Entra ID sync** (`lib/services/entra-sync.service.ts`, `/api/admin/employees/sync`, Employees tab): reads users with the app's own credentials (`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, application permission `User.Read.All`). `Employee.entra_object_id` is the identity (unique); an existing employee with the same e-mail is linked, never duplicated. Existing groups and roles are never changed; anyone with no active group is placed in the Employee group. Employees missing from the directory are kept. One sync runs at a time; every run is recorded in `employee_sync_runs`.
+- **Entra ID sync** (`lib/services/entra-sync.service.ts`, `/api/admin/employees/sync`, Employees tab): reads users with the app's own credentials (`ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, application permission `User.Read.All`). `Employee.entra_object_id` is the identity (unique); an existing employee with the same e-mail is linked, never duplicated. Existing groups and roles are never changed; anyone with no active group is placed in the Employee group. Employees missing from (or disabled in) the directory are kept but deactivated (`Employee.is_active`), only after a complete read and within a safety threshold (see DEPLOYMENT.md section 3). One sync runs at a time; every run is recorded in `employee_sync_runs`.
 - **Room requests were removed** (page, API, e-mails, cron step). Their tables (`room_requests`, `room_request_holders`, `room_request_emails`) are kept as history and are no longer read or written; the priority/bump engine does not use them.
 - **Rollback**: `drizzle/down/0027_groups_priority.down.sql`, `0028_participants_responses.down.sql`, `0029_group_types_entra_optional.down.sql` (manual; drizzle has no down migrations).

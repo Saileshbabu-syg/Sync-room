@@ -1,3 +1,5 @@
+import { formatDate, formatTimeRange } from "@/lib/format";
+
 // Who took a bumped booking's room, and the meeting that replaced it. The
 // bumped booking's own details stay as they were; this only adds the "why".
 export type BumpDetails = {
@@ -47,12 +49,12 @@ export default function BumpedDetails({ bump }: { bump: BumpDetails }) {
         </div>
         <div>
           <dt className="inline font-medium">Date: </dt>
-          <dd className="inline">{bump.meetingDate}</dd>
+          <dd className="inline">{formatDate(bump.meetingDate)}</dd>
         </div>
         <div>
           <dt className="inline font-medium">Time: </dt>
           <dd className="inline">
-            {bump.startTime.slice(0, 5)} - {bump.endTime.slice(0, 5)}
+            {formatTimeRange(bump.startTime, bump.endTime)}
           </dd>
         </div>
         <div className="sm:col-span-2">

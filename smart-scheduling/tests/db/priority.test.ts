@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 
 import { eq, sql } from "drizzle-orm";
 
@@ -8,26 +8,37 @@ import { DEFAULT_GROUPS } from "@/db/seed-groups";
 import {
   bookingPriorityHistory,
   employee,
+  groupAuditLogs,
   groupPermissions,
   groups,
   meeting,
   meeting_audit_logs,
+  meetingTypes,
   reschedule_requests,
   roles,
   room,
   userGroups,
 } from "@/db/schema";
-import { MEETING_STATUS, PERMISSION } from "@/lib/constants";
+import { MEETING_STATUS, PERMISSION, PROTECTED_RANK, TOP_RANK } from "@/lib/constants";
 import {
   BookingError,
   createBooking,
+  PROTECTED_SLOT_MESSAGE,
+  SLOT_TAKEN_MESSAGE,
   type BookingInput,
 } from "@/lib/services/booking.service";
-import { updateGroup } from "@/lib/services/group.service";
+import {
+  createGroup,
+  GroupError,
+  updateGroup,
+  updateMeetingTypePriority,
+} from "@/lib/services/group.service";
+import { updateMeetingTypeSchema } from "@/lib/validations/group.validator";
 import { deliverNotification } from "@/lib/services/notification.service";
 import {
   bumpDeadline,
   canBumpAll,
+  claimantRank,
   getClaimableRooms,
   processExpiredBumps,
   type SlotHolder,
@@ -36,6 +47,7 @@ import {
   rescheduleMeeting,
   RescheduleError,
 } from "@/lib/services/reschedule.service";
+import { getRoomSchedule } from "@/lib/services/room-suggestion.service";
 import { appWallClockToUtc } from "@/lib/time";
 
 import {
@@ -79,11 +91,14 @@ beforeEach(async () => {
   await db.execute(sql`
     UPDATE group_permissions gp SET is_enabled =
       (gp.permission_key <> 'dashboard.view' OR g.name IN ('HR', 'Admin'))
+      AND (gp.permission_key NOT IN ('booking.outranks', 'booking.protected') OR g.name = 'Leadership')
     FROM groups g WHERE g.id = gp.group_id
   `);
 });
 
 const DAY = () => dateFromToday(7);
+
+let userSequence = 0;
 
 // Extra employees placed in a group (null = no group).
 async function addUser(name: string, groupId: number | null) {
@@ -93,7 +108,8 @@ async function addUser(name: string, groupId: number | null) {
     .values({
       role_id: role.roleId,
       employee_name: name,
-      email: `${name.toLowerCase().replace(/\s+/g, ".")}@example.test`,
+      // Employees survive between tests, so the e-mail must be unique per call.
+      email: `${name.toLowerCase().replace(/\s+/g, ".")}.${++userSequence}@example.test`,
     })
     .returning();
 
@@ -114,21 +130,22 @@ function input(overrides: Partial<BookingInput> = {}): BookingInput {
     endTime: "11:00",
     organizerEmployeeId: f.users.bob.employeeId,
     // The role only decides which meeting types are allowed; priority comes
-    // from the organizer's group.
+    // from the meeting type (here "Others", rank 5).
     organizerRole: "Manager",
     participantCount: 1,
-    meetingTypeId: f.types.team,
+    meetingTypeId: f.types.others,
     participantEmployeeIds: [],
     notify: false,
     ...overrides,
   };
 }
 
-// Mona (Manager group, priority 3) wants the same slot.
+// Mona wants the same slot for a Team Meeting (rank 3), which outranks "Others".
 const byManager = (overrides: Partial<BookingInput> = {}) =>
   input({
     title: "Manager meeting",
     organizerEmployeeId: f.users.manager.employeeId,
+    meetingTypeId: f.types.team,
     ...overrides,
   });
 
@@ -157,8 +174,8 @@ function at(date: string, time: string) {
   return new Date(Date.UTC(y, mo - 1, d, h, mi));
 }
 
-describe("group-based booking priority", () => {
-  it("preempts a lower-priority booking, records it, and e-mails both sides", async () => {
+describe("meeting-type booking priority", () => {
+  it("takes the room from a lower-priority meeting type, records it, and e-mails both sides", async () => {
     const { meetings: [low] } = await createBooking(
       input({ participantCount: 2, participantEmployeeIds: [f.users.carol.employeeId] })
     );
@@ -172,18 +189,14 @@ describe("group-based booking priority", () => {
 
     const winner = await meetingById(result.meetings[0].meeting_id);
     assert.equal(winner.meetingStatusId, MEETING_STATUS.SCHEDULED);
-    assert.equal(winner.groupIdAtBooking, f.groupIds.manager);
-    assert.equal(winner.priorityAtBooking, 3);
 
     const [row] = await history();
     assert.equal(row.incomingBookingId, winner.meeting_id);
     assert.equal(row.affectedBookingId, low.meeting_id);
-    assert.equal(row.previousGroupId, f.groupIds.employee);
-    assert.equal(row.previousPriority, 5);
-    assert.equal(row.incomingGroupId, f.groupIds.manager);
-    assert.equal(row.incomingPriority, 3);
+    assert.equal(row.previousPriority, 5, "Others");
+    assert.equal(row.incomingPriority, 3, "Team Meeting");
     assert.equal(row.actorEmployeeId, f.users.manager.employeeId);
-    assert.match(row.reason, /Preempted by Manager booking/);
+    assert.match(row.reason, /Preempted by .*meeting type priority 3 outranks 5/);
 
     const audit = await db
       .select()
@@ -200,23 +213,30 @@ describe("group-based booking priority", () => {
     assert.ok(preemptedMail.to.includes(f.users.bob.email));
     assert.ok(preemptedMail.to.includes(f.users.carol.email));
     assert.match(preemptedMail.text, /priority 3/);
-    assert.equal(preemptedMail.ics, "", "no invite for a slot the meeting no longer holds");
+    // No invite for a slot the meeting no longer holds: a calendar CANCEL for
+    // the entry the attendees already have (same UID) instead.
+    assert.match(preemptedMail.ics, /METHOD:CANCEL/);
+    assert.match(preemptedMail.ics, new RegExp(`UID:meeting-${low.meeting_id}@`));
+    assert.match(preemptedMail.ics, /STATUS:CANCELLED/);
+    assert.doesNotMatch(preemptedMail.ics, /METHOD:REQUEST/);
 
     const confirmation = mail.sent.find((m) => /Scheduled/.test(m.subject))!;
     assert.ok(confirmation.to.includes(f.users.manager.email));
   });
 
-  it("lets Leadership (priority 1) take the room of an Employee (priority 5)", async () => {
-    const lead = await addUser("Lena Lead", f.groupIds.leadership);
-    const { meetings: [low] } = await createBooking(input());
+  it("applies to everyone alike: the meeting type decides, not the organizer's group", async () => {
+    // Mona (Manager) holds the slot with a low-ranked type; Bob (Employee) takes
+    // it with a higher-ranked one.
+    const { meetings: [held] } = await createBooking(
+      byManager({ meetingTypeId: f.types.others })
+    );
 
-    const result = await createBooking(input({ organizerEmployeeId: lead }));
+    await createBooking(input({ meetingTypeId: f.types.team }));
 
-    assert.equal((await meetingById(low.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
-    assert.equal((await meetingById(result.meetings[0].meeting_id)).priorityAtBooking, 1);
+    assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
   });
 
-  it("never lets a lower-priority group take a higher-priority booking", async () => {
+  it("never lets a lower-priority meeting type take a higher-priority booking", async () => {
     const { meetings: [high] } = await createBooking(byManager());
 
     const error = await rejection(createBooking(input()));
@@ -226,7 +246,7 @@ describe("group-based booking priority", () => {
     assert.equal((await history()).length, 0);
   });
 
-  it("keeps first-confirmed-wins between equal priorities", async () => {
+  it("keeps first-confirmed-wins between equal meeting types", async () => {
     const { meetings: [first] } = await createBooking(input());
 
     const error = await rejection(
@@ -237,9 +257,285 @@ describe("group-based booking priority", () => {
     assert.equal((await meetingById(first.meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
   });
 
+  describe("Leadership as a participant", () => {
+    for (const optional of [false, true]) {
+      it(`books regardless of meeting type when Leadership is an ${optional ? "optional" : "required"} participant`, async () => {
+        const lead = await addUser("Lena Lead", f.groupIds.leadership);
+        const { meetings: [held] } = await createBooking(byManager());
+
+        // Carol's "Others" cannot touch Mona's Team Meeting on its own.
+        const error = await rejection(
+          createBooking(input({ organizerEmployeeId: f.users.carol.employeeId }))
+        );
+        assert.equal(error.status, 409);
+
+        const result = await createBooking(
+          input({
+            organizerEmployeeId: f.users.carol.employeeId,
+            participantCount: 2,
+            participantEmployeeIds: optional ? [] : [lead],
+            optionalParticipantEmployeeIds: optional ? [lead] : [],
+          })
+        );
+
+        assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+        assert.equal(
+          (await meetingById(result.meetings[0].meeting_id)).meetingStatusId,
+          MEETING_STATUS.SCHEDULED
+        );
+        assert.equal((await history())[0].incomingPriority, 0);
+      });
+    }
+
+    it("also applies when the organizer is in Leadership", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      const { meetings: [held] } = await createBooking(byManager({ meetingTypeId: f.types.client }));
+
+      await createBooking(input({ organizerEmployeeId: lead }));
+
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+    });
+
+    it("keeps the meeting protected from later bookings of any type", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      const { meetings: [protectedMeeting] } = await createBooking(
+        input({ participantCount: 2, participantEmployeeIds: [lead] })
+      );
+
+      const error = await rejection(
+        createBooking(byManager({ meetingTypeId: f.types.client }))
+      );
+
+      assert.equal(error.status, 409);
+      assert.equal(
+        (await meetingById(protectedMeeting.meeting_id)).meetingStatusId,
+        MEETING_STATUS.SCHEDULED
+      );
+    });
+
+    it("refuses a second meeting, even one that also invites Leadership, and says why", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      const other = await addUser("Leo Lead", f.groupIds.leadership);
+      const { meetings: [first] } = await createBooking(
+        input({ participantCount: 2, participantEmployeeIds: [lead] })
+      );
+
+      const error = await rejection(
+        createBooking(byManager({ participantCount: 2, participantEmployeeIds: [other] }))
+      );
+
+      assert.equal(error.status, 409);
+      assert.equal(error.message, PROTECTED_SLOT_MESSAGE);
+      assert.equal((await meetingById(first.meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+      assert.equal((await history()).length, 0);
+    });
+
+    it("refuses a plain 'room already booked' message when nothing in the way is protected", async () => {
+      await createBooking(byManager({ meetingTypeId: f.types.client }));
+
+      const error = await rejection(createBooking(input()));
+
+      assert.equal(error.message, SLOT_TAKEN_MESSAGE);
+    });
+
+    it("cannot take a meeting that has already started", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      const today = dateFromToday(0);
+      const { meetings: [started] } = await createBooking(
+        input({ occurrenceDates: [today], now: at(today, "09:00") })
+      );
+
+      const error = await rejection(
+        createBooking(
+          input({
+            occurrenceDates: [today],
+            // At least 15 minutes ahead (B-09), still inside the 10:00 meeting.
+            startTime: "10:20",
+            endTime: "10:50",
+            organizerEmployeeId: lead,
+            now: at(today, "10:05"),
+          })
+        )
+      );
+
+      assert.equal(error.status, 409);
+      assert.equal((await meetingById(started.meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+    });
+  });
+
+  describe("any group can outrank all meetings (booking.outranks)", () => {
+    // A new group, switched on or off the way Group Management does it.
+    async function board(permissions: string[]) {
+      const group = await createGroup(
+        {
+          name: `Board ${++userSequence}`,
+          description: null,
+          priority: 6,
+          isActive: true,
+          permissions,
+          meetingTypeIds: [],
+          settings: { maxDurationMinutes: null, maxAdvanceDays: null, maxOccurrences: null },
+          roomIds: [],
+        } as never,
+        f.users.admin.employeeId
+      );
+
+      return { groupId: group.id, member: await addUser("Bea Board", group.id) };
+    }
+
+    const base = [PERMISSION.BOOKING_CREATE, PERMISSION.BOOKING_VIEW];
+
+    it("lets a meeting that invites a member of the new group take the room", async () => {
+      const { member } = await board([...base, PERMISSION.BOOKING_OUTRANKS]);
+      const { meetings: [held] } = await createBooking(byManager({ meetingTypeId: f.types.client }));
+
+      await createBooking(input({ participantCount: 2, participantEmployeeIds: [member] }));
+
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+    });
+
+    it("does nothing for a group without the permission", async () => {
+      const { member } = await board(base);
+      const { meetings: [held] } = await createBooking(byManager());
+
+      const error = await rejection(
+        createBooking(input({ participantCount: 2, participantEmployeeIds: [member] }))
+      );
+
+      assert.equal(error.status, 409);
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+    });
+
+    it("stops working for Leadership when its permission is switched off", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      await db
+        .update(groupPermissions)
+        .set({ isEnabled: false })
+        .where(
+          sql`${groupPermissions.groupId} = ${f.groupIds.leadership} AND ${groupPermissions.permissionKey} = ${PERMISSION.BOOKING_OUTRANKS}`
+        );
+      await createBooking(byManager());
+
+      const error = await rejection(
+        createBooking(input({ participantCount: 2, participantEmployeeIds: [lead] }))
+      );
+
+      assert.equal(error.status, 409);
+    });
+
+    it("stops working when the group is deactivated", async () => {
+      const { groupId, member } = await board([...base, PERMISSION.BOOKING_OUTRANKS]);
+      await db.update(groups).set({ isActive: false }).where(eq(groups.id, groupId));
+      await createBooking(byManager());
+
+      const error = await rejection(
+        createBooking(input({ participantCount: 2, participantEmployeeIds: [member] }))
+      );
+
+      assert.equal(error.status, 409);
+    });
+
+    it("outranking alone does not protect: a later, higher meeting type takes the room back", async () => {
+      const { member } = await board([...base, PERMISSION.BOOKING_OUTRANKS]);
+      const { meetings: [held] } = await createBooking(
+        input({ participantCount: 2, participantEmployeeIds: [member] })
+      );
+
+      await createBooking(byManager());
+
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+    });
+  });
+
+  describe("protected meetings (booking.protected)", () => {
+    const base = [PERMISSION.BOOKING_CREATE, PERMISSION.BOOKING_VIEW];
+
+    async function boardWith(permissions: string[]) {
+      const group = await createGroup(
+        {
+          name: `Guard ${++userSequence}`,
+          description: null,
+          priority: 6,
+          isActive: true,
+          permissions,
+          meetingTypeIds: [],
+          settings: { maxDurationMinutes: null, maxAdvanceDays: null, maxOccurrences: null },
+          roomIds: [],
+        } as never,
+        f.users.admin.employeeId
+      );
+
+      return addUser("Gus Guard", group.id);
+    }
+
+    it("a group with it keeps its members' meetings from any booking, whatever the type", async () => {
+      const member = await boardWith([...base, PERMISSION.BOOKING_PROTECTED]);
+      const { meetings: [guarded] } = await createBooking(
+        input({ participantCount: 2, participantEmployeeIds: [member] })
+      );
+
+      const error = await rejection(createBooking(byManager({ meetingTypeId: f.types.client })));
+
+      assert.equal(error.message, PROTECTED_SLOT_MESSAGE);
+      assert.equal((await meetingById(guarded.meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+    });
+
+    it("protecting does not make the member's own bookings outrank anything", async () => {
+      const member = await boardWith([...base, PERMISSION.BOOKING_PROTECTED]);
+      const { meetings: [held] } = await createBooking(byManager());
+
+      const error = await rejection(
+        createBooking(input({ participantCount: 2, participantEmployeeIds: [member] }))
+      );
+
+      assert.equal(error.status, 409);
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+    });
+
+    it("an optional participant protects the meeting too", async () => {
+      const member = await boardWith([...base, PERMISSION.BOOKING_PROTECTED]);
+      await createBooking(input({ participantCount: 2, optionalParticipantEmployeeIds: [member] }));
+
+      const error = await rejection(createBooking(byManager()));
+
+      assert.equal(error.message, PROTECTED_SLOT_MESSAGE);
+    });
+
+    it("with Leadership's protection switched off, a Leadership meeting can be taken over", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      const other = await addUser("Leo Lead", f.groupIds.leadership);
+      await db
+        .update(groupPermissions)
+        .set({ isEnabled: false })
+        .where(
+          sql`${groupPermissions.groupId} = ${f.groupIds.leadership} AND ${groupPermissions.permissionKey} = ${PERMISSION.BOOKING_PROTECTED}`
+        );
+      const { meetings: [held] } = await createBooking(
+        input({ participantCount: 2, participantEmployeeIds: [lead] })
+      );
+
+      // Another Leadership meeting (outranks) now takes it ...
+      await createBooking(byManager({ participantCount: 2, participantEmployeeIds: [other] }));
+
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+    });
+
+    it("stops protecting when the group is deactivated", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      await createBooking(input({ participantCount: 2, participantEmployeeIds: [lead] }));
+      await db.update(groups).set({ isActive: false }).where(eq(groups.id, f.groupIds.leadership));
+
+      // Leadership no longer protects, so a higher meeting type takes the room.
+      const result = await createBooking(byManager({ meetingTypeId: f.types.client }));
+
+      assert.equal(result.meetings.length, 1);
+    });
+  });
+
   it("cannot preempt a meeting that has already started", async () => {
     const today = dateFromToday(0);
-    // 10:05 on the day: Bob's 10:00 meeting is under way, Mona asks for 10:15.
+    // 10:05 on the day: Bob's 10:00 meeting is under way, Mona asks for 10:20
+    // (at least 15 minutes ahead, B-09).
     const { meetings: [started] } = await createBooking(
       input({ occurrenceDates: [today], now: at(today, "09:00") })
     );
@@ -248,8 +544,8 @@ describe("group-based booking priority", () => {
       createBooking(
         byManager({
           occurrenceDates: [today],
-          startTime: "10:15",
-          endTime: "10:45",
+          startTime: "10:20",
+          endTime: "10:50",
           now: at(today, "10:05"),
         })
       )
@@ -301,10 +597,13 @@ describe("group-based booking priority", () => {
   });
 
   it("changes nothing when one of the conflicts outranks the request", async () => {
-    // Bob (P5) 10:00-10:30, another Manager (P3) 10:30-11:00; Mona (P3) wants both.
+    // Bob's "Others" 10:00-10:30, a Client Meeting 10:30-11:00; Mona's Team
+    // Meeting wants both.
     const other = await addUser("Max Manager", f.groupIds.manager);
     const { meetings: [low] } = await createBooking(input({ endTime: "10:30" }));
-    await createBooking(input({ startTime: "10:30", organizerEmployeeId: other }));
+    await createBooking(
+      input({ startTime: "10:30", organizerEmployeeId: other, meetingTypeId: f.types.client })
+    );
 
     const error = await rejection(createBooking(byManager()));
 
@@ -313,59 +612,149 @@ describe("group-based booking priority", () => {
     assert.equal((await history()).length, 0);
   });
 
-  it("stores the group and priority used and never rewrites them later", async () => {
-    const { meetings: [m] } = await createBooking(input());
-    assert.equal(m.groupIdAtBooking, f.groupIds.employee);
-    assert.equal(m.priorityAtBooking, 5);
+  describe("editable meeting type priority", () => {
+    const rankOf = async (typeId: number) =>
+      (await db.select().from(meetingTypes).where(eq(meetingTypes.meetingTypeId, typeId)))[0]
+        .priorityRank;
 
-    await updateGroup(f.groupIds.employee, { priority: 1 }, f.users.admin.employeeId);
-    await updateGroup(f.groupIds.leadership, { priority: 7 }, f.users.admin.employeeId);
-
-    const after = await meetingById(m.meeting_id);
-    assert.equal(after.priorityAtBooking, 5, "the snapshot is history, not a live value");
-    assert.equal(after.groupIdAtBooking, f.groupIds.employee);
-
-    // New bookings use the new priority.
-    const [fresh] = (await createBooking(input({ startTime: "12:00", endTime: "13:00" }))).meetings;
-    const [current] = await db.select().from(groups).where(eq(groups.id, f.groupIds.employee));
-    assert.equal(fresh.priorityAtBooking, current.priority);
-  });
-
-  it("compares a holder on its stored priority, not its group's current one", async () => {
-    const { meetings: [low] } = await createBooking(input());
-
-    // Employee group becomes the top group afterwards.
-    await db.update(groups).set({ priority: 1 }).where(eq(groups.id, f.groupIds.employee));
-
-    // Mona (still P3) outranks Bob's booking, which was made at P5.
-    await createBooking(byManager());
-
-    assert.equal((await meetingById(low.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
-    assert.equal((await history())[0].previousPriority, 5);
-  });
-
-  describe("employees without a usable group", () => {
-    it("rank as the lowest active group and never preempt", async () => {
-      const dave = f.users.dave.employeeId;
-      const { meetings: [mine] } = await createBooking(input({ organizerEmployeeId: dave }));
-
-      assert.equal(mine.groupIdAtBooking, null);
-      assert.equal(mine.priorityAtBooking, 5, "lowest active priority, not the highest");
-
-      // A Manager takes the slot from them.
-      await createBooking(byManager());
-      assert.equal((await meetingById(mine.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
-
-      // And they cannot take it back, nor preempt an equal-priority booking.
-      assert.equal((await rejection(createBooking(input({ organizerEmployeeId: dave })))).status, 409);
+    // Types are shared by every test in this file: put "Others" back at 5.
+    afterEach(async () => {
+      await db.update(meetingTypes).set({ priorityRank: 5 }).where(eq(meetingTypes.meetingTypeId, f.types.others));
     });
 
-    it("are treated like that when their group is deactivated", async () => {
-      await db.update(groups).set({ isActive: false }).where(eq(groups.id, f.groupIds.manager));
+    it("changes who wins a room, at once, for meetings already booked", async () => {
+      const admin = f.users.admin.employeeId;
+      const { meetings: [held] } = await createBooking(byManager()); // Team Meeting: 3
 
-      const { meetings: [m] } = await createBooking(byManager({ startTime: "14:00", endTime: "15:00" }));
+      // "Others" is 5, so Bob's booking is refused ...
+      assert.equal((await rejection(createBooking(input()))).status, 409);
 
-      assert.equal(m.groupIdAtBooking, null);
+      // ... until an admin ranks "Others" above Team Meeting.
+      const updated = await updateMeetingTypePriority(f.types.others, 2, admin);
+      assert.equal(updated.priorityRank, 2);
+      assert.equal(await rankOf(f.types.others), 2);
+
+      await createBooking(input());
+
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+    });
+
+    it("also applies to a meeting that is already held: lowering its type exposes it", async () => {
+      const { meetings: [held] } = await createBooking(input()); // Others: 5
+
+      await updateMeetingTypePriority(f.types.others, 1, f.users.admin.employeeId);
+      // Team Meeting (3) no longer outranks the held "Others" (now 1).
+      assert.equal((await rejection(createBooking(byManager()))).status, 409);
+      assert.equal((await meetingById(held.meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+    });
+
+    it("records who changed it, and writes nothing when the value is unchanged", async () => {
+      const admin = f.users.admin.employeeId;
+
+      await updateMeetingTypePriority(f.types.others, 4, admin);
+      await updateMeetingTypePriority(f.types.others, 4, admin);
+
+      const rows = (await db.select().from(groupAuditLogs)).filter(
+        (r) => r.action === "MEETING_TYPE_PRIORITY_CHANGED"
+      );
+
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].actorEmployeeId, admin);
+      assert.deepEqual(rows[0].details, {
+        meetingTypeId: f.types.others,
+        name: "Others",
+        from: 5,
+        to: 4,
+      });
+    });
+
+    it("rejects an unknown meeting type and a rank outside 1 to 5", async () => {
+      const missing = await updateMeetingTypePriority(999999, 3, f.users.admin.employeeId).catch((e) => e);
+      assert.ok(missing instanceof GroupError);
+      assert.equal(missing.status, 404);
+
+      for (const bad of [0, 6, 2.5, -1]) {
+        assert.equal(updateMeetingTypeSchema.safeParse({ priorityRank: bad }).success, false, String(bad));
+      }
+      assert.equal(updateMeetingTypeSchema.safeParse({ priorityRank: 5 }).success, true);
+    });
+  });
+
+  describe("room schedule (what the booking form compares)", () => {
+    it("reports the meeting type's rank, and -1 (protected) for a meeting that includes Leadership", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+
+      await createBooking(input({ startTime: "08:00", endTime: "09:00" })); // Others: 5
+      await createBooking(
+        byManager({ startTime: "09:00", endTime: "10:00", meetingTypeId: f.types.client })
+      ); // Client: 1
+      await createBooking(
+        input({
+          startTime: "11:00",
+          endTime: "12:00",
+          participantCount: 2,
+          optionalParticipantEmployeeIds: [lead],
+        })
+      ); // Others + Leadership: protected
+
+      const slots = await getRoomSchedule(f.rooms.alpha.room_id, DAY(), {
+        employeeId: f.users.manager.employeeId,
+        role: "Manager",
+      });
+
+      assert.deepEqual(
+        slots.map((s) => [s.startTime.slice(0, 5), s.priorityRank]),
+        [["08:00", 5], ["09:00", 1], ["11:00", PROTECTED_RANK]]
+      );
+    });
+  });
+
+  describe("recurring series", () => {
+    const dates = () => [dateFromToday(7), dateFromToday(14)];
+
+    it("takes every occurrence's slot when the series is higher priority", async () => {
+      const first = await createBooking(input({ occurrenceDates: [dates()[0]] }));
+      const second = await createBooking(input({ occurrenceDates: [dates()[1]] }));
+
+      const series = await createBooking(byManager({ occurrenceDates: dates() }));
+
+      assert.equal(series.meetings.length, 2);
+      assert.equal((await meetingById(first.meetings[0].meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+      assert.equal((await meetingById(second.meetings[0].meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
+      assert.equal((await history()).length, 2);
+    });
+
+    it("is refused as a whole, changing nothing, when one occurrence outranks it", async () => {
+      const low = await createBooking(input({ occurrenceDates: [dates()[0]] }));
+      const high = await createBooking(
+        byManager({ occurrenceDates: [dates()[1]], meetingTypeId: f.types.client })
+      );
+
+      const error = await rejection(
+        createBooking(byManager({ occurrenceDates: dates() }))
+      );
+
+      assert.equal(error.status, 409);
+      assert.equal((await meetingById(low.meetings[0].meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+      assert.equal((await meetingById(high.meetings[0].meeting_id)).meetingStatusId, MEETING_STATUS.SCHEDULED);
+      assert.equal((await history()).length, 0);
+    });
+
+    it("overrides every occurrence when Leadership is invited", async () => {
+      const lead = await addUser("Lena Lead", f.groupIds.leadership);
+      const high = await createBooking(
+        byManager({ occurrenceDates: [dates()[1]], meetingTypeId: f.types.client })
+      );
+
+      await createBooking(
+        input({
+          occurrenceDates: dates(),
+          participantCount: 2,
+          participantEmployeeIds: [lead],
+        })
+      );
+
+      assert.equal((await meetingById(high.meetings[0].meeting_id)).meetingStatusId, MEETING_STATUS.PREEMPTED);
     });
   });
 
@@ -380,20 +769,6 @@ describe("group-based booking priority", () => {
 
       assert.equal(error.status, 403);
       assert.equal((await db.select().from(meeting)).length, 0);
-    });
-
-    it("does not preempt without booking.priority, whatever the priority number", async () => {
-      await createBooking(input());
-
-      await db
-        .update(groupPermissions)
-        .set({ isEnabled: false })
-        .where(eq(groupPermissions.permissionKey, PERMISSION.BOOKING_PRIORITY));
-
-      const error = await rejection(createBooking(byManager()));
-
-      assert.equal(error.status, 409);
-      assert.equal((await history()).length, 0);
     });
   });
 
@@ -432,19 +807,25 @@ describe("group-based booking priority", () => {
   });
 
   describe("claimable rooms", () => {
-    it("lists a room whose bookings the employee's group could preempt", async () => {
+    it("lists a room whose bookings the employee's best meeting type outranks", async () => {
       await createBooking(input());
 
+      // Mona can book a Client Meeting (1): it outranks Bob's "Others" (5).
       const rooms = await getClaimableRooms(f.users.manager.employeeId, DAY(), "10:00", "11:00", 1);
       assert.deepEqual(rooms.map((r) => r.room_id), [f.rooms.alpha.room_id]);
 
-      // Equal priority, or no permission to preempt: nothing to claim.
+      // Carol's best type is Team Meeting (3), which also outranks "Others".
       assert.deepEqual(
-        await getClaimableRooms(f.users.carol.employeeId, DAY(), "10:00", "11:00", 1),
-        []
+        (await getClaimableRooms(f.users.carol.employeeId, DAY(), "10:00", "11:00", 1)).map((r) => r.room_id),
+        [f.rooms.alpha.room_id]
       );
+    });
+
+    it("lists nothing when every meeting in the room is at least as high", async () => {
+      await createBooking(byManager({ meetingTypeId: f.types.client }));
+
       assert.deepEqual(
-        await getClaimableRooms(f.users.dave.employeeId, DAY(), "10:00", "11:00", 1),
+        await getClaimableRooms(f.users.manager.employeeId, DAY(), "10:00", "11:00", 1),
         []
       );
     });
@@ -465,15 +846,23 @@ describe("canBumpAll (pure rule)", () => {
     priority,
   });
 
-  it("requires a strictly lower priority for every holder and the permission", () => {
-    assert.equal(canBumpAll([holder(5)], { priority: 3, canPreempt: true }), true);
-    assert.equal(canBumpAll([holder(3)], { priority: 3, canPreempt: true }), false);
-    assert.equal(canBumpAll([holder(2)], { priority: 3, canPreempt: true }), false);
-    assert.equal(canBumpAll([holder(5), holder(2)], { priority: 3, canPreempt: true }), false);
-    assert.equal(canBumpAll([holder(5)], { priority: 1, canPreempt: false }), false);
-    assert.equal(canBumpAll([], { priority: 9, canPreempt: false }), true);
+  it("requires a strictly lower rank for every holder", () => {
+    assert.equal(canBumpAll([holder(5)], 3), true);
+    assert.equal(canBumpAll([holder(3)], 3), false);
+    assert.equal(canBumpAll([holder(2)], 3), false);
+    assert.equal(canBumpAll([holder(5), holder(2)], 3), false);
+    assert.equal(canBumpAll([], 9), true);
+  });
+
+  it("lets a Leadership rank beat every meeting type, but not another Leadership meeting", () => {
+    assert.equal(canBumpAll([holder(1)], claimantRank(5, true)), true);
+    assert.equal(canBumpAll([holder(TOP_RANK)], claimantRank(1, true)), false);
+    assert.equal(canBumpAll([holder(PROTECTED_RANK)], claimantRank(1, true)), false, "nothing beats a protected meeting");
+    assert.equal(canBumpAll([holder(PROTECTED_RANK), holder(5)], claimantRank(1, true)), false);
+    assert.equal(claimantRank(5, false), 5);
   });
 });
+
 
 // Meetings the earlier meeting-type engine left waiting for their organizer
 // (status PENDING_RESCHEDULE) are still handled by the reschedule flow.

@@ -1,6 +1,23 @@
 // Shared date/time validation helpers for meeting booking schemas.
 
-import { isSlotStartInPast, nowInAppTimezone } from "@/lib/time";
+import { durationMinutes, isSlotStartInPast, nowInAppTimezone } from "@/lib/time";
+
+// Shortest meeting anyone can book, reschedule to or be suggested. One rule
+// for every path (forms, APIs, services).
+export const MIN_MEETING_MINUTES = 15;
+export const MIN_DURATION_MESSAGE = `Meeting duration must be at least ${MIN_MEETING_MINUTES} minutes.`;
+
+// Duration is measured on the wall-clock times as booked (same day, start <
+// end): meetings are stored and shown that way, and the application's zone has
+// no daylight-saving jumps. Malformed values pass here; the field checks
+// report them (refinements must not throw on them).
+export function isLongEnough(start: string, end: string) {
+  return (
+    !TIME_REGEX.test(start.slice(0, 5)) ||
+    !TIME_REGEX.test(end.slice(0, 5)) ||
+    durationMinutes(start, end) >= MIN_MEETING_MINUTES
+  );
+}
 
 export const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 export const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -16,17 +33,54 @@ export function isValidCalendarDate(value: string) {
   );
 }
 
-// Matches the booking UI's own window (today .. today + 3 months). "Today" is
-// the date in the application's timezone, not UTC.
+// Months ahead a meeting can be booked.
+export const BOOKING_WINDOW_MONTHS = 3;
+
+// Last bookable date: `today` + 3 months, on the same day of the month or the
+// last day of a shorter month (Nov 30 -> Feb 28, Jan 31 -> Apr 30), never
+// rolling over into the month after.
+export function bookingWindowEnd(today: string) {
+  const [year, month, day] = today.split("-").map(Number);
+  const monthIndex = year * 12 + (month - 1) + BOOKING_WINDOW_MONTHS;
+  const targetYear = Math.floor(monthIndex / 12);
+  const targetMonth = monthIndex % 12;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+
+  return [
+    targetYear,
+    String(targetMonth + 1).padStart(2, "0"),
+    String(Math.min(day, lastDay)).padStart(2, "0"),
+  ].join("-");
+}
+
+// The booking window (today .. bookingWindowEnd), shared with the booking UI.
+// "Today" is the date in the application's timezone, not UTC.
 export function isWithinBookingWindow(value: string, now: Date = new Date()) {
-  const today = new Date(`${nowInAppTimezone(now).date}T00:00:00.000Z`);
+  const today = nowInAppTimezone(now).date;
 
-  const maxDate = new Date(today);
-  maxDate.setUTCMonth(maxDate.getUTCMonth() + 3);
+  return value >= today && value <= bookingWindowEnd(today);
+}
 
-  const date = new Date(`${value}T00:00:00.000Z`);
+// Meetings must start at least this long after "now" (booking, series, move,
+// reschedule). Same rule in the booking form.
+export const MIN_LEAD_MINUTES = 15;
+export const LEAD_TIME_MESSAGE = `Meetings must start at least ${MIN_LEAD_MINUTES} minutes from now.`;
 
-  return date >= today && date <= maxDate;
+// True when the slot starts at least MIN_LEAD_MINUTES after `now`, comparing
+// wall-clock date + time in the application's time zone (as stored). Malformed
+// values pass here; the field checks report them.
+export function hasMinimumLead(
+  date: string,
+  time: string,
+  now: Date = new Date()
+) {
+  if (!DATE_REGEX.test(date) || !TIME_REGEX.test(time.slice(0, 5))) return true;
+
+  const earliest = nowInAppTimezone(
+    new Date(now.getTime() + MIN_LEAD_MINUTES * 60_000)
+  );
+
+  return `${date} ${time.slice(0, 5)}` >= `${earliest.date} ${earliest.time.slice(0, 5)}`;
 }
 
 // True when the slot has not started yet (the current minute is still OK).

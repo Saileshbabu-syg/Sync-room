@@ -63,33 +63,50 @@ describe("/booking/available-rooms (F-02: used to 500 for every user)", () => {
     assert.ok(!res.text.includes("Gamma"), "a room under maintenance is not offered");
   });
 
-  it("respects capacity", async () => {
-    const res = await app.call("GET", url({ participants: "6" }), { as: f.users.bob });
-
-    assert.equal(res.status, 200);
-    assert.ok(res.text.includes("Alpha"));
-    assert.ok(!res.text.includes("Beta"));
-  });
-
-  it("shows an empty state (not a crash) when nothing is free", async () => {
+  it("does not hide rooms for a larger headcount (capacity only warns on the booking form)", async () => {
     const res = await app.call("GET", url({ participants: "11" }), { as: f.users.bob });
 
     assert.equal(res.status, 200);
-    assert.ok(res.text.includes("no-rooms-available"));
-    assert.ok(res.text.includes("No rooms available"));
+    assert.ok(res.text.includes("Alpha"));
+    assert.ok(res.text.includes("Beta"));
   });
 
-  it("lists a room that is booked for the slot as occupied (still selectable), and back-to-back as free", async () => {
+  it("shows an empty state (not a crash) when nothing is free", async () => {
+    const setStatus = (statusId: number) =>
+      Promise.all(
+        [f.rooms.alpha, f.rooms.beta].map((r) =>
+          db.update(room).set({ availabilityStatusId: statusId }).where(eq(room.room_id, r.room_id))
+        )
+      );
+
+    await setStatus(2); // under maintenance
+
+    try {
+      const res = await app.call("GET", url(), { as: f.users.bob });
+
+      assert.equal(res.status, 200);
+      assert.ok(res.text.includes("no-rooms-available"));
+      assert.ok(res.text.includes("No rooms available"));
+    } finally {
+      await setStatus(1);
+    }
+  });
+
+  it("hides a booked room unless the viewer's meeting types outrank it, and lists back-to-back as free", async () => {
+    // Bob's Team Meeting (rank 3) holds Alpha 09:00-10:00.
     assert.equal((await book(f.users.bob, { start_time: "09:00", end_time: "10:00", meeting_date: dateFromToday(6) })).status, 201);
 
-    const overlapping = await app.call("GET", url({ start: "09:30", end: "10:30" }), { as: f.users.carol });
-    assert.ok(overlapping.text.includes("Alpha"), "the booked room is shown, not hidden");
-    assert.ok(overlapping.text.includes("occupied-room-note"), "and marked as occupied");
-    assert.ok(overlapping.text.includes("Beta"));
+    // Carol's best type is also Team Meeting (3): equal rank cannot take it.
+    const equal = await app.call("GET", url({ start: "09:30", end: "10:30" }), { as: f.users.carol });
+    assert.ok(!equal.text.includes("Alpha"), "the booked room is not offered");
+    assert.ok(equal.text.includes("Beta"));
+
+    // Mona can book a Client Meeting (1), which outranks it: the room is offered.
+    const higher = await app.call("GET", url({ start: "09:30", end: "10:30" }), { as: f.users.manager });
+    assert.ok(higher.text.includes("Alpha"), "a higher-ranked type may take the room");
 
     const adjacent = await app.call("GET", url({ start: "10:00", end: "11:00" }), { as: f.users.carol });
     assert.ok(adjacent.text.includes("Alpha"), "starts exactly when the other meeting ends");
-    assert.ok(!adjacent.text.includes("occupied-room-note"), "nothing is in the way");
   });
 
   it("redirects anonymous users to /login with a real 3xx (no data, no fake 200)", async () => {
@@ -421,7 +438,7 @@ describe("edit and cancel (F-19)", () => {
   });
 
   it("rejects bad input", async () => {
-    for (const body of [{ title: "a b" }, { participantCount: -1 }, { participantEmployeeIds: [999999] }, { participantCount: 99 }]) {
+    for (const body of [{ title: "a b" }, { participantCount: -1 }, { participantEmployeeIds: [999999] }]) {
       await expectStatus(edit(body), [400, 404], JSON.stringify(body));
     }
   });

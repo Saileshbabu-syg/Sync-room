@@ -4,13 +4,14 @@ import {
   employee,
   meeting,
   recurrence_frequency_master,
+  recurringMeetingSkippedDates,
   recurring_meetings,
   room,
 } from "@/db/schema";
 import { MEETING_STATUS } from "@/lib/constants";
 import type { DbExecutor } from "@/lib/db-types";
 
-import { computeOccurrenceDates } from "@/lib/recurrence";
+import { computeOccurrenceDates, frequencyFromName } from "@/lib/recurrence";
 
 // What a confirmation e-mail says about a recurring series. It is built from the
 // `meeting` rows that were actually saved (one per occurrence), never from the
@@ -20,6 +21,11 @@ export type SeriesOccurrence = {
   date: string;
   startTime: string;
   endTime: string;
+  // Online Teams Meeting: this occurrence's own joining link.
+  joinUrl?: string;
+  // This occurrence's calendar identity (its meeting id and ics_sequence).
+  meetingId?: number;
+  sequence?: number;
 };
 
 export type MeetingEmailSeries = {
@@ -39,6 +45,9 @@ type SeriesRow = {
   start_time: string;
   end_time: string;
   meetingStatusId: number;
+  online_join_url?: string | null;
+  meeting_id?: number;
+  ics_sequence?: number;
 };
 
 const FREQUENCY_LABELS: Record<string, string> = {
@@ -63,8 +72,15 @@ export function frequencyLabel(name: string) {
 // monthly series whose first date was skipped) nothing is claimed as skipped.
 function findSkippedDates(
   bookedDates: string[],
-  frequencyId: number
+  frequencyName: string,
+  interval = 1
 ): string[] {
+  // A stored frequency this version does not support: claim nothing rather
+  // than guess a pattern.
+  const frequency = frequencyFromName(frequencyName);
+
+  if (!frequency) return [];
+
   const first = bookedDates[0];
   const last = bookedDates[bookedDates.length - 1];
 
@@ -75,9 +91,15 @@ function findSkippedDates(
         86_400_000
     ) + 1;
 
-  const grid = computeOccurrenceDates(first, frequencyId, span).filter(
-    (d) => d <= last
-  );
+  let grid: string[];
+
+  try {
+    grid = computeOccurrenceDates(first, frequency, span, { interval }).filter(
+      (d) => d <= last
+    );
+  } catch {
+    return [];
+  }
 
   const booked = new Set(bookedDates);
   const onGrid = new Set(grid);
@@ -89,10 +111,14 @@ function findSkippedDates(
 
 // Pure: rows of one series -> the series section of the e-mail. Returns null
 // when no occurrence is confirmed any more.
+// `options`: the stored pattern interval ("every N weeks") and the skipped
+// dates stored with the series (L-1). Stored skipped dates are always listed;
+// for series booked before they were stored, the gaps on the pattern grid are
+// listed as well.
 export function buildSeriesEmail(
-  frequencyId: number,
   frequencyName: string,
-  rows: SeriesRow[]
+  rows: SeriesRow[],
+  options: { interval?: number; skippedDates?: string[] } = {}
 ): MeetingEmailSeries | null {
   const sorted = [...rows].sort(
     (a, b) =>
@@ -112,16 +138,31 @@ export function buildSeriesEmail(
 
   const allDates = [...new Set(sorted.map((r) => r.meeting_date))];
 
+  const interval = options.interval ?? 1;
+  const skippedDates = [
+    ...new Set([
+      ...(options.skippedDates ?? []),
+      ...findSkippedDates(allDates, frequencyName, interval),
+    ]),
+  ].sort();
+
   return {
-    frequency: frequencyLabel(frequencyName),
+    frequency:
+      interval > 1 && frequencyFromName(frequencyName) === "WEEKLY"
+        ? `Every ${interval} weeks`
+        : frequencyLabel(frequencyName),
     startDate: confirmed[0].meeting_date,
     endDate: confirmed[confirmed.length - 1].meeting_date,
     occurrences: confirmed.map((r) => ({
       date: r.meeting_date,
       startTime: String(r.start_time),
       endTime: String(r.end_time),
+      ...(r.online_join_url ? { joinUrl: r.online_join_url } : {}),
+      ...(r.meeting_id !== undefined
+        ? { meetingId: r.meeting_id, sequence: r.ics_sequence ?? 0 }
+        : {}),
     })),
-    skippedDates: findSkippedDates(allDates, frequencyId),
+    skippedDates,
     cancelledDates,
   };
 }
@@ -140,8 +181,8 @@ export async function loadSeriesEmailContext(
 ): Promise<SeriesEmailContext | null> {
   const [series] = await executor
     .select({
-      frequencyId: recurring_meetings.frequency_id,
       frequencyName: recurrence_frequency_master.frequency_name,
+      interval: recurring_meetings.recurrence_interval,
     })
     .from(recurring_meetings)
     .innerJoin(
@@ -161,6 +202,9 @@ export async function loadSeriesEmailContext(
       start_time: meeting.start_time,
       end_time: meeting.end_time,
       meetingStatusId: meeting.meetingStatusId,
+      online_join_url: meeting.online_join_url,
+      meeting_id: meeting.meeting_id,
+      ics_sequence: meeting.ics_sequence,
       roomName: room.room_name,
       organizerName: employee.employee_name,
     })
@@ -174,11 +218,15 @@ export async function loadSeriesEmailContext(
 
   if (rows.length === 0) return null;
 
-  const built = buildSeriesEmail(
-    series.frequencyId,
-    series.frequencyName,
-    rows
-  );
+  const skipped = await executor
+    .select({ date: recurringMeetingSkippedDates.skippedDate })
+    .from(recurringMeetingSkippedDates)
+    .where(eq(recurringMeetingSkippedDates.recurringMeetingId, recurringMeetingId));
+
+  const built = buildSeriesEmail(series.frequencyName, rows, {
+    interval: series.interval,
+    skippedDates: skipped.map((r) => r.date),
+  });
 
   if (!built) return null;
 

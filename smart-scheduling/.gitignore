@@ -41,6 +41,21 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# terraform: local state, provider binaries and real variable values
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
 # audit / remediation artefacts and local test config (internal-confidential)
 /AUDIT_REPORT.md
 /REMEDIATION_REPORT.md

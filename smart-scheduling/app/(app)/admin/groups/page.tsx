@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { getCurrentUserProfile } from "@/lib/auth-helpers";
+import { getAppBookingSettings } from "@/lib/services/booking-settings.service";
 import {
   listGroups,
   listMeetingTypes,
@@ -23,10 +24,11 @@ export default async function GroupManagementPage() {
   // /api/admin/* routes check this again on every request.
   if (!currentUser.canManageGroups) redirect("/home");
 
-  const [groups, meetingTypes, rooms] = await Promise.all([
+  const [groups, meetingTypes, rooms, appSettings] = await Promise.all([
     listGroups(),
     listMeetingTypes(),
     listRoomOptions(),
+    getAppBookingSettings(),
   ]);
 
   return (
@@ -37,6 +39,7 @@ export default async function GroupManagementPage() {
       }))}
       meetingTypes={meetingTypes}
       rooms={rooms}
+      initialAppSettings={appSettings}
     />
   );
 }

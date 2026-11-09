@@ -16,6 +16,7 @@ import {
   groupMeetingTypes,
 } from "@/db/schema";
 import { setMailTransport } from "@/lib/services/email.service";
+import { setOnlineDispatchEnabled } from "@/lib/services/online-meeting.service";
 import { nowInAppTimezone } from "@/lib/time";
 
 import { migrateDatabase } from "./migrate";
@@ -81,6 +82,10 @@ const TYPES = [
 export type Fixtures = Awaited<ReturnType<typeof seedFixtures>>;
 
 export async function seedFixtures() {
+  // Teams work runs only when a test calls the worker (no background calls
+  // racing the test).
+  setOnlineDispatchEnabled(false);
+
   await ensureMigrated();
   await resetData();
   await seedLookups(db);
@@ -217,10 +222,17 @@ export function dateFromToday(days: number) {
 
 // Replaces the mail transport with an in-memory JSON transport and records
 // every message "sent". Nothing leaves the process.
+// A moment `minutes` from now: e-mail retries back off exponentially
+// (lib/delivery-policy.ts), so a test retries "later" by passing this clock.
+export const minutesFromNow = (minutes: number) =>
+  new Date(Date.now() + minutes * 60_000);
+
 export function captureMail(options: { failTimes?: number } = {}) {
   const sent: {
     from: string;
     to: string;
+    visibleTo: string;
+    bcc: string;
     subject: string;
     html: string;
     text: string;
@@ -244,9 +256,16 @@ export function captureMail(options: { failTimes?: number } = {}) {
 
     const attachment = (m.attachments as { content?: unknown }[] | undefined)?.[0];
 
+    const list = (value: unknown) =>
+      value === undefined ? [] : Array.isArray(value) ? value.map(String) : [String(value)];
+
     sent.push({
       from: String(m.from),
-      to: Array.isArray(m.to) ? m.to.join(",") : String(m.to),
+      // Everyone the message was delivered to (To and Bcc) ...
+      to: [...list(m.to), ...list(m.bcc)].join(","),
+      // ... and what each recipient can SEE in the To / Cc headers.
+      visibleTo: [...list(m.to), ...list(m.cc)].join(","),
+      bcc: list(m.bcc).join(","),
       subject: String(m.subject),
       html: String(m.html),
       text: String(m.text),

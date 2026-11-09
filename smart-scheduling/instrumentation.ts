@@ -26,6 +26,24 @@ export async function register() {
     }
   }
 
+  // Teams is optional: only a half-configured setup is worth a line.
+  const { teamsConfigProblems } = await import(
+    "@/lib/services/teams-meeting.service"
+  );
+
+  const teamsVars = [
+    "TEAMS_TENANT_ID",
+    "TEAMS_CLIENT_ID",
+    "TEAMS_CLIENT_SECRET",
+    "TEAMS_ORGANIZER_EMAIL",
+  ];
+
+  if (teamsVars.some((name) => process.env[name])) {
+    for (const problem of teamsConfigProblems()) {
+      console.error(`Teams configuration: ${problem}`);
+    }
+  }
+
   const { startReminderScheduler } = await import("@/lib/cron/reminder-job");
 
   startReminderScheduler();

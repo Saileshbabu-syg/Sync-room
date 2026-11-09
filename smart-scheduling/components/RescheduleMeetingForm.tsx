@@ -30,9 +30,12 @@ type Props = {
   startTime: string;
   endTime: string;
   participantCount: number;
-  // When the meeting is cancelled automatically if still unchanged ("YYYY-MM-DD HH:mm").
+  // When the meeting is cancelled automatically if still unchanged (e.g. "Thu, 5 Nov 2026 02:30 PM").
   deadline: string | null;
   rooms: RoomOption[];
+  // "move": an ordinary scheduled meeting the organizer wants elsewhere
+  // (B-04). Default: a bumped meeting that must be rescheduled.
+  mode?: "reschedule" | "move";
 };
 
 // For a meeting whose room was needed by a higher-priority meeting: pick another
@@ -47,6 +50,7 @@ export default function RescheduleMeetingForm({
   participantCount,
   deadline,
   rooms,
+  mode = "reschedule",
 }: Props) {
   const router = useRouter();
 
@@ -98,15 +102,24 @@ export default function RescheduleMeetingForm({
 
   return (
     <div className="rounded-2xl border bg-white p-8 shadow">
-      <h1 className="mb-2 text-3xl font-bold">Reschedule Meeting</h1>
+      <h1 className="mb-2 text-3xl font-bold">
+        {mode === "move" ? "Move Meeting" : "Reschedule Meeting"}
+      </h1>
 
-      <p className="mb-8 text-gray-600">
-        The room for <strong>{title}</strong> is needed for a higher-priority
-        meeting.{" "}
-        {deadline
-          ? `Choose another room or time before ${deadline}; otherwise the meeting will be cancelled automatically.`
-          : "Choose another room or time; otherwise the meeting will be cancelled automatically."}
-      </p>
+      {mode === "move" ? (
+        <p className="mb-8 text-gray-600">
+          Move <strong>{title}</strong> to another room, date or time. Attendees
+          keep their answers and receive an updated invitation.
+        </p>
+      ) : (
+        <p className="mb-8 text-gray-600">
+          The room for <strong>{title}</strong> is needed for a higher-priority
+          meeting.{" "}
+          {deadline
+            ? `Choose another room or time before ${deadline}; otherwise the meeting will be cancelled automatically.`
+            : "Choose another room or time; otherwise the meeting will be cancelled automatically."}
+        </p>
+      )}
 
       <div className="space-y-6">
         <div>
@@ -151,7 +164,7 @@ export default function RescheduleMeetingForm({
 
         <div className="flex gap-4">
           <Button onClick={handleSubmit} disabled={loading}>
-            {loading ? "Saving..." : "Reschedule Meeting"}
+            {loading ? "Saving..." : mode === "move" ? "Move Meeting" : "Reschedule Meeting"}
           </Button>
 
           <Button

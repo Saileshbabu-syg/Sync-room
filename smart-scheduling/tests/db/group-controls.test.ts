@@ -244,10 +244,8 @@ describe("room management permission", () => {
   });
 });
 
-describe("Entra settings and group mapping", () => {
+describe("Entra sync settings", () => {
   const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
-  const GROUP_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-  const GROUP_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const person = (n: number, email: string) => ({ id: ID(n), displayName: `User ${n}`, mail: email, accountEnabled: true });
 
   const activeGroupOf = async (email: string) => {
@@ -263,108 +261,73 @@ describe("Entra settings and group mapping", () => {
   beforeEach(async () => {
     await db.execute(sql`TRUNCATE employee_sync_runs RESTART IDENTITY`);
     await db.update(employee).set({ entra_object_id: null });
-    await updateEntraSettings({ autoSyncEnabled: false, intervalHours: 24, mappings: [] }, admin);
+    await updateEntraSettings({ autoSyncEnabled: false, intervalHours: 24, defaultGroupId: f.groupIds.employee }, admin);
   });
 
-  it("saves the schedule and mappings, audits the change, and rejects an unknown group", async () => {
-    await updateEntraSettings(
-      {
-        autoSyncEnabled: true,
-        intervalHours: 6,
-        mappings: [{ entraGroupId: GROUP_A, entraGroupName: "Leads", groupId: f.groupIds.manager }],
-      },
-      admin
-    );
+  it("saves the schedule and audits the change", async () => {
+    await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 168, defaultGroupId: f.groupIds.employee }, admin);
 
     const settings = await getEntraSettings();
 
     assert.equal(settings.autoSyncEnabled, true);
-    assert.equal(settings.intervalHours, 6);
-    assert.deepEqual(settings.mappings.map((m) => [m.entraGroupId, m.groupName]), [[GROUP_A, "Manager"]]);
+    assert.equal(settings.intervalHours, 168);
     assert.ok((await db.select().from(groupAuditLogs)).some((a) => a.action === "ENTRA_SETTINGS_UPDATED"));
-
-    const error = await failure(
-      updateEntraSettings({ autoSyncEnabled: false, intervalHours: 6, mappings: [{ entraGroupId: GROUP_B, entraGroupName: "", groupId: 99999 }] }, admin)
-    );
-
-    assert.ok(error instanceof GroupError);
-    assert.equal((await getEntraSettings()).mappings.length, 1, "nothing changed");
   });
 
-  it("puts a first-time person in the group mapped from their Entra group; the rest go to Employee", async () => {
-    await updateEntraSettings(
-      { autoSyncEnabled: false, intervalHours: 24, mappings: [{ entraGroupId: GROUP_A, entraGroupName: "Leads", groupId: f.groupIds.manager }] },
-      admin
+  it("the database only accepts the four interval presets", async () => {
+    for (const hours of [1, 24, 168, 720]) {
+      await updateEntraSettings({ autoSyncEnabled: true, intervalHours: hours, defaultGroupId: f.groupIds.employee }, admin);
+
+      assert.equal((await getEntraSettings()).intervalHours, hours);
+    }
+
+    await assert.rejects(updateEntraSettings({ autoSyncEnabled: true, intervalHours: 6, defaultGroupId: f.groupIds.employee }, admin));
+  });
+
+  it("new people go to the group chosen in the settings, falling back to Employee", async () => {
+    await updateEntraSettings({ autoSyncEnabled: false, intervalHours: 24, defaultGroupId: f.groupIds.tl }, admin);
+
+    assert.equal((await getEntraSettings()).defaultGroupId, f.groupIds.tl);
+
+    await syncEmployees({ actorEmployeeId: admin, users: [person(7, "chosen@example.test")] });
+
+    assert.equal(await activeGroupOf("chosen@example.test"), f.groupIds.tl);
+
+    // An inactive group is not used: the person falls back to Employee.
+    await updateGroup(f.groupIds.tl, { isActive: false }, admin);
+    await syncEmployees({ actorEmployeeId: admin, users: [person(8, "fallback@example.test")] });
+
+    assert.equal(await activeGroupOf("fallback@example.test"), f.groupIds.employee);
+
+    await updateGroup(f.groupIds.tl, { isActive: true }, admin);
+
+    const error = await failure(
+      updateEntraSettings({ autoSyncEnabled: false, intervalHours: 24, defaultGroupId: 99999 }, admin)
     );
 
+    assert.ok(error instanceof GroupError, "an unknown group is refused");
+  });
+
+  it("everyone synced for the first time goes to the Employee group", async () => {
     const summary = await syncEmployees({
       actorEmployeeId: admin,
-      users: [person(1, "lead@example.test"), person(2, "plain@example.test")],
-      groupMembers: { [GROUP_A]: [ID(1)] },
+      users: [person(1, "new@example.test"), person(2, "plain@example.test")],
     });
 
-    assert.equal(summary.mappedToGroup, 1);
-    assert.equal(await activeGroupOf("lead@example.test"), f.groupIds.manager);
+    assert.equal(await activeGroupOf("new@example.test"), f.groupIds.employee);
     assert.equal(await activeGroupOf("plain@example.test"), f.groupIds.employee);
   });
 
-  it("the highest-priority mapped group wins when someone is in several", async () => {
-    await updateEntraSettings(
-      {
-        autoSyncEnabled: false,
-        intervalHours: 24,
-        mappings: [
-          { entraGroupId: GROUP_A, entraGroupName: "Managers", groupId: f.groupIds.manager },
-          { entraGroupId: GROUP_B, entraGroupName: "Board", groupId: f.groupIds.leadership },
-        ],
-      },
-      admin
-    );
+  it("never moves someone who already has a group", async () => {
+    await updateGroup(f.groupIds.manager, { isActive: true }, admin);
 
-    await syncEmployees({
-      actorEmployeeId: admin,
-      users: [person(3, "both@example.test")],
-      groupMembers: { [GROUP_A]: [ID(3)], [GROUP_B]: [ID(3)] },
-    });
-
-    assert.equal(await activeGroupOf("both@example.test"), f.groupIds.leadership);
-  });
-
-  it("never moves someone who already has a group, even if they are in a mapped Entra group", async () => {
-    await updateEntraSettings(
-      { autoSyncEnabled: false, intervalHours: 24, mappings: [{ entraGroupId: GROUP_A, entraGroupName: "Board", groupId: f.groupIds.leadership }] },
-      admin
-    );
-
-    // Bob (Employee group) is linked now: that is his first sync, but he has a group.
     const summary = await syncEmployees({
       actorEmployeeId: admin,
-      users: [person(4, f.users.bob.email)],
-      groupMembers: { [GROUP_A]: [ID(4)] },
+      users: [person(4, f.users.manager.email)],
     });
 
     assert.equal(summary.linked, 1);
-    assert.equal(summary.mappedToGroup, 0);
-    assert.equal(await activeGroupOf(f.users.bob.email), f.groupIds.employee);
-
-    // And a later sync does not apply the mapping to someone who is no longer new.
-    await syncEmployees({ actorEmployeeId: admin, users: [person(4, f.users.bob.email)], groupMembers: { [GROUP_A]: [ID(4)] } });
-
-    assert.equal(await activeGroupOf(f.users.bob.email), f.groupIds.employee);
-  });
-
-  it("ignores a mapping to an inactive group", async () => {
-    await updateEntraSettings(
-      { autoSyncEnabled: false, intervalHours: 24, mappings: [{ entraGroupId: GROUP_A, entraGroupName: "TL", groupId: f.groupIds.tl }] },
-      admin
-    );
-    await updateGroup(f.groupIds.tl, { isActive: false }, admin);
-
-    await syncEmployees({ actorEmployeeId: admin, users: [person(5, "tl@example.test")], groupMembers: { [GROUP_A]: [ID(5)] } });
-
-    assert.equal(await activeGroupOf("tl@example.test"), f.groupIds.employee);
-
-    await updateGroup(f.groupIds.tl, { isActive: true }, admin);
+    assert.equal(await activeGroupOf(f.users.manager.email), f.groupIds.manager);
   });
 
   describe("automatic sync", () => {
@@ -373,14 +336,14 @@ describe("Entra settings and group mapping", () => {
     it("does nothing while it is switched off or not configured", async () => {
       assert.equal(await runScheduledSync(new Date(), env), false);
 
-      await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 1, mappings: [] }, admin);
+      await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 1, defaultGroupId: f.groupIds.employee }, admin);
 
       assert.equal(await runScheduledSync(new Date(), {}), false, "no Entra credentials");
       assert.equal((await db.select().from(employeeSyncRuns)).length, 0);
     });
 
     it("waits for the interval after the last attempt", async () => {
-      await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 6, mappings: [] }, admin);
+      await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 24, defaultGroupId: f.groupIds.employee }, admin);
       await db.insert(employeeSyncRuns).values({ status: "SUCCESS", finishedAt: new Date() });
 
       assert.equal(await runScheduledSync(new Date(), env), false, "the last sync was just now");
@@ -392,9 +355,9 @@ describe("Entra settings and group mapping", () => {
 
       assert.equal((await getEntraSettings()).autoSyncEnabled, false);
 
-      await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 12, mappings: [] }, admin);
+      await updateEntraSettings({ autoSyncEnabled: true, intervalHours: 720, defaultGroupId: f.groupIds.employee }, admin);
 
-      assert.equal((await getEntraSettings()).intervalHours, 12);
+      assert.equal((await getEntraSettings()).intervalHours, 720);
     });
   });
 });

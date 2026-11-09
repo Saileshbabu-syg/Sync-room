@@ -2,9 +2,13 @@
 
 import Link from "next/link";
 
-import { invitationCategory } from "@/lib/constants";
+import { invitationCategory, MEETING_STATUS } from "@/lib/constants";
+import { formatDate, formatTimeRange } from "@/lib/format";
 import BumpedDetails, { type BumpDetails } from "@/components/BumpedDetails";
 import CancelMeetingButton from "@/components/CancelMeetingButton";
+import JoinMeetingButton, { TeamsBadge } from "@/components/JoinMeetingButton";
+import RetryTeamsButton from "@/components/RetryTeamsButton";
+import { StatusBadge, TeamsStatusBadge } from "@/components/StatusBadge";
 
 import {
   CalendarDays,
@@ -41,7 +45,7 @@ type Meeting = {
   participantCount: number;
   roomName: string;
   meetingType: string;
-  meetingStatus: string;
+  meetingStatusId: number;
 
   organizer: {
     employeeId: number;
@@ -53,6 +57,17 @@ type Meeting = {
   // Organizer or Admin; participants only view.
   canManage: boolean;
 
+  // Set when the meeting is an occurrence of a recurring series.
+  recurringMeetingId?: number | null;
+
+  // Online Teams Meeting. The link is only passed to people who may view the
+  // meeting. onlineStatus: PENDING while the Teams meeting is being created
+  // or updated in the background, FAILED when that gave up (retry possible).
+  isOnline: boolean;
+  onlineJoinUrl: string | null;
+  onlineRequested: boolean;
+  onlineStatus?: string;
+
   // Set for a bumped booking: who took the room.
   bumped?: BumpDetails | null;
 };
@@ -61,15 +76,43 @@ type Props = {
   meeting: Meeting;
 };
 
+const section = "rounded-2xl border bg-white p-4 shadow sm:p-8";
+
+function Field({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof ClipboardList;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <Icon className="shrink-0 text-blue-600" aria-hidden />
+
+      <div className="min-w-0">
+        <p className="text-sm text-gray-500">{label}</p>
+        <div className="break-words font-semibold">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function BookingDetailsCard({
   meeting,
 }: Props) {
+  const status = meeting.meetingStatusId;
+  const scheduled = status === MEETING_STATUS.SCHEDULED;
+  const pendingReschedule = status === MEETING_STATUS.PENDING_RESCHEDULE;
+  const teamsNotReady = meeting.onlineRequested && !meeting.isOnline;
+
   return (
     <div className="space-y-8">
 
       {/* Meeting Information */}
 
-      <div className="rounded-2xl border bg-white p-8 shadow">
+      <div className={section}>
 
         <h2 className="mb-6 text-2xl font-bold">
           Meeting Information
@@ -77,158 +120,45 @@ export default function BookingDetailsCard({
 
         <div className="grid gap-5 md:grid-cols-2">
 
-          <div className="flex items-center gap-3">
+          <Field icon={ClipboardList} label="Title">
+            {meeting.title}
+          </Field>
 
-            <ClipboardList className="text-blue-600" />
+          <Field icon={Building2} label="Room">
+            {meeting.roomName}
+          </Field>
 
-            <div>
+          <Field icon={CalendarDays} label="Meeting Date">
+            {formatDate(meeting.meetingDate)}
+          </Field>
 
-              <p className="text-sm text-gray-500">
-                Title
-              </p>
+          <Field icon={Clock} label="Time">
+            {formatTimeRange(meeting.startTime, meeting.endTime)}
+          </Field>
 
-              <p className="font-semibold">
-                {meeting.title}
-              </p>
+          <Field icon={BadgeCheck} label="Meeting Type">
+            <span className="flex flex-wrap items-center gap-2">
+              {meeting.meetingType}
+              {meeting.isOnline && <TeamsBadge />}
+            </span>
+          </Field>
 
-            </div>
+          <Field icon={Users} label="Participants">
+            {meeting.participantCount}
+          </Field>
 
-          </div>
-
-          <div className="flex items-center gap-3">
-
-            <Building2 className="text-blue-600" />
-
-            <div>
-
-              <p className="text-sm text-gray-500">
-                Room
-              </p>
-
-              <p className="font-semibold">
-                {meeting.roomName}
-              </p>
-
-            </div>
-
-          </div>
-
-          <div className="flex items-center gap-3">
-
-            <CalendarDays className="text-blue-600" />
-
-            <div>
-
-              <p className="text-sm text-gray-500">
-                Meeting Date
-              </p>
-
-              <p className="font-semibold">
-                {meeting.meetingDate}
-              </p>
-
-            </div>
-
-          </div>
-
-          <div className="flex items-center gap-3">
-
-            <Clock className="text-blue-600" />
-
-            <div>
-
-              <p className="text-sm text-gray-500">
-                Time
-              </p>
-
-              <p className="font-semibold">
-                {meeting.startTime} - {meeting.endTime}
-              </p>
-
-            </div>
-
-          </div>
-
-          <div className="flex items-center gap-3">
-
-            <BadgeCheck className="text-blue-600" />
-
-            <div>
-
-              <p className="text-sm text-gray-500">
-                Meeting Type
-              </p>
-
-              <p className="font-semibold">
-                {meeting.meetingType}
-              </p>
-
-            </div>
-
-          </div>
-
-          <div className="flex items-center gap-3">
-
-            <Users className="text-blue-600" />
-
-            <div>
-
-              <p className="text-sm text-gray-500">
-                Participants
-              </p>
-
-              <p className="font-semibold">
-                {meeting.participantCount}
-              </p>
-
-            </div>
-
-          </div>
-
-          {/* Status */}
-
-          <div className="flex items-center gap-3">
-
-            <BadgeCheck
-              className={
-                meeting.meetingStatus === "Scheduled"
-                  ? "text-green-600"
-                  : meeting.meetingStatus === "Pending reschedule"
-                  ? "text-amber-600"
-                    : meeting.meetingStatus === "Completed"
-                  ? "text-blue-600"
-                  : meeting.meetingStatus === "Replaced"
-                  ? "text-orange-600"
-                  : "text-red-600"
-              }
-            />
-
-            <div>
-
-              <p className="text-sm text-gray-500">
-                Status
-              </p>
-
-              <span
-                className={`rounded-full px-3 py-1 text-sm font-semibold
-                  ${
-                    meeting.meetingStatus === "Scheduled"
-                      ? "bg-green-100 text-green-700"
-                      : meeting.meetingStatus === "Pending reschedule"
-                      ? "bg-amber-100 text-amber-700"
-                      : meeting.meetingStatus === "Completed"
-                      ? "bg-blue-100 text-blue-700"
-                      : meeting.meetingStatus === "Replaced"
-                      ? "bg-orange-100 text-orange-800"
-                      : "bg-red-100 text-red-700"
-                  }`}
-              >
-                {meeting.meetingStatus}
-              </span>
-
-            </div>
-
-          </div>
+          <Field icon={BadgeCheck} label="Status">
+            <span className="mt-1 flex flex-wrap items-center gap-2">
+              <StatusBadge statusId={status} className="text-sm" />
+              {(scheduled || pendingReschedule) && (
+                <TeamsStatusBadge
+                  onlineRequested={teamsNotReady}
+                  onlineStatus={meeting.onlineStatus}
+                  className="text-sm"
+                />
+              )}
+            </span>
+          </Field>
 
         </div>
 
@@ -236,9 +166,58 @@ export default function BookingDetailsCard({
 
       {meeting.bumped && <BumpedDetails bump={meeting.bumped} />}
 
+      {/* Online Teams Meeting */}
+
+      {meeting.isOnline &&
+        meeting.onlineJoinUrl &&
+        (scheduled || pendingReschedule) && (
+          <div className={section}>
+            <h2 className="mb-2 text-2xl font-bold">
+              Microsoft Teams Meeting
+            </h2>
+
+            <p className="mb-4 break-all text-sm text-gray-500">
+              {meeting.onlineJoinUrl}
+            </p>
+
+            <JoinMeetingButton joinUrl={meeting.onlineJoinUrl} />
+          </div>
+        )}
+
+      {teamsNotReady &&
+        meeting.onlineStatus === "PENDING" &&
+        scheduled && (
+          <div
+            className="rounded-2xl border border-blue-200 bg-blue-50 p-6 text-blue-900"
+            data-testid="teams-pending"
+            role="status"
+          >
+            The Microsoft Teams link is being prepared. Attendees receive it by
+            e-mail as soon as it is ready.
+          </div>
+        )}
+
+      {/* FAILED: the organizer gets the retry; everyone else is told why
+          there is no link yet. */}
+      {teamsNotReady &&
+        meeting.onlineStatus === "FAILED" &&
+        scheduled &&
+        (meeting.canManage ? (
+          <RetryTeamsButton meetingId={meeting.meetingId} />
+        ) : (
+          <div
+            className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-900"
+            data-testid="teams-failed"
+            role="status"
+          >
+            The Microsoft Teams link could not be created. The room booking is
+            unaffected; the organizer can try again.
+          </div>
+        ))}
+
       {/* Organizer */}
 
-      <div className="rounded-2xl border bg-white p-8 shadow">
+      <div className={section}>
 
         <h2 className="mb-6 text-2xl font-bold">
           Organizer
@@ -248,12 +227,13 @@ export default function BookingDetailsCard({
 
           <UserCircle
             size={50}
-            className="text-blue-600"
+            className="shrink-0 text-blue-600"
+            aria-hidden
           />
 
-          <div>
+          <div className="min-w-0">
 
-            <p className="font-semibold text-lg">
+            <p className="break-words text-lg font-semibold">
               {meeting.organizer.employeeName}
             </p>
 
@@ -269,7 +249,7 @@ export default function BookingDetailsCard({
 
       {/* Attendees */}
 
-      <div className="rounded-2xl border bg-white p-8 shadow">
+      <div className={section}>
 
         <h2 className="mb-6 text-2xl font-bold">
           Attendees
@@ -289,12 +269,12 @@ export default function BookingDetailsCard({
 
               <div
                 key={attendee.employeeId}
-                className="flex items-center justify-between rounded-lg border p-4"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4"
               >
 
-                <div>
+                <div className="min-w-0">
 
-                  <p className="font-semibold">
+                  <p className="break-words font-semibold">
                     {attendee.employeeName}
                   </p>
 
@@ -304,7 +284,7 @@ export default function BookingDetailsCard({
 
                 </div>
 
-                <div className="text-right text-sm">
+                <div className="text-sm sm:text-right">
 
                   <p className="font-medium">
                     {invitationCategory(attendee.isOptional)}
@@ -326,43 +306,22 @@ export default function BookingDetailsCard({
 
       </div>
 
-      {/* Buttons */}
+      {/* Buttons: Reschedule (room taken) or Edit (scheduled), and Cancel */}
 
-      <div className="flex gap-4">
-
-        {meeting.canManage && meeting.meetingStatus === "Pending reschedule" && (
-          <>
-            <Link
-              href={`/bookings/${meeting.meetingId}/edit`}
-            >
-              <Button>
-                Reschedule
-              </Button>
+      {meeting.canManage && (scheduled || pendingReschedule) && (
+        <div className="flex flex-wrap gap-4">
+          <Button asChild>
+            <Link href={`/bookings/${meeting.meetingId}/edit`}>
+              {pendingReschedule ? "Reschedule" : "Edit"}
             </Link>
+          </Button>
 
-            <CancelMeetingButton
-              meetingId={meeting.meetingId}
-            />
-          </>
-        )}
-
-        {meeting.canManage && meeting.meetingStatus === "Scheduled" && (
-          <>
-            <Link
-              href={`/bookings/${meeting.meetingId}/edit`}
-            >
-              <Button>
-                Edit
-              </Button>
-            </Link>
-
-            <CancelMeetingButton
-              meetingId={meeting.meetingId}
-            />
-          </>
-        )}
-
-      </div>
+          <CancelMeetingButton
+            meetingId={meeting.meetingId}
+            inSeries={meeting.recurringMeetingId != null}
+          />
+        </div>
+      )}
 
     </div>
   );

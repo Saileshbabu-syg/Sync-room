@@ -8,6 +8,14 @@ import { addDays } from "@/lib/report-period";
 import { nowInAppTimezone, timeToSeconds } from "@/lib/time";
 
 import {
+  DEFAULT_GROUP_BOOKING_POLICY,
+  resolveEffectivePolicy,
+  type EffectiveLimit,
+  type EffectivePolicy,
+} from "@/lib/booking-limits";
+
+import { getAppBookingPolicy, getGroupBookingPolicy } from "./booking-limits.service";
+import {
   getPriorityContext,
   type PriorityContext,
 } from "./group-context.service";
@@ -22,15 +30,28 @@ import {
 export type BookingPolicy = {
   groupId: number | null;
   canBookRecurring: boolean;
+  // The EFFECTIVE longest meeting: the stricter of the application's and the
+  // group's (lib/booking-limits.ts). `maxDurationSource` says whose it is.
   maxDurationMinutes: number | null;
+  maxDurationSource: EffectiveLimit["source"];
+  // Whether a meeting may continue past midnight (the application's master
+  // switch AND the group's own choice).
+  allowOvernight: boolean;
+  // The EFFECTIVE bookings a group may hold per day / week / month.
+  limits: Pick<EffectivePolicy, "perDay" | "perWeek" | "perMonth">;
   maxAdvanceDays: number | null;
   maxOccurrences: number | null;
   // null = every room.
   roomIds: number[] | null;
 };
 
+const UNLIMITED: EffectiveLimit = { value: null, source: null };
+
 export const NO_LIMITS: Omit<BookingPolicy, "groupId" | "canBookRecurring"> = {
   maxDurationMinutes: null,
+  maxDurationSource: null,
+  allowOvernight: false,
+  limits: { perDay: UNLIMITED, perWeek: UNLIMITED, perMonth: UNLIMITED },
   maxAdvanceDays: null,
   maxOccurrences: null,
   roomIds: null,
@@ -43,9 +64,21 @@ export async function getBookingPolicy(
 ): Promise<BookingPolicy> {
   const standing = context ?? (await getPriorityContext(employeeId, executor));
   const canBookRecurring = standing.permissions.has(PERMISSION.BOOKING_RECURRING);
+  const app = await getAppBookingPolicy(executor);
 
+  // Nobody without an active group has a group's own settings, but the
+  // application's longest meeting and overnight switch still apply to them.
   if (standing.groupId === null) {
-    return { groupId: null, canBookRecurring, ...NO_LIMITS };
+    const effective = resolveEffectivePolicy(app, DEFAULT_GROUP_BOOKING_POLICY);
+
+    return {
+      groupId: null,
+      canBookRecurring,
+      ...NO_LIMITS,
+      maxDurationMinutes: effective.maxDuration.value,
+      maxDurationSource: effective.maxDuration.source,
+      allowOvernight: effective.allowOvernight,
+    };
   }
 
   const [settings] = await executor
@@ -58,10 +91,22 @@ export async function getBookingPolicy(
     .from(groupRooms)
     .where(and(eq(groupRooms.groupId, standing.groupId)));
 
+  const effective = resolveEffectivePolicy(
+    app,
+    await getGroupBookingPolicy(standing.groupId, executor)
+  );
+
   return {
     groupId: standing.groupId,
     canBookRecurring,
-    maxDurationMinutes: settings?.maxDurationMinutes ?? null,
+    maxDurationMinutes: effective.maxDuration.value,
+    maxDurationSource: effective.maxDuration.source,
+    allowOvernight: effective.allowOvernight,
+    limits: {
+      perDay: effective.perDay,
+      perWeek: effective.perWeek,
+      perMonth: effective.perMonth,
+    },
     maxAdvanceDays: settings?.maxAdvanceDays ?? null,
     maxOccurrences: settings?.maxOccurrences ?? null,
     roomIds: rooms.length > 0 ? rooms.map((r) => r.roomId) : null,
@@ -109,7 +154,10 @@ export function checkBookingPolicy(
   if (policy.maxDurationMinutes !== null && minutes > policy.maxDurationMinutes) {
     return {
       status: 400,
-      message: `Your group can book meetings of at most ${hoursText(policy.maxDurationMinutes)}.`,
+      message:
+        policy.maxDurationSource === "application"
+          ? `Meetings can be booked for at most ${hoursText(policy.maxDurationMinutes)}.`
+          : `Your group can book meetings of at most ${hoursText(policy.maxDurationMinutes)}.`,
     };
   }
 

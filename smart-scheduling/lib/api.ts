@@ -110,6 +110,25 @@ export function guardMutation(
   return null;
 }
 
+// The caller's IP address, for rate limiting anonymous requests, or null when
+// it cannot be known reliably. X-Forwarded-For is client-controlled unless a
+// reverse proxy in front of the app sets it, so it is read only when
+// TRUST_PROXY_HEADERS=true (the same switch isTrustedOrigin uses). The
+// RIGHT-MOST entry is used: it is the one the trusted proxy itself appended,
+// whereas anything to its left was supplied by the client.
+export function clientIp(req: Request): string | null {
+  if (process.env.TRUST_PROXY_HEADERS !== "true") return null;
+
+  const hops = (req.headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((hop) => hop.trim())
+    .filter(Boolean);
+
+  const ip = hops.at(-1) ?? req.headers.get("x-real-ip")?.trim();
+
+  return ip ? ip.slice(0, 64) : null;
+}
+
 // Returns a 429 response when `userId` exceeded `limit` calls to `bucket`
 // within `windowMs`, otherwise null. Operators can tune a bucket with
 // RATE_LIMIT_<BUCKET>_PER_MINUTE (e.g. RATE_LIMIT_BOOKING_PER_MINUTE=40).

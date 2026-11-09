@@ -16,6 +16,8 @@ import {
 
 import { Button } from "@/components/ui/button";
 import EmployeeMultiSelect from "@/components/EmployeeMultiSelect";
+import SeriesScopeSelect, { type SeriesScope } from "@/components/SeriesScopeSelect";
+import TimeSelect from "@/components/TimeSelect";
 import { toast } from "sonner";
 
 type MeetingType = {
@@ -31,6 +33,11 @@ type Props = {
   attendeeIds: number[];
   optionalAttendeeIds: number[];
   meetingTypes: MeetingType[];
+  // Part of a recurring series: the edit can apply to this occurrence, this
+  // and the following ones, or every upcoming occurrence; for the last two a
+  // new room and time of day can be given (each occurrence keeps its date).
+  inSeries?: boolean;
+  rooms?: { roomId: number; roomName: string }[];
 };
 
 export default function EditMeetingForm({
@@ -40,7 +47,16 @@ export default function EditMeetingForm({
   attendeeIds,
   optionalAttendeeIds,
   meetingTypes,
+  inSeries = false,
+  rooms = [],
 }: Props) {
+
+  const [scope, setScope] = useState<SeriesScope>("single");
+
+  // Empty = keep each occurrence's current room / time.
+  const [seriesRoom, setSeriesRoom] = useState("");
+  const [seriesStart, setSeriesStart] = useState("");
+  const [seriesEnd, setSeriesEnd] = useState("");
 
   const router = useRouter();
 
@@ -80,6 +96,13 @@ export default function EditMeetingForm({
       return;
     }
 
+    if (Boolean(seriesStart) !== Boolean(seriesEnd)) {
+      toast.warning("Choose both a new start and end time, or neither.");
+      return;
+    }
+
+    const seriesWide = inSeries && scope !== "single";
+
     setLoading(true);
 
     try {
@@ -110,6 +133,14 @@ const participantEmployeeIds = attendees;
             participantEmployeeIds,
 
             optionalParticipantEmployeeIds,
+
+            ...(inSeries ? { scope } : {}),
+
+            ...(seriesWide && seriesRoom ? { room_id: Number(seriesRoom) } : {}),
+
+            ...(seriesWide && seriesStart
+              ? { start_time: seriesStart, end_time: seriesEnd }
+              : {}),
           }),
         }
       );
@@ -156,6 +187,47 @@ const participantEmployeeIds = attendees;
       </h1>
 
       <div className="space-y-6">
+
+        {inSeries && (
+          <SeriesScopeSelect value={scope} onChange={setScope} name="edit-scope" />
+        )}
+
+        {inSeries && scope !== "single" && (
+          <div className="space-y-4 rounded-lg border p-4">
+            <p className="text-sm text-gray-600">
+              Optional: move every occurrence in this range to another room
+              and/or time of day. Each occurrence keeps its date. Leave empty
+              to keep them where they are.
+            </p>
+
+            <div>
+              <Label>Room</Label>
+              <Select value={seriesRoom} onValueChange={setSeriesRoom}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Keep current room" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rooms.map((r) => (
+                    <SelectItem key={r.roomId} value={String(r.roomId)}>
+                      {r.roomName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Start Time</Label>
+                <TimeSelect value={seriesStart} onChange={setSeriesStart} />
+              </div>
+              <div>
+                <Label>End Time</Label>
+                <TimeSelect value={seriesEnd} onChange={setSeriesEnd} />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Meeting Title */}
 

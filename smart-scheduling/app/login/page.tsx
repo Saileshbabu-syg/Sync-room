@@ -17,14 +17,50 @@ import {
 
 import { Button } from "@/components/ui/button";
 
+// What /login?error=<code> shows. Our own codes come from the sign-in check in
+// auth.ts; the others are Auth.js error codes. Nothing here reveals internal
+// details; operators find those in the server log.
+const LOGIN_ERRORS: Record<string, { title: string; message: string }> = {
+  "not-authorized": {
+    title: "Access Denied",
+    message:
+      "You do not belong to this organization, or your account is no longer active.",
+  },
+  "unverified-email": {
+    title: "E-mail Not Verified",
+    message:
+      "Your Google account's e-mail address is not verified. Verify it with Google, then sign in again.",
+  },
+  AccessDenied: {
+    title: "Access Denied",
+    message: "You do not have access to this application.",
+  },
+  "server-error": {
+    title: "Sign-in Unavailable",
+    message: "We could not complete your sign-in right now. Please try again shortly.",
+  },
+  Configuration: {
+    title: "Sign-in Unavailable",
+    message: "Sign-in is not available right now. Please try again shortly.",
+  },
+};
+
+const FALLBACK_LOGIN_ERROR = {
+  title: "Sign-in Failed",
+  message: "Something went wrong while signing you in. Please try again.",
+};
+
 function LoginContent() {
   const searchParams = useSearchParams();
 
   const [open, setOpen] = useState(false);
 
-
- const hasError =
-  searchParams.get("error") === "not-authorized";
+  const errorCode = searchParams.get("error");
+  const hasError = Boolean(errorCode);
+  const loginError =
+    (errorCode && Object.hasOwn(LOGIN_ERRORS, errorCode)
+      ? LOGIN_ERRORS[errorCode]
+      : null) ?? FALLBACK_LOGIN_ERROR;
 
 useEffect(() => {
   if (hasError) {
@@ -182,11 +218,11 @@ useEffect(() => {
           <AlertDialogHeader>
 
             <AlertDialogTitle className="text-red-600">
-              Access Denied
+              {loginError.title}
             </AlertDialogTitle>
 
             <AlertDialogDescription>
-              You do not belong to this organization.
+              {loginError.message}
               <br />
               Please contact your administrator if you
               believe this is a mistake.

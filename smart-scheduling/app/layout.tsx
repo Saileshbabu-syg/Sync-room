@@ -35,7 +35,8 @@ export default function RootLayout({
         <Toaster richColors position="bottom-right" toastOptions={{
     classNames: {
       toast:
-        "w-[420px] min-h-[80px] text-base",
+        // Never wider than a phone screen.
+        "w-[min(420px,calc(100vw-2rem))] min-h-[80px] text-base",
     },
   }} />
       </body>

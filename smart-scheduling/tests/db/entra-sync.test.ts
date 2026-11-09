@@ -128,6 +128,9 @@ describe("Entra ID sync", () => {
   });
 
   it("places employees who have no group in the Employee group, with history and an audit row", async () => {
+    // Every earlier sync in this file already placed Dave; start him ungrouped.
+    await db.delete(userGroups).where(eq(userGroups.employeeId, f.users.dave.employeeId));
+
     assert.equal(await activeGroupOf(f.users.dave.employeeId), null);
 
     const summary = await run([]);

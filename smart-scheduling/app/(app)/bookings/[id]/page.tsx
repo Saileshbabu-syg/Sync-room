@@ -86,6 +86,16 @@ const meetingData = await db
 
     organizerEmployeeId:
       meeting.organizerEmployeeId,
+
+    isOnline: meeting.is_online,
+
+    recurringMeetingId: meeting.recurringMeetingId,
+
+    onlineJoinUrl: meeting.online_join_url,
+
+    onlineRequested: meeting.online_requested,
+
+    onlineStatus: meeting.online_status,
   })
   .from(meeting)
 

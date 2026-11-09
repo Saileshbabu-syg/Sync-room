@@ -71,7 +71,7 @@ export default function UserSheet({ userProfile }: Props) {
         </button>
       </SheetTrigger>
 
-      <SheetContent side="right" className="w-[360px] gap-0 overflow-y-auto p-0 sm:max-w-[360px]">
+      <SheetContent side="right" className="w-[min(360px,100vw)] gap-0 overflow-y-auto p-0 sm:max-w-[360px]">
         <SheetHeader className="sr-only">
           <SheetTitle>My Account</SheetTitle>
           <SheetDescription>Your profile and account details.</SheetDescription>

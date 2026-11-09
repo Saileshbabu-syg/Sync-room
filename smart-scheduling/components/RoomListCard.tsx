@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import RoomArchiveButton from "@/components/RoomArchiveButton";
 
 type Room = {
   roomId: number;
@@ -20,6 +21,10 @@ type Room = {
   description: string | null;
   status: string | null;
   imageUrl: string | null;
+  // Archived rooms are listed (for room managers) but never bookable.
+  archived?: boolean;
+  // Whether the room can be booked right now (active and available).
+  bookable?: boolean;
 };
 
 type Props = {
@@ -55,14 +60,16 @@ export default function RoomListCard({
 
           <span
   className={`rounded-full px-3 py-1 text-sm font-medium ${
-    room.status === "AVAILABLE"
+    room.archived
+      ? "bg-gray-200 text-gray-700"
+      : room.status?.toUpperCase() === "AVAILABLE"
       ? "bg-green-100 text-green-700"
-      : room.status === "MAINTENANCE"
+      : room.status?.toUpperCase() === "MAINTENANCE"
       ? "bg-yellow-100 text-yellow-700"
       : "bg-red-100 text-red-700"
   }`}
 >
-  {room.status}
+  {room.archived ? "ARCHIVED" : room.status}
 </span>
         </div>
 
@@ -108,25 +115,28 @@ export default function RoomListCard({
 
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
 
-          {isAdmin && (
-            <Link href={`/rooms/${room.roomId}/edit`}>
-              <Button variant="secondary">
-                Edit Room
-              </Button>
-            </Link>
+          {isAdmin && !room.archived && (
+            <Button asChild variant="secondary">
+              <Link href={`/rooms/${room.roomId}/edit`}>Edit Room</Link>
+            </Button>
           )}
 
-          {room.status === "AVAILABLE" ? (
-            <Link
-              href={`/booking/details?roomId=${room.roomId}`}
-              className="flex-1"
-            >
-              <Button className="w-full">
+          {isAdmin && (
+            <RoomArchiveButton
+              roomId={room.roomId}
+              roomName={room.roomName}
+              archived={room.archived === true}
+            />
+          )}
+
+          {room.bookable ? (
+            <Button asChild className="flex-1">
+              <Link href={`/booking/details?roomId=${room.roomId}`}>
                 Book Room
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           ) : (
             <Button className="flex-1" disabled>
               Book Room

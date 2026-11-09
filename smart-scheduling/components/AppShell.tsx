@@ -3,10 +3,19 @@
 import { ReactNode, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Session } from "next-auth";
+import { Menu } from "lucide-react";
 
 import BackButton from "@/components/BackButton";
-import BookingSidebar from "@/components/BookingSidebar";
+import BookingSidebar, { NavLinks } from "@/components/BookingSidebar";
 import UserSheet from "@/components/UserSheet";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 type UserProfile = {
   organizerId: number;
@@ -47,6 +56,8 @@ function backTarget(pathname: string): { href?: string } | null {
 export default function AppShell({ children, session, userProfile }: Props) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  // The navigation drawer on phones (below md the sidebar is hidden).
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Restore the saved choice after mount (storage is not available during
   // server rendering, and may be blocked in the browser).
@@ -57,6 +68,19 @@ export default function AppShell({ children, session, userProfile }: Props) {
     } catch {
       /* keep the default */
     }
+  }, []);
+
+  // The drawer is only for narrow screens: close it when the window grows wide
+  // enough for the sidebar (otherwise its overlay would stay behind).
+  useEffect(() => {
+    const wide = window.matchMedia("(min-width: 768px)");
+    const onChange = () => {
+      if (wide.matches) setMenuOpen(false);
+    };
+
+    wide.addEventListener("change", onChange);
+
+    return () => wide.removeEventListener("change", onChange);
   }, []);
 
   const toggle = () => {
@@ -81,10 +105,22 @@ export default function AppShell({ children, session, userProfile }: Props) {
   return (
     <div className="flex h-screen flex-col bg-slate-100">
       <header className="z-40 border-b bg-white shadow-sm">
-        <div className="flex h-16 items-center justify-between px-4">
-          <div className="flex items-center gap-3">
-            <div>
-              <h1 className="text-2xl font-bold text-blue-700">MeetSched</h1>
+        <div className="flex h-16 items-center justify-between gap-2 px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              onClick={() => setMenuOpen(true)}
+              aria-label="Open navigation"
+              aria-expanded={menuOpen}
+              data-testid="mobile-nav-toggle"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-blue-700 sm:text-2xl">MeetSched</h1>
 
               <p className="hidden text-sm text-gray-500 sm:block">
                 Smart Meeting Scheduling Platform
@@ -95,6 +131,23 @@ export default function AppShell({ children, session, userProfile }: Props) {
           <UserSheet session={session} userProfile={userProfile} />
         </div>
       </header>
+
+      {/* Phones: the same menu in a drawer. Escape, the X or a tap outside
+          close it, and so does following a link. */}
+      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+        <SheetContent side="left" className="w-72 gap-0 p-0 md:hidden">
+          <SheetHeader className="border-b">
+            <SheetTitle className="text-lg font-bold text-blue-700">MeetSched</SheetTitle>
+            <SheetDescription>Navigation</SheetDescription>
+          </SheetHeader>
+
+          <NavLinks
+            showGroupManagement={userProfile.canManageGroups}
+            showBookingDashboard={userProfile.canViewBookingDashboard}
+            onNavigate={() => setMenuOpen(false)}
+          />
+        </SheetContent>
+      </Sheet>
 
       <div className="flex min-h-0 flex-1">
         <BookingSidebar
@@ -108,8 +161,8 @@ export default function AppShell({ children, session, userProfile }: Props) {
           {fullWidth ? (
             children
           ) : (
-            <div className="p-8">
-              <div className="rounded-3xl bg-white p-8 shadow-sm">
+            <div className="p-3 sm:p-6 lg:p-8">
+              <div className="rounded-3xl bg-white p-4 shadow-sm sm:p-6 lg:p-8">
                 {back && (
                   <div className="mb-6 flex justify-start">
                     <BackButton href={back.href} />

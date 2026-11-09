@@ -11,8 +11,6 @@ import {
   sql,
 } from "drizzle-orm";
 
-import { alias } from "drizzle-orm/pg-core";
-
 import { db } from "@/db";
 import {
   employee,
@@ -95,6 +93,8 @@ export type DashboardMetrics = {
   confirmedBookings: number;
   cancelledBookings: number;
   bumpedBookings: number;
+  // Waiting for their organizer to pick another room or time.
+  pendingBookings: number;
   totalMeetingHours: number;
   activeRooms: number;
 };
@@ -113,6 +113,7 @@ export async function getDashboardMetrics(
       confirmed: sql<number>`(count(*) filter (where ${confirmed}))::int`,
       cancelled: sql<number>`(count(*) filter (where ${meeting.meetingStatusId} = ${MEETING_STATUS.CANCELLED}))::int`,
       bumped: sql<number>`(count(*) filter (where ${meeting.meetingStatusId} = ${MEETING_STATUS.PREEMPTED}))::int`,
+      pending: sql<number>`(count(*) filter (where ${meeting.meetingStatusId} = ${MEETING_STATUS.PENDING_RESCHEDULE}))::int`,
       hours: sql<string>`coalesce(sum(extract(epoch from (${meeting.end_time} - ${meeting.start_time})) / 3600.0) filter (where ${confirmed}), 0)::text`,
       rooms: sql<number>`(count(distinct ${meeting.room_id}) filter (where ${confirmed}))::int`,
     })
@@ -125,6 +126,7 @@ export async function getDashboardMetrics(
     confirmedBookings: row.confirmed,
     cancelledBookings: row.cancelled,
     bumpedBookings: row.bumped,
+    pendingBookings: row.pending,
     totalMeetingHours: Math.round(Number(row.hours) * 100) / 100,
     activeRooms: row.rooms,
   };
@@ -317,77 +319,27 @@ export async function listDashboardBookings(
 export async function* iterateDashboardBookings(
   f: DashboardFilters,
   batchSize = 1000
-): AsyncGenerator<DashboardBookingBase & { bumped: BumpInfo | null }> {
+): AsyncGenerator<
+  DashboardBookingBase & { bumped: BumpInfo | null; participants: ParticipantRow[] }
+> {
   for (let offset = 0; ; offset += batchSize) {
     const batch = (await queryPage(f, batchSize, offset)).map(toRow);
-    const bumps = await getBumpInfo(
-      batch.filter((r) => r.statusId === MEETING_STATUS.PREEMPTED).map((r) => r.bookingId)
-    );
+    const [bumps, participants] = await Promise.all([
+      getBumpInfo(
+        batch.filter((r) => r.statusId === MEETING_STATUS.PREEMPTED).map((r) => r.bookingId)
+      ),
+      participantsOf(batch.map((r) => r.bookingId)),
+    ]);
 
-    for (const row of batch) yield { ...row, bumped: bumps.get(row.bookingId) ?? null };
-
-    if (batch.length < batchSize) return;
-  }
-}
-
-export type ParticipantExportRow = ParticipantRow & {
-  bookingId: number;
-  title: string;
-  meetingDate: string;
-  startTime: string;
-  endTime: string;
-};
-
-const attendeeEmployee = alias(employee, "attendee_employee");
-
-// Every invited participant of every booking matching the filters, one row per
-// person, in the same order as the bookings. The organizer is not repeated here
-// (they are on the booking row). Fetched in fixed-size pages like the bookings.
-export async function* iterateDashboardParticipants(
-  f: DashboardFilters,
-  batchSize = 1000
-): AsyncGenerator<ParticipantExportRow> {
-  const direction = f.sort === "asc" ? asc : desc;
-
-  for (let offset = 0; ; offset += batchSize) {
-    const batch = await db
-      .select({
-        bookingId: meeting.meeting_id,
-        title: meeting.title,
-        meetingDate: meeting.meeting_date,
-        startTime: meeting.start_time,
-        endTime: meeting.end_time,
-        employeeId: attendeeEmployee.employee_id,
-        name: attendeeEmployee.employee_name,
-        email: attendeeEmployee.email,
-        response: meeting_attendees.response_status,
-        isOptional: meeting_attendees.is_optional,
-      })
-      .from(meeting_attendees)
-      .innerJoin(meeting, eq(meeting.meeting_id, meeting_attendees.meeting_id))
-      .innerJoin(employee, eq(employee.employee_id, meeting.organizerEmployeeId))
-      .innerJoin(
-        attendeeEmployee,
-        eq(attendeeEmployee.employee_id, meeting_attendees.employee_id)
-      )
-      .where(
-        and(
-          buildWhere(f),
-          sql`${meeting_attendees.employee_id} <> ${meeting.organizerEmployeeId}`
-        )
-      )
-      .orderBy(
-        direction(meeting.meeting_date),
-        direction(meeting.start_time),
-        direction(meeting.meeting_id),
-        asc(meeting_attendees.is_optional),
-        asc(attendeeEmployee.employee_name),
-        asc(attendeeEmployee.employee_id)
-      )
-      .limit(batchSize)
-      .offset(offset);
-
-    for (const row of batch) yield row;
+    // Each booking carries its own invitees (organizer excluded), so a report
+    // can list them under the meeting exactly like the dashboard does.
+    for (const row of batch) {
+      yield {
+        ...row,
+        bumped: bumps.get(row.bookingId) ?? null,
+        participants: participants.get(row.bookingId) ?? [],
+      };
+    }
 
     if (batch.length < batchSize) return;
   }

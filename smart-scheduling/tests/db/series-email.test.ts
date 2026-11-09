@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { meeting, notifications } from "@/db/schema";
@@ -17,6 +17,7 @@ import { createRecurringMeeting } from "@/lib/services/recurring-meeting.service
 import {
   captureMail,
   dateFromToday,
+  minutesFromNow,
   seedFixtures,
   type Fixtures,
 } from "../helpers/fixtures";
@@ -69,7 +70,10 @@ const waitFor = async (check: () => Promise<boolean> | boolean, ms = 5000) => {
   return false;
 };
 
-const notificationRow = async () => (await db.select().from(notifications))[0];
+// Oldest first: the booking confirmation. Unordered, Postgres returns an updated
+// row last, so a second call could pick a different notification.
+const notificationRow = async () =>
+  (await db.select().from(notifications).orderBy(asc(notifications.notification_id)))[0];
 
 describe("recurring booking confirmation e-mail", () => {
   it("the organizer gets one e-mail listing all occurrences; the participant gets an invitation", async () => {
@@ -86,7 +90,7 @@ describe("recurring booking confirmation e-mail", () => {
 
     const m = mail.sent.find((x) => /Recurring Meeting Scheduled/.test(x.subject))!;
     const invite = mail.sent.find((x) => /Meeting Invitation/.test(x.subject))!;
-    const dates = computeOccurrenceDates(START(), 2, 4);
+    const dates = computeOccurrenceDates(START(), "WEEKLY", 4);
 
     assert.equal(m.from, process.env.EMAIL_FROM);
     assert.equal(m.to, f.users.bob.email, "the organizer only");
@@ -98,7 +102,7 @@ describe("recurring booking confirmation e-mail", () => {
     assert.match(m.subject, /^Recurring Meeting Scheduled - Standup$/);
 
     dates.forEach((date, i) =>
-      assert.ok(m.text.includes(`${i + 1}. ${date} (`) && m.text.includes("10:00:00 - 10:30:00"))
+      assert.ok(m.text.includes(`${i + 1}. ${date} (`) && m.text.includes("10:00 AM - 10:30 AM"))
     );
     assert.ok(m.text.includes(`Series start: ${dates[0]}`));
     assert.ok(m.text.includes(`Series end: ${dates[3]}`));
@@ -109,7 +113,7 @@ describe("recurring booking confirmation e-mail", () => {
   });
 
   it("the e-mail matches exactly what was saved when dates were skipped", async () => {
-    const dates = computeOccurrenceDates(START(), 2, 4);
+    const dates = computeOccurrenceDates(START(), "WEEKLY", 4);
 
     await createRecurringMeeting(series({ skip_dates: [dates[1]] }));
     const n = await notificationRow();
@@ -131,7 +135,12 @@ describe("recurring booking confirmation e-mail", () => {
     mail.setFailures(100);
 
     await createRecurringMeeting(series({ notify: true }));
-    await waitFor(async () => (await notificationRow())?.attempts === 1);
+    // Attempts are counted when the row is claimed (SENDING); wait for the
+    // failed attempt to be recorded (back to PENDING).
+    await waitFor(async () => {
+      const row = await notificationRow();
+      return row?.attempts === 1 && row.status === "PENDING";
+    });
 
     assert.equal((await db.select().from(meeting)).length, 4, "booking is unaffected");
     assert.equal((await notificationRow()).status, "PENDING");
@@ -139,8 +148,8 @@ describe("recurring booking confirmation e-mail", () => {
 
     mail.setFailures(0);
     // The confirmation and the participant's invitation are separate rows.
-    assert.equal((await processPendingNotifications(0)).SENT, 2);
-    assert.equal((await processPendingNotifications(0)).SENT, 0, "no second send");
+    assert.equal((await processPendingNotifications(0, 50, minutesFromNow(2))).SENT, 2);
+    assert.equal((await processPendingNotifications(0, 50, minutesFromNow(60))).SENT, 0, "no second send");
 
     assert.equal(mail.sent.length, 2);
 
@@ -215,7 +224,7 @@ describe("one-time booking e-mail is unchanged", () => {
     assert.equal(m.subject, "Meeting Scheduled - Planning");
     assert.equal(m.from, process.env.EMAIL_FROM);
     assert.ok(m.text.includes(`Date: ${START()}`));
-    assert.ok(m.text.includes("Start Time: 10:00:00"));
+    assert.ok(m.text.includes("Start Time: 10:00 AM"));
     assert.ok(!m.text.includes("Recurring"));
     assert.equal((m.ics.match(/BEGIN:VEVENT/g) ?? []).length, 1);
   });

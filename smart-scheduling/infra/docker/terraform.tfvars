@@ -1,2 +1,0 @@
-# Copy to terraform.tfvars (git-ignored) and set a real value.
-db_password = "test2026"

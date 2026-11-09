@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 
 import BookingCard from "@/components/BookingCard";
 import type { BumpDetails } from "@/components/BumpedDetails";
+import Pagination from "@/components/Pagination";
 
 import { Label } from "@/components/ui/label";
 
@@ -17,6 +19,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
+import type { BookingTab } from "@/lib/services/my-bookings.service";
+
 type Meeting = {
   meetingId: number;
   title: string;
@@ -26,225 +30,170 @@ type Meeting = {
   participantCount: number;
   roomName: string | null;
   meetingType: string | null;
+  meetingStatusId: number;
   meetingStatus: string | null;
   canManage: boolean;
   bumped: BumpDetails | null;
+  isOnline: boolean;
+  onlineJoinUrl: string | null;
+  onlineRequested: boolean;
+  onlineStatus: string;
+  recurringMeetingId?: number | null;
 };
 
 type Props = {
+  // The current page of the selected tab (the server pages and filters).
   meetings: Meeting[];
+  tab: BookingTab;
+  counts: Record<BookingTab, number>;
+  date: string;
+  page: number;
+  pages: number;
 };
+
+// Keyed by stable ids, not by their labels: renaming a label never changes
+// which meetings a tab holds (the server decides that by status id).
+const TABS: { id: BookingTab; label: string; noun: string }[] = [
+  { id: "scheduled", label: "Scheduled", noun: "scheduled" },
+  { id: "completed", label: "Completed", noun: "completed" },
+  { id: "replaced", label: "Replaced Bookings", noun: "replaced" },
+  { id: "cancelled", label: "Cancelled", noun: "cancelled" },
+];
 
 export default function BookingTabs({
   meetings,
+  tab,
+  counts,
+  date,
+  page,
+  pages,
 }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [pending, startTransition] = useTransition();
 
-  const [activeTab, setActiveTab] =
-    useState("Scheduled");
+  // Tab, day and page live in the URL; a change starts at page 1 unless a page
+  // is given.
+  const go = (next: { tab?: BookingTab; date?: string; page?: number }) => {
+    const params = new URLSearchParams();
+    const nextTab = next.tab ?? tab;
+    const nextDate = next.date ?? date;
+    const nextPage = next.page ?? 1;
 
-    const [selectedDate, setSelectedDate] =
-  useState("");
+    if (nextTab !== "scheduled") params.set("tab", nextTab);
+    if (nextDate) params.set("date", nextDate);
+    if (nextPage > 1) params.set("page", String(nextPage));
 
-  const filterByDate = (
-  meetings: Meeting[]
-) => {
+    const query = params.toString();
 
-  if (!selectedDate) {
-    return meetings;
-  }
-
-  return meetings.filter(
-    (meeting) =>
-      meeting.meetingDate ===
-      selectedDate
-  );
-
-};
-
- const scheduledMeetings = filterByDate(
-  meetings.filter(
-    (meeting) =>
-      meeting.meetingStatus ===
-        "Scheduled" ||
-      meeting.meetingStatus ===
-        "Pending reschedule"
-  )
-);
-
-const completedMeetings = filterByDate(
-  meetings.filter(
-    (meeting) =>
-      meeting.meetingStatus ===
-      "Completed"
-  )
-);
-
-const bumpedMeetings = filterByDate(
-  meetings.filter(
-    (meeting) =>
-      meeting.meetingStatus ===
-      "Replaced"
-  )
-);
-
-const cancelledMeetings = filterByDate(
-  meetings.filter(
-    (meeting) =>
-      meeting.meetingStatus ===
-      "Cancelled"
-  )
-);
-
-    
-
-  const renderMeetings = (
-    data: Meeting[],
-    status: string
-  ) => {
-
-    if (data.length === 0) {
-
-      return (
-
-        <div className="rounded-xl border bg-white p-10 text-center shadow">
-
-         <h2 className="text-xl font-semibold">
-
-  {selectedDate
-    ? "No Meetings Found"
-    : `No ${status} Meetings`}
-
-</h2>
-
-<p className="mt-2 text-gray-500">
-
-  {selectedDate
-    ? "No meetings found for the selected date."
-    : `No ${status.toLowerCase()} meetings found.`}
-
-</p>
-
-        </div>
-
-      );
-
-    }
-
-    return (
-
-      <div className="grid gap-6">
-
-        {data.map((meeting) => (
-
-          <BookingCard
-            key={meeting.meetingId}
-            meeting={meeting}
-          />
-
-        ))}
-
-      </div>
-
-    );
-
+    startTransition(() => {
+      router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    });
   };
+
+  const current = TABS.find((t) => t.id === tab) ?? TABS[0];
 
   return (
 
     <Tabs
-      value={activeTab}
-      onValueChange={setActiveTab}
+      value={tab}
+      onValueChange={(value) => go({ tab: value as BookingTab })}
       className="w-full"
     >
 
       <div className="space-y-6">
 
-  <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
 
-    <TabsTrigger value="Scheduled">
-      Scheduled ({scheduledMeetings.length})
-    </TabsTrigger>
+          {TABS.map((t) => (
+            <TabsTrigger key={t.id} value={t.id} data-testid={`tab-${t.id}`}>
+              {t.label} ({counts[t.id]})
+            </TabsTrigger>
+          ))}
 
-    <TabsTrigger value="Completed">
-      Completed ({completedMeetings.length})
-    </TabsTrigger>
+        </TabsList>
 
-    <TabsTrigger value="Replaced">
-      Replaced Bookings ({bumpedMeetings.length})
-    </TabsTrigger>
+        <div className="flex flex-wrap items-center gap-2">
 
-    <TabsTrigger value="Cancelled">
-      Cancelled ({cancelledMeetings.length})
-    </TabsTrigger>
+          <Label htmlFor="bookings-date" className="text-sm font-medium">
+            Filter by Date:
+          </Label>
 
-  </TabsList>
+          {/* Remounted after each navigation so it shows the applied date. */}
+          <Input
+            key={date}
+            id="bookings-date"
+            type="date"
+            defaultValue={date}
+            onChange={(e) => go({ date: e.target.value })}
+            className="w-44"
+          />
 
-  <div className="mt-4 flex items-center gap-2">
+          {date && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => go({ date: "" })}
+            >
+              Clear
+            </Button>
+          )}
 
-    <Label className="text-sm font-medium">
-    Filter by Date:
-  </Label>
+        </div>
 
-  <Input
-    type="date"
-    value={selectedDate}
-    onChange={(e) =>
-      setSelectedDate(e.target.value)
-    }
-    className="w-44"
-  />
+      </div>
 
-  {selectedDate && (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={() =>
-        setSelectedDate("")
-      }
-    >
-      Clear
-    </Button>
-  )}
+      <TabsContent value={tab} className="mt-6">
 
-</div>
+        <div
+          aria-busy={pending}
+          className={`space-y-6 transition-opacity ${pending ? "opacity-60" : ""}`}
+        >
 
-</div>
+          {meetings.length === 0 ? (
 
-<TabsContent value="Scheduled">
+            <div className="rounded-xl border bg-white p-10 text-center shadow">
 
-  {renderMeetings(
-    scheduledMeetings,
-    "Scheduled"
-  )}
+              <h2 className="text-xl font-semibold">
+                {date ? "No Meetings Found" : `No ${current.label} Meetings`}
+              </h2>
 
-</TabsContent>
+              <p className="mt-2 text-gray-500">
+                {date
+                  ? "No meetings found for the selected date."
+                  : `No ${current.noun} meetings found.`}
+              </p>
 
-<TabsContent value="Completed">
+            </div>
 
-  {renderMeetings(
-    completedMeetings,
-    "Completed"
-  )}
+          ) : (
 
-</TabsContent>
+            <div className="grid gap-6">
 
-<TabsContent value="Replaced">
+              {meetings.map((meeting) => (
+                <BookingCard
+                  key={meeting.meetingId}
+                  meeting={meeting}
+                />
+              ))}
 
-  {renderMeetings(
-    bumpedMeetings,
-    "Replaced"
-  )}
+            </div>
 
-</TabsContent>
+          )}
 
-<TabsContent value="Cancelled">
+          {counts[tab] > 0 && (
+            <Pagination
+              page={page}
+              pages={pages}
+              onPage={(next) => go({ page: next })}
+              noun="meeting"
+              total={counts[tab]}
+            />
+          )}
 
-  {renderMeetings(
-    cancelledMeetings,
-    "Cancelled"
-  )}
+        </div>
 
-</TabsContent>
+      </TabsContent>
 
     </Tabs>
 

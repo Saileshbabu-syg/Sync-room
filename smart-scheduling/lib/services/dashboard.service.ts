@@ -46,6 +46,14 @@ export async function getUpcomingMeeting(
       roomName:
         room.room_name,
 
+      isOnline: meeting.is_online,
+
+      onlineJoinUrl: meeting.online_join_url,
+
+      onlineRequested: meeting.online_requested,
+
+      onlineStatus: meeting.online_status,
+
     })
 
     .from(meeting)
@@ -143,6 +151,14 @@ export async function getTodayMeetings(
 
       roomName:
         room.room_name,
+
+      isOnline: meeting.is_online,
+
+      onlineJoinUrl: meeting.online_join_url,
+
+      onlineRequested: meeting.online_requested,
+
+      onlineStatus: meeting.online_status,
 
     })
 

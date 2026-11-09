@@ -20,8 +20,6 @@ export type PriorityContext = {
   // 1 = highest. Unassigned employees rank as the lowest active group.
   priority: number;
   permissions: Set<string>;
-  // Whether this employee's priority may preempt lower-priority bookings.
-  canPreempt: boolean;
 };
 
 // Priority of an employee with no usable group: that of the LOWEST active
@@ -61,8 +59,6 @@ export async function getPriorityContext(
       groupName: null,
       priority: await defaultPriority(executor),
       permissions: new Set<string>(DEFAULT_PERMISSIONS),
-      // The default policy never preempts anybody.
-      canPreempt: false,
     };
   }
 
@@ -81,7 +77,6 @@ export async function getPriorityContext(
   return {
     ...membership,
     permissions,
-    canPreempt: permissions.has(PERMISSION.BOOKING_PRIORITY),
   };
 }
 

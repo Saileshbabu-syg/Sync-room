@@ -1,15 +1,11 @@
 import { z } from "zod";
 
-import { durationMinutes } from "@/lib/time";
 import { meetingDateField, timeFields } from "@/lib/validations/meeting.validator";
-import { TIME_REGEX, isNotInPast } from "@/lib/validations/date-time";
-
-// Field-level errors are reported separately; refinements must not throw on
-// values that already failed them.
-const longEnough = (start: string, end: string) =>
-  !TIME_REGEX.test(start) ||
-  !TIME_REGEX.test(end) ||
-  durationMinutes(start, end) >= 15;
+import {
+  MIN_DURATION_MESSAGE,
+  isLongEnough as longEnough,
+  isNotInPast,
+} from "@/lib/validations/date-time";
 
 // Same field rules as booking, so the suggestions API can never offer a slot
 // the booking API would refuse for being malformed, in the past or too far out.
@@ -21,7 +17,7 @@ export const suggestionsSchema = z
     participant_count: z.number().int().min(1).max(10_000),
   })
   .refine((d) => longEnough(d.start_time, d.end_time), {
-    message: "Meeting duration must be at least 15 minutes.",
+    message: MIN_DURATION_MESSAGE,
     path: ["end_time"],
   })
   .refine((d) => isNotInPast(d), {
@@ -38,7 +34,7 @@ export const availableRoomsQuerySchema = z
     participants: z.coerce.number().int().min(1).max(10_000),
   })
   .refine((d) => longEnough(d.start, d.end), {
-    message: "Meeting duration must be at least 15 minutes.",
+    message: MIN_DURATION_MESSAGE,
     path: ["end"],
   })
   .refine((d) => isNotInPast({ meeting_date: d.date, start_time: d.start }), {

@@ -7,6 +7,7 @@ import {
 } from "./calendar.service";
 import type { MeetingEmailSeries } from "./meeting-series.service";
 import { APP_TIMEZONE } from "@/lib/constants";
+import { formatTime, formatTimeRange } from "@/lib/format";
 import { escapeHtml, sanitizeHeaderValue } from "@/lib/html";
 
 // The one place booking e-mail leaves the application. Every booking-related
@@ -244,7 +245,7 @@ export type MeetingBumpInfo = {
   // The room the meeting had (now held by the higher-priority meeting).
   roomName: string;
   // While the meeting is pending: the last moment its organizer can change the
-  // room or time ("YYYY-MM-DD HH:mm"). Undefined once it has been cancelled.
+  // room or time ("YYYY-MM-DD 02:30 PM"). Undefined once it has been cancelled.
   deadline?: string;
   // Link to change the room or time, when the app URL is configured.
   changeUrl?: string;
@@ -260,6 +261,13 @@ export type MeetingEmailExtras = {
   series?: MeetingEmailSeries;
   bump?: MeetingBumpInfo;
   preemption?: MeetingPreemptionInfo;
+  // Online Teams Meeting: the joining link of THIS meeting. Absent for a normal
+  // meeting, whose e-mail is then exactly what it always was.
+  online?: { joinUrl: string };
+  // The meeting's calendar identity (stable UID + current version). With it,
+  // invites update the recipients' existing entry and a cancellation removes
+  // it. Every application path passes it.
+  calendar?: { meetingId: number; sequence: number };
 };
 
 type MeetingEmailFields = {
@@ -269,6 +277,33 @@ type MeetingEmailFields = {
   endTime: string;
   kind?: MeetingEmailKind;
 } & MeetingEmailExtras;
+
+// The meeting no longer takes place for these messages: a cancellation, a
+// replacement, or a bump that was not resolved in time.
+function isCalendarRemoval(kind: MeetingEmailKind, bump?: MeetingBumpInfo) {
+  return (
+    kind === "cancelled" ||
+    kind === "preempted" ||
+    (kind === "bumped" && !bump?.deadline)
+  );
+}
+
+// The sender, as the calendar entry's organizer: iTIP updates and
+// cancellations are honoured when they come from the organizer.
+function calendarOrganizer() {
+  const sender = getMailSender();
+  const match = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(sender);
+
+  return match
+    ? { ...(match[1] ? { name: match[1] } : {}), email: match[2] }
+    : { email: sender.trim() };
+}
+
+const icsAttachment = (content: string, method: "REQUEST" | "CANCEL" | "PUBLISH") => ({
+  filename: method === "CANCEL" ? "meeting-cancel.ics" : "meeting-invite.ics",
+  content,
+  contentType: `text/calendar; method=${method}; charset=UTF-8`,
+});
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -280,6 +315,72 @@ function withWeekday(date: string) {
   return Number.isNaN(day) ? date : `${date} (${WEEKDAYS[day]})`;
 }
 
+// The zone's offset from UTC, in minutes, at the instant `utcMs`.
+function zoneOffsetMinutes(zone: string, utcMs: number) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date(utcMs));
+  const get = (type: string) =>
+    Number(parts.find((p) => p.type === type)?.value);
+  const asUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute")
+  );
+
+  return Math.round((asUtc - utcMs) / 60_000);
+}
+
+// "Asia/Kolkata (UTC+05:30)": the zone a stored wall-clock date + time is in,
+// with its UTC offset AT THAT MOMENT (zones with daylight saving have two).
+// Display only; how times are stored and converted is unchanged.
+export function timeZoneLabel(
+  date: string,
+  time: string,
+  zone: string = APP_TIMEZONE
+) {
+  const [y, mo, d] = date.split("-").map(Number);
+  const [h, mi] = time.split(":").map(Number);
+
+  if ([y, mo, d, h, mi].some((n) => !Number.isFinite(n))) return zone;
+
+  const wall = Date.UTC(y, mo - 1, d, h, mi);
+  let utc = wall - zoneOffsetMinutes(zone, wall) * 60_000;
+  utc = wall - zoneOffsetMinutes(zone, utc) * 60_000;
+
+  const offset = zoneOffsetMinutes(zone, utc);
+  const abs = Math.abs(offset);
+  const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mm = String(abs % 60).padStart(2, "0");
+
+  return `${zone} (UTC${offset < 0 ? "-" : "+"}${hh}:${mm})`;
+}
+
+// One recipient: To. Several: Bcc only, so no attendee sees the others'
+// addresses. Still ONE message, so delivery stays all-or-nothing and a retry
+// never re-sends to part of the list.
+export function addressing(to: string | string[]) {
+  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);
+
+  return list.length > 1 ? { bcc: list } : { to: list[0] };
+}
+
+const TEAMS_LABEL = "Microsoft Teams";
+
+// A clickable "Join Meeting" button. The URL is untrusted text here, so it is
+// escaped once at the point of interpolation.
+function joinButton(url: string) {
+  return `<a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 22px;border-radius:6px;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:600">Join Meeting</a>`;
+}
+
 function renderSingle({
   title,
   meetingDate,
@@ -288,6 +389,8 @@ function renderSingle({
   kind = "scheduled",
   bump,
   preemption,
+  online,
+  calendar,
 }: MeetingEmailFields) {
   // A bumped meeting is either waiting for its organizer to change it (it has
   // a deadline) or already cancelled.
@@ -297,6 +400,13 @@ function renderSingle({
   // would add a stray event for a slot the meeting no longer holds.
   const hasInvite =
     kind !== "cancelled" && kind !== "bumped" && kind !== "preempted";
+  // A meeting that no longer takes place carries a calendar CANCELLATION for
+  // the entry the recipients already have (only possible with its identity).
+  const calendarNote = hasInvite
+    ? "Calendar invite attached."
+    : calendar && isCalendarRemoval(kind, bump)
+      ? "Calendar cancellation attached: it removes this meeting from your calendar."
+      : null;
 
   const bumpLines: string[] = preemption
     ? [
@@ -315,6 +425,24 @@ function renderSingle({
         ]
     : [];
 
+  const zone = timeZoneLabel(meetingDate, startTime);
+
+  // No joining link for a meeting that no longer happens.
+  const joinUrl =
+    online && kind !== "cancelled" && kind !== "bumped" && kind !== "preempted"
+      ? online.joinUrl
+      : undefined;
+
+  const onlineHtml = joinUrl
+    ? `
+
+      <p><strong>Meeting type:</strong> ${TEAMS_LABEL}</p>
+
+      <p>${joinButton(joinUrl)}</p>
+
+      <p>Join link: <a href="${escapeHtml(joinUrl)}">${escapeHtml(joinUrl)}</a></p>`
+    : "";
+
   const html = `
       <h2>${escapeHtml(heading)}</h2>
 ${bumpLines.map((l) => `
@@ -324,14 +452,16 @@ ${bumpLines.map((l) => `
 
       <p><strong>Date:</strong> ${escapeHtml(meetingDate)}</p>
 
-      <p><strong>Start Time:</strong> ${escapeHtml(startTime)}</p>
+      <p><strong>Start Time:</strong> ${escapeHtml(formatTime(startTime))}</p>
 
-      <p><strong>End Time:</strong> ${escapeHtml(endTime)}</p>
+      <p><strong>End Time:</strong> ${escapeHtml(formatTime(endTime))}</p>
+
+      <p><strong>Time zone:</strong> ${escapeHtml(zone)}</p>${onlineHtml}
 ${
-  hasInvite
+  calendarNote
     ? `
       <p>
-        Calendar invite attached.
+        ${escapeHtml(calendarNote)}
       </p>`
     : ""
 }
@@ -343,9 +473,13 @@ ${
     ...(bumpLines.length > 0 ? [...bumpLines, ""] : []),
     `Title: ${title}`,
     `Date: ${meetingDate}`,
-    `Start Time: ${startTime}`,
-    `End Time: ${endTime}`,
-    ...(hasInvite ? ["", "Calendar invite attached."] : []),
+    `Start Time: ${formatTime(startTime)}`,
+    `End Time: ${formatTime(endTime)}`,
+    `Time zone: ${zone}`,
+    ...(joinUrl
+      ? ["", `Meeting type: ${TEAMS_LABEL}`, `Join Meeting: ${joinUrl}`]
+      : []),
+    ...(calendarNote ? ["", calendarNote] : []),
   ].join("\n");
 
   return {
@@ -364,11 +498,18 @@ function renderSeries(
     startTime,
     endTime,
     kind = "scheduled",
+    online,
   }: MeetingEmailFields,
   series: MeetingEmailSeries
 ) {
+  // Each occurrence has its own Teams meeting and link.
+  const isOnlineSeries =
+    Boolean(online) || series.occurrences.some((o) => o.joinUrl);
   const heading = SERIES_HEADINGS[kind];
   const count = series.occurrences.length;
+  const zones = series.occurrences.map((o) =>
+    timeZoneLabel(o.date, o.startTime)
+  );
   // A reminder carries only the invite for its own meeting, so the other
   // occurrences are not duplicated in the recipient's calendar.
   const inviteNote =
@@ -382,23 +523,32 @@ function renderSeries(
       ? ([
           [
             "This meeting",
-            `${withWeekday(meetingDate)}, ${startTime} - ${endTime}`,
+            `${withWeekday(meetingDate)}, ${formatTimeRange(startTime, endTime)}`,
           ],
         ] as [string, string][])
       : []),
     ...(roomName ? ([["Room", roomName]] as [string, string][]) : []),
+    ...(isOnlineSeries
+      ? ([["Meeting type", TEAMS_LABEL]] as [string, string][])
+      : []),
     ...(organizerName
       ? ([["Organizer", organizerName]] as [string, string][])
       : []),
     ["Repeats", series.frequency],
     ["Series start", withWeekday(series.startDate)],
     ["Series end", withWeekday(series.endDate)],
-    ["Time zone", APP_TIMEZONE],
+    ["Time zone", zones[0] ?? timeZoneLabel(meetingDate, startTime)],
     ["Confirmed occurrences", String(count)],
   ];
 
+  // Where the series crosses a daylight-saving change, every line carries its
+  // own offset; otherwise the one "Time zone" line says it all.
+  const perLineZone = new Set(zones).size > 1;
   const lines = series.occurrences.map(
-    (o) => `${withWeekday(o.date)}, ${o.startTime} - ${o.endTime}`
+    (o, i) =>
+      `${withWeekday(o.date)}, ${formatTimeRange(o.startTime, o.endTime)}${
+        perLineZone ? ` ${zones[i]}` : ""
+      }`
   );
 
   const html = `
@@ -414,8 +564,22 @@ function renderSeries(
       <p><strong>Dates and times (${escapeHtml(APP_TIMEZONE)}):</strong></p>
 
       <ol>
-        ${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("\n        ")}
-      </ol>
+        ${lines
+          .map((l, i) => {
+            const url = series.occurrences[i].joinUrl;
+
+            return `<li>${escapeHtml(l)}${
+              url ? ` - <a href="${escapeHtml(url)}">Join Meeting</a>` : ""
+            }</li>`;
+          })
+          .join("\n        ")}
+      </ol>${
+        kind === "reminder" && online
+          ? `
+
+      <p>${joinButton(online.joinUrl)}</p>`
+          : ""
+      }
       ${
         series.skippedDates.length > 0
           ? `
@@ -450,7 +614,14 @@ function renderSeries(
     ...details.map(([label, value]) => `${label}: ${value}`),
     "",
     `Dates and times (${APP_TIMEZONE}):`,
-    ...lines.map((l, i) => `${i + 1}. ${l}`),
+    ...lines.map((l, i) => {
+      const url = series.occurrences[i].joinUrl;
+
+      return `${i + 1}. ${l}${url ? ` - Join Meeting: ${url}` : ""}`;
+    }),
+    ...(kind === "reminder" && online
+      ? ["", `Join Meeting: ${online.joinUrl}`]
+      : []),
     ...(series.skippedDates.length > 0
       ? [
           "",
@@ -494,16 +665,60 @@ export async function sendMeetingEmail(
   kind: MeetingEmailKind = "scheduled",
   extras: MeetingEmailExtras = {}
 ) {
-  const calendarInvite =
-    kind === "cancelled" || kind === "bumped" || kind === "preempted"
-      ? null
-      : extras.series && kind !== "reminder"
-        ? await generateSeriesCalendarInvite(
-            title,
-            extras.series.occurrences,
-            extras.roomName
-          )
-        : await generateCalendarInvite(title, meetingDate, startTime, endTime);
+  const identity = extras.calendar
+    ? { ...extras.calendar, location: extras.roomName }
+    : undefined;
+  const organizer = identity ? calendarOrganizer() : undefined;
+
+  // What goes in the calendar part:
+  //  - a meeting that no longer takes place: a CANCEL for its entry (only
+  //    with its identity; without one there is nothing to cancel);
+  //  - a bumped meeting still waiting for its organizer: nothing (it holds no
+  //    slot, and its attendees hear the outcome later);
+  //  - a series confirmation: every occurrence, one entry each (PUBLISH);
+  //  - anything else: a REQUEST that creates or updates this meeting's entry.
+  let calendarPart: { content: string; method: "REQUEST" | "CANCEL" | "PUBLISH" } | null =
+    null;
+
+  if (isCalendarRemoval(kind, extras.bump)) {
+    if (identity) {
+      calendarPart = {
+        method: "CANCEL",
+        content: await generateCalendarInvite(
+          title,
+          meetingDate,
+          startTime,
+          endTime,
+          undefined,
+          { identity, method: "CANCEL", organizer }
+        ),
+      };
+    }
+  } else if (kind === "bumped") {
+    calendarPart = null;
+  } else if (extras.series && kind !== "reminder") {
+    calendarPart = {
+      method: "PUBLISH",
+      content: await generateSeriesCalendarInvite(
+        title,
+        extras.series.occurrences,
+        extras.roomName,
+        organizer
+      ),
+    };
+  } else {
+    calendarPart = {
+      method: "REQUEST",
+      content: await generateCalendarInvite(
+        title,
+        meetingDate,
+        startTime,
+        endTime,
+        extras.online?.joinUrl,
+        { identity, method: "REQUEST", organizer }
+      ),
+    };
+  }
 
   const { subject, html, text } = renderMeetingEmail({
     title,
@@ -519,7 +734,7 @@ export async function sendMeetingEmail(
   return getTransporter().sendMail({
     from,
 
-    to,
+    ...addressing(to),
 
     subject,
 
@@ -527,16 +742,8 @@ export async function sendMeetingEmail(
 
     text,
 
-    attachments: calendarInvite
-      ? [
-          {
-            filename: "meeting-invite.ics",
-
-            content: calendarInvite,
-
-            contentType: "text/calendar",
-          },
-        ]
+    attachments: calendarPart
+      ? [icsAttachment(calendarPart.content, calendarPart.method)]
       : [],
   });
 }
@@ -555,6 +762,12 @@ export type InvitationFields = {
   optional?: boolean;
   // Set for a recurring series: the answer covers every occurrence.
   seriesNote?: string;
+  // Online Teams Meeting: the link of the meeting this invitation is for and,
+  // for a series, the link of every occurrence (each has its own).
+  joinUrl?: string;
+  occurrenceLinks?: { date: string; joinUrl: string }[];
+  // The meeting's calendar identity (see MeetingEmailExtras.calendar).
+  calendar?: { meetingId: number; sequence: number };
 };
 
 // The personal invitation each participant receives. Every dynamic value is
@@ -570,9 +783,15 @@ export function renderInvitationEmail(fields: InvitationFields) {
     ["Organizer", fields.organizerName],
     ["Room", fields.roomName],
     ["Date", withWeekday(fields.meetingDate)],
-    ["Start Time", fields.startTime],
-    ["End Time", fields.endTime],
+    ["Start Time", formatTime(fields.startTime)],
+    ["End Time", formatTime(fields.endTime)],
+    ["Time zone", timeZoneLabel(fields.meetingDate, fields.startTime)],
+    ...(fields.joinUrl
+      ? ([["Meeting type", TEAMS_LABEL]] as [string, string][])
+      : []),
   ];
+
+  const links = fields.occurrenceLinks ?? [];
 
   const button = (url: string, label: string, color: string) =>
     `<a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 22px;margin-right:12px;border-radius:6px;background:${color};color:#ffffff;text-decoration:none;font-weight:600">${escapeHtml(label)}</a>`;
@@ -591,7 +810,30 @@ ${fields.optional ? `
       <p><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</p>`
   )
   .join("")}
-${fields.seriesNote ? `\n      <p>${escapeHtml(fields.seriesNote)}</p>\n` : ""}
+${fields.seriesNote ? `\n      <p>${escapeHtml(fields.seriesNote)}</p>\n` : ""}${
+  fields.joinUrl
+    ? `
+      <p>${joinButton(fields.joinUrl)}</p>
+
+      <p>Join link: <a href="${escapeHtml(fields.joinUrl)}">${escapeHtml(fields.joinUrl)}</a></p>
+${
+  links.length > 1
+    ? `
+      <p><strong>Join links (one Teams meeting per occurrence):</strong></p>
+
+      <ul>
+        ${links
+          .map(
+            (l) =>
+              `<li>${escapeHtml(withWeekday(l.date))} - <a href="${escapeHtml(l.joinUrl)}">Join Meeting</a></li>`
+          )
+          .join("\n        ")}
+      </ul>
+`
+    : ""
+}`
+    : ""
+}
       <p style="margin-top:24px">
         ${button(fields.acceptUrl, "Accept", "#16a34a")}
         ${button(fields.declineUrl, "Decline", "#dc2626")}
@@ -612,6 +854,14 @@ ${fields.seriesNote ? `\n      <p>${escapeHtml(fields.seriesNote)}</p>\n` : ""}
     "",
     ...details.map(([label, value]) => `${label}: ${value}`),
     ...(fields.seriesNote ? ["", fields.seriesNote] : []),
+    ...(fields.joinUrl ? ["", `Join Meeting: ${fields.joinUrl}`] : []),
+    ...(links.length > 1
+      ? [
+          "",
+          "Join links (one Teams meeting per occurrence):",
+          ...links.map((l) => `- ${withWeekday(l.date)}: ${l.joinUrl}`),
+        ]
+      : []),
     "",
     `Accept: ${fields.acceptUrl}`,
     `Decline: ${fields.declineUrl}`,
@@ -631,11 +881,21 @@ export async function sendInvitationEmail(
   to: string,
   fields: InvitationFields
 ) {
+  const identity = fields.calendar
+    ? { ...fields.calendar, location: fields.roomName || undefined }
+    : undefined;
+
   const calendarInvite = await generateCalendarInvite(
     fields.title,
     fields.meetingDate,
     fields.startTime,
-    fields.endTime
+    fields.endTime,
+    fields.joinUrl,
+    {
+      identity,
+      method: "REQUEST",
+      organizer: identity ? calendarOrganizer() : undefined,
+    }
   );
 
   const { subject, html, text } = renderInvitationEmail(fields);
@@ -646,12 +906,6 @@ export async function sendInvitationEmail(
     subject,
     html,
     text,
-    attachments: [
-      {
-        filename: "meeting-invite.ics",
-        content: calendarInvite,
-        contentType: "text/calendar",
-      },
-    ],
+    attachments: [icsAttachment(calendarInvite, "REQUEST")],
   });
 }

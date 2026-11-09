@@ -5,19 +5,19 @@ import ExcelJS from "exceljs";
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { meeting, meeting_attendees } from "@/db/schema";
+import { groupAuditLogs, meeting, meeting_attendees } from "@/db/schema";
 import { MEETING_STATUS } from "@/lib/constants";
 import { addDays, resolvePeriod } from "@/lib/report-period";
 import { createBooking } from "@/lib/services/booking.service";
 import {
   getDashboardMetrics,
   iterateDashboardBookings,
-  iterateDashboardParticipants,
   listDashboardBookings,
   type DashboardFilters,
 } from "@/lib/services/booking-dashboard.service";
 import {
   createReportStream,
+  ReportError,
   type ReportFormat,
 } from "@/lib/services/report.service";
 
@@ -161,6 +161,8 @@ describe("metrics", () => {
       totalBookings: 4,
       confirmedBookings: 2,
       cancelledBookings: 1,
+      bumpedBookings: 0,
+      pendingBookings: 1,
       totalMeetingHours: 2.5,
       activeRooms: 2,
     });
@@ -188,7 +190,7 @@ describe("bumped bookings", () => {
       notify: false,
     };
 
-    const low = (await createBooking({ ...base, title: "Low", organizerEmployeeId: f.users.bob.employeeId })).meetings[0];
+    const low = (await createBooking({ ...base, title: "Low", meetingTypeId: f.types.others, organizerEmployeeId: f.users.bob.employeeId })).meetings[0];
     const high = (await createBooking({ ...base, title: "High", organizerEmployeeId: f.users.manager.employeeId })).meetings[0];
 
     // The low-priority booking really was preempted ...
@@ -257,6 +259,7 @@ describe("bumped bookings", () => {
       await createBooking({
         ...base,
         title: "Original",
+        meetingTypeId: f.types.others,
         organizerEmployeeId: f.users.bob.employeeId,
         participantEmployeeIds: [f.users.carol.employeeId],
       })
@@ -316,6 +319,7 @@ describe("bumped bookings", () => {
       await createBooking({
         ...base,
         title: "Original",
+        meetingTypeId: f.types.others,
         organizerEmployeeId: f.users.bob.employeeId,
         participantEmployeeIds: [f.users.carol.employeeId],
       })
@@ -360,7 +364,7 @@ describe("participants on the dashboard", () => {
     );
   });
 
-  it("exports one row per participant for exactly the filtered bookings, in batches", async () => {
+  it("export rows carry their own participants for exactly the filtered bookings, in batches", async () => {
     const inside = await add({ date: "2031-03-05" });
     const outside = await add({ date: "2031-03-20" });
 
@@ -374,11 +378,16 @@ describe("participants on the dashboard", () => {
 
     const fl = filters({ mode: "week", date: "2031-03-05" });
     const seen: [number, number, boolean][] = [];
+    const bookings: number[] = [];
 
-    for await (const p of iterateDashboardParticipants(fl, 1)) {
-      seen.push([p.bookingId, p.employeeId, p.isOptional]);
+    for await (const row of iterateDashboardBookings(fl, 1)) {
+      bookings.push(row.bookingId);
+
+      for (const p of row.participants) seen.push([row.bookingId, p.employeeId, p.isOptional]);
     }
 
+    assert.deepEqual(bookings, [inside]);
+    // The organizer (bob) is not repeated as a participant.
     assert.deepEqual(seen, [
       [inside, f.users.carol.employeeId, false],
       [inside, f.users.dave.employeeId, true],
@@ -536,8 +545,8 @@ describe("report downloads", () => {
     assert.match(text, /Cancelled bookings,1\r\n/);
     assert.match(text, /Total meeting hours,2\r\n/);
 
-    // Participants follow the bookings in their own table.
-    assert.ok(text.includes("\r\nParticipants\r\n"));
+    // Participants are listed under their meeting, not in a separate table.
+    assert.ok(!text.includes("\r\nParticipants\r\n"));
     assert.match(text, /Booking ID,Organizer name,Organizer email,Group,Meeting type,Priority/);
 
     assert.match(text, /"Has, comma and ""quote"""/);
@@ -624,5 +633,90 @@ describe("report downloads", () => {
     const text = (await download("csv", filters(week))).toString("utf8");
 
     assert.equal(text.split("\r\n").filter((l) => l.includes(",Bulk ")).length, 2300);
+  });
+});
+
+describe("export limits and audit (D-20)", () => {
+  const week = { mode: "week", date: "2031-03-05" };
+
+  const exportsLogged = async () =>
+    (await db.select().from(groupAuditLogs).orderBy(groupAuditLogs.id)).filter((r) => r.action === "REPORT_EXPORTED");
+
+  it("a selection over the row limit is refused before anything is generated or logged", async () => {
+    for (let i = 0; i < 4; i++) await add({ date: "2031-03-05", start: `0${i + 1}:00`, end: `0${i + 1}:30` });
+
+    const before = (await exportsLogged()).length;
+    const error = await createReportStream("csv", filters(week), "Viewer", { maxRows: 3 }).then(
+      () => null,
+      (e: unknown) => e
+    );
+
+    assert.ok(error instanceof ReportError);
+    assert.equal(error.status, 422);
+    assert.match(error.message, /4 bookings; at most 3/);
+    assert.equal((await exportsLogged()).length, before, "nothing logged for a refused export");
+
+    // At the limit it goes through.
+    const ok = await createReportStream("csv", filters(week), "Viewer", { maxRows: 4 });
+    assert.match(await new Response(ok).text(), /Total bookings,4\r\n/);
+  });
+
+  it("every export is logged with who, what format, period, filters and size", async () => {
+    await add({ date: "2031-03-05" });
+
+    const before = (await exportsLogged()).length;
+    const stream = await createReportStream(
+      "xlsx",
+      filters(week, { roomId: f.rooms.alpha.room_id, search: "Sync" }),
+      "Viewer",
+      { actorEmployeeId: f.users.manager.employeeId }
+    );
+    await new Response(stream).arrayBuffer();
+
+    const logged = await exportsLogged();
+    assert.equal(logged.length, before + 1);
+
+    const entry = logged.at(-1)!;
+    assert.equal(entry.actorEmployeeId, f.users.manager.employeeId);
+    assert.deepEqual(entry.details, {
+      format: "xlsx",
+      period: { mode: "week", start: "2031-03-05", end: "2031-03-11" },
+      filters: { groupId: null, roomId: f.rooms.alpha.room_id, statusId: null, search: "Sync", sort: "asc" },
+      rows: 1,
+    });
+  });
+
+  it("a cancelled download stops reading bookings instead of hanging or failing loudly", async () => {
+    await db.insert(meeting).values(
+      Array.from({ length: 2500 }, (_, i) => ({
+        title: `Bulk ${i}`,
+        room_id: f.rooms.alpha.room_id,
+        meeting_date: "2031-03-05",
+        organizerEmployeeId: f.users.bob.employeeId,
+        participantCount: 1,
+        meetingTypeId: f.types.team,
+        meetingStatusId: MEETING_STATUS.CANCELLED,
+        start_time: "10:00",
+        end_time: "11:00",
+      }))
+    );
+
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+
+    try {
+      const reader = (await createReportStream("csv", filters(week), "Viewer")).getReader();
+
+      await reader.read();
+      await reader.cancel();
+
+      // Give the writer time to notice; it must finish, not wait for a drain.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } finally {
+      console.error = original;
+    }
+
+    assert.deepEqual(errors, [], "a cancel is not logged as a failure");
   });
 });

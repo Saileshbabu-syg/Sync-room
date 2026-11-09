@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import { parseIdParam } from "@/lib/api";
 import { MEETING_STATUS, ROLE_ADMIN } from "@/lib/constants";
 import { isMeetingEnded } from "@/lib/time";
+import { formatDate, formatTime } from "@/lib/format";
 import { getAllowedMeetingTypes } from "@/lib/services/meeting-type-access.service";
 import { getCurrentUserProfile } from "@/lib/auth-helpers";
 import { redirect } from "next/navigation";
@@ -97,16 +98,21 @@ export default async function EditMeetingPage({
     redirect("/bookings");
   }
 
-  if (isPending) {
-    const rooms = await db
-      .select({
-        roomId: room.room_id,
-        roomName: room.room_name,
-        capacity: room.room_capacity,
-        availabilityStatusId: room.availabilityStatusId,
-      })
-      .from(room);
+  const rooms = await db
+    .select({
+      roomId: room.room_id,
+      roomName: room.room_name,
+      capacity: room.room_capacity,
+      availabilityStatusId: room.availabilityStatusId,
+      archivedAt: room.archived_at,
+    })
+    .from(room);
 
+  const bookableRooms = rooms
+    .filter((r) => r.availabilityStatusId === 1 && r.archivedAt === null)
+    .map(({ roomId, roomName, capacity }) => ({ roomId, roomName, capacity }));
+
+  if (isPending) {
     const [request] = await db
       .select({ deadline: reschedule_requests.deadline })
       .from(reschedule_requests)
@@ -128,14 +134,8 @@ export default async function EditMeetingPage({
         startTime={meetingData[0].start_time}
         endTime={meetingData[0].end_time}
         participantCount={meetingData[0].participantCount}
-        deadline={due ? `${due.date} ${due.time.slice(0, 5)}` : null}
-        rooms={rooms
-          .filter((r) => r.availabilityStatusId === 1)
-          .map(({ roomId, roomName, capacity }) => ({
-            roomId,
-            roomName,
-            capacity,
-          }))}
+        deadline={due ? `${formatDate(due.date)} ${formatTime(due.time)}` : null}
+        rooms={bookableRooms}
       />
     );
   }
@@ -217,7 +217,25 @@ export default async function EditMeetingPage({
         attendeeIds={attendeeIds}
         optionalAttendeeIds={optionalAttendeeIds}
         meetingTypes={meetingTypeList}
+        inSeries={meetingData[0].recurringMeetingId !== null}
+        rooms={bookableRooms}
       />
+
+      {/* B-04: move this meeting (this occurrence only, for a series). */}
+      <div className="mt-8">
+        <RescheduleMeetingForm
+          mode="move"
+          meetingId={meetingData[0].meeting_id}
+          title={meetingData[0].title}
+          roomId={meetingData[0].room_id}
+          meetingDate={meetingData[0].meeting_date}
+          startTime={meetingData[0].start_time}
+          endTime={meetingData[0].end_time}
+          participantCount={meetingData[0].participantCount}
+          deadline={null}
+          rooms={bookableRooms}
+        />
+      </div>
     </>
   );
 }

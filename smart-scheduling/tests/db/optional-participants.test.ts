@@ -272,7 +272,7 @@ describe("who bumped a booking", () => {
       notify: false,
     };
 
-    const low = (await createBooking({ ...base, title: "Low", organizerEmployeeId: f.users.bob.employeeId })).meetings[0];
+    const low = (await createBooking({ ...base, title: "Low", meetingTypeId: f.types.others, organizerEmployeeId: f.users.bob.employeeId })).meetings[0];
     const high = (await createBooking({ ...base, title: "High", organizerEmployeeId: f.users.manager.employeeId })).meetings[0];
 
     const info = (await getBumpInfo([low.meeting_id, high.meeting_id]));

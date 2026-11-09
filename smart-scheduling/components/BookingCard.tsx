@@ -5,6 +5,10 @@ import Link from "next/link";
 
 import BumpedDetails, { type BumpDetails } from "@/components/BumpedDetails";
 import CancelMeetingButton from "@/components/CancelMeetingButton";
+import JoinMeetingButton, { TeamsBadge } from "@/components/JoinMeetingButton";
+import { StatusBadge, TeamsStatusBadge } from "@/components/StatusBadge";
+import { MEETING_STATUS } from "@/lib/constants";
+import { formatDate, formatTimeRange } from "@/lib/format";
 
 import {
   CalendarDays,
@@ -25,8 +29,16 @@ type Meeting = {
   participantCount: number;
   roomName: string | null;
   meetingType: string | null;
-  meetingStatus: string | null;
+  meetingStatusId: number;
   canManage: boolean;
+  // Set when the meeting is an occurrence of a recurring series.
+  recurringMeetingId?: number | null;
+  isOnline?: boolean;
+  onlineJoinUrl?: string | null;
+  // A Teams meeting was asked for; onlineStatus says whether its link is
+  // still being created (PENDING) or could not be (FAILED).
+  onlineRequested?: boolean;
+  onlineStatus?: string | null;
   // Set for a bumped booking: who took the room.
   bumped?: BumpDetails | null;
 };
@@ -40,39 +52,35 @@ export default function BookingCard({
 }: Props) {
   const [showBump, setShowBump] = useState(false);
 
+  const status = meeting.meetingStatusId;
+  const scheduled = status === MEETING_STATUS.SCHEDULED;
+  const pendingReschedule = status === MEETING_STATUS.PENDING_RESCHEDULE;
+
   return (
-    <div className="rounded-2xl border bg-white p-6 shadow">
+    <div className="rounded-2xl border bg-white p-4 shadow sm:p-6">
 
-      <div className="flex items-start justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
 
-        <div>
+        <div className="min-w-0">
 
-          <h2 className="text-2xl font-bold">
+          <h2 className="break-words text-xl font-bold sm:text-2xl">
             {meeting.title}
           </h2>
 
-          <p className="mt-1 text-sm text-gray-500">
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-500">
             {meeting.meetingType ?? "-"}
+            {meeting.isOnline && <TeamsBadge />}
+            {(scheduled || pendingReschedule) && (
+              <TeamsStatusBadge
+                onlineRequested={meeting.onlineRequested && !meeting.isOnline}
+                onlineStatus={meeting.onlineStatus}
+              />
+            )}
           </p>
 
         </div>
 
-        <span
-          className={`rounded-full px-3 py-1 text-sm font-medium
-            ${
-              meeting.meetingStatus === "Scheduled"
-                ? "bg-green-100 text-green-700"
-                : meeting.meetingStatus === "Pending reschedule"
-                ? "bg-amber-100 text-amber-700"
-                : meeting.meetingStatus === "Completed"
-                ? "bg-blue-100 text-blue-700"
-                : meeting.meetingStatus === "Replaced"
-                ? "bg-orange-100 text-orange-800"
-                : "bg-red-100 text-red-700"
-            }`}
-        >
-          {meeting.meetingStatus ?? "-"}
-        </span>
+        <StatusBadge statusId={status} className="text-sm" />
 
       </div>
 
@@ -80,7 +88,7 @@ export default function BookingCard({
 
         <div className="flex items-center gap-3">
 
-          <Building2 className="h-5 w-5 text-blue-600" />
+          <Building2 className="h-5 w-5 shrink-0 text-blue-600" aria-hidden />
 
           <span>{meeting.roomName ?? "-"}</span>
 
@@ -88,25 +96,23 @@ export default function BookingCard({
 
         <div className="flex items-center gap-3">
 
-          <CalendarDays className="h-5 w-5 text-blue-600" />
+          <CalendarDays className="h-5 w-5 shrink-0 text-blue-600" aria-hidden />
 
-          <span>{meeting.meetingDate}</span>
-
-        </div>
-
-        <div className="flex items-center gap-3">
-
-          <Clock className="h-5 w-5 text-blue-600" />
-
-          <span>
-            {meeting.startTime} - {meeting.endTime}
-          </span>
+          <span>{formatDate(meeting.meetingDate)}</span>
 
         </div>
 
         <div className="flex items-center gap-3">
 
-          <Users className="h-5 w-5 text-blue-600" />
+          <Clock className="h-5 w-5 shrink-0 text-blue-600" aria-hidden />
+
+          <span>{formatTimeRange(meeting.startTime, meeting.endTime)}</span>
+
+        </div>
+
+        <div className="flex items-center gap-3">
+
+          <Users className="h-5 w-5 shrink-0 text-blue-600" aria-hidden />
 
           <span>
             {meeting.participantCount} Participants
@@ -116,7 +122,7 @@ export default function BookingCard({
 
       </div>
 
-      {meeting.meetingStatus === "Replaced" && (
+      {status === MEETING_STATUS.PREEMPTED && (
         <div className="mt-6">
           <button
             type="button"
@@ -132,6 +138,7 @@ export default function BookingCard({
             </span>
             <ChevronDown
               className={`h-4 w-4 transition-transform ${showBump ? "rotate-180" : ""}`}
+              aria-hidden
             />
           </button>
 
@@ -150,55 +157,41 @@ export default function BookingCard({
         </div>
       )}
 
-      <div className="mt-8 flex gap-3">
+      <div className="mt-8 flex flex-wrap gap-3">
 
-  {/* View Button - Always Visible */}
+        {/* Join Meeting - online (Teams) meetings that still take place */}
 
-  <Link
-    href={`/bookings/${meeting.meetingId}`}
-  >
-    <Button>
-      View
-    </Button>
-  </Link>
+        {meeting.isOnline &&
+          meeting.onlineJoinUrl &&
+          (scheduled || pendingReschedule) && (
+            <JoinMeetingButton joinUrl={meeting.onlineJoinUrl} />
+          )}
 
-  {/* Reschedule & Cancel for a meeting whose room was taken */}
+        {/* View - always */}
 
-  {meeting.canManage && meeting.meetingStatus === "Pending reschedule" && (
-    <>
-      <Link
-        href={`/bookings/${meeting.meetingId}/edit`}
-      >
-        <Button variant="outline">
-          Reschedule
+        <Button asChild>
+          <Link href={`/bookings/${meeting.meetingId}`}>View</Link>
         </Button>
-      </Link>
 
-      <CancelMeetingButton
-        meetingId={meeting.meetingId}
-      />
-    </>
-  )}
+        {/* Reschedule & Cancel for a meeting whose room was taken; Edit &
+            Cancel for a scheduled one. */}
 
-  {/* Edit & Cancel Only for Scheduled */}
+        {meeting.canManage && (scheduled || pendingReschedule) && (
+          <>
+            <Button variant="outline" asChild>
+              <Link href={`/bookings/${meeting.meetingId}/edit`}>
+                {pendingReschedule ? "Reschedule" : "Edit"}
+              </Link>
+            </Button>
 
-  {meeting.canManage && meeting.meetingStatus === "Scheduled" && (
-    <>
-      <Link
-        href={`/bookings/${meeting.meetingId}/edit`}
-      >
-        <Button variant="outline">
-          Edit
-        </Button>
-      </Link>
+            <CancelMeetingButton
+              meetingId={meeting.meetingId}
+              inSeries={meeting.recurringMeetingId != null}
+            />
+          </>
+        )}
 
-      <CancelMeetingButton
-        meetingId={meeting.meetingId}
-      />
-    </>
-  )}
-
-</div>
+      </div>
 
     </div>
   );

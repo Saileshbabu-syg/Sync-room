@@ -1,11 +1,8 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import { eq } from "drizzle-orm";
 
-import { db } from "@/db";
-import { employee } from "@/db/schema";
-import { organizers } from "@/db/schema";
-import { roles } from "@/db/schema";
+import { capSessionAge, SESSION_MAX_AGE_SECONDS } from "@/lib/auth-config";
+import { authorizeSignIn } from "@/lib/services/identity.service";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -15,67 +12,30 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
 
+  // Stateless JWT session: expires after 12 hours idle (Auth.js re-signs it on
+  // use) and, through the jwt callback, 12 hours after sign-in at the latest.
+  session: { strategy: "jwt", maxAge: SESSION_MAX_AGE_SECONDS },
+
+  // Auth.js errors (e.g. ?error=AccessDenied, Configuration) land on our own
+  // login page, which maps them to readable messages.
+  pages: { signIn: "/login", error: "/login" },
+
   callbacks: {
-    async signIn({ user }) {
-      try {
-        // Check Employee table and fetch role from Roles table
-        const employeeData = await db
-          .select({
-            employeeId: employee.employee_id,
-            role: roles.roleName,
-          })
-          .from(employee)
-          .innerJoin(
-            roles,
-            eq(employee.role_id, roles.roleId)
-          )
-          .where(eq(employee.email, user.email!));
+    // Only verified addresses of ACTIVE employees get in (see
+    // authorizeSignIn); anyone else goes back to /login with an error code.
+    async signIn({ user, profile }) {
+      const result = await authorizeSignIn({
+        email: user.email,
+        emailVerified: profile?.email_verified === true,
+        name: user.name,
+        image: user.image,
+      });
 
-        // Employee not found
-        if (employeeData.length === 0) {
-          return "/login?error=not-authorized";
-        }
+      return result === true ? true : `/login?error=${result}`;
+    },
 
-        const employeeId = employeeData[0].employeeId;
-        const role = employeeData[0].role;
-
-        // Check if Organizer already exists
-        const existingOrganizer = await db
-          .select()
-          .from(organizers)
-          .where(eq(organizers.email, user.email!));
-
-        // Keep the cached Organizer copy in step with the Employee record.
-        // (Authorization never reads this copy — it resolves the role from
-        // Employee on every request — but the UI and reports still show it.)
-        if (
-          existingOrganizer.length > 0 &&
-          (existingOrganizer[0].role !== role ||
-            existingOrganizer[0].employeeId !== employeeId)
-        ) {
-          await db
-            .update(organizers)
-            .set({ role, employeeId, updatedAt: new Date() })
-            .where(eq(organizers.email, user.email!));
-        }
-
-        // Create Organizer if not exists
-        if (existingOrganizer.length === 0) {
-          await db.insert(organizers).values({
-            employeeId,
-            name: user.name!,
-            email: user.email!,
-            imageUrl: user.image ?? null,
-            role,
-            provider: "google",
-          });
-        }
-
-        return true;
-      } catch (error) {
-        console.error("Organizer Insert Error:", error);
-        return "/login?error=server-error";
-      }
+    async jwt({ token, account }) {
+      return capSessionAge(token, Boolean(account));
     },
   },
 });

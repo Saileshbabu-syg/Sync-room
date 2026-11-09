@@ -1,6 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+
+import SeriesScopeSelect, { type SeriesScope } from "@/components/SeriesScopeSelect";
 
 import { Button } from "@/components/ui/button";
 
@@ -20,20 +23,25 @@ import {
 
 type Props = {
   meetingId: number;
+  // Part of a recurring series: offer this / this and following / all.
+  inSeries?: boolean;
 };
 
 export default function CancelMeetingButton({
   meetingId,
+  inSeries = false,
 }: Props) {
 
   const router = useRouter();
+
+  const [scope, setScope] = useState<SeriesScope>("single");
 
   const handleCancel = async () => {
 
     try {
 
       const response = await fetch(
-        `/api/meetings/cancel/${meetingId}`,
+        `/api/meetings/cancel/${meetingId}${inSeries ? `?scope=${scope}` : ""}`,
         {
           method: "PATCH",
         }
@@ -54,7 +62,7 @@ export default function CancelMeetingButton({
       }
 
       toast.success(
-        "Meeting cancelled successfully."
+        result.message || "Meeting cancelled successfully."
       );
 
       router.refresh();
@@ -99,6 +107,14 @@ export default function CancelMeetingButton({
             This action cannot be undone.
 
           </AlertDialogDescription>
+
+          {inSeries && (
+            <SeriesScopeSelect
+              value={scope}
+              onChange={setScope}
+              name={`cancel-scope-${meetingId}`}
+            />
+          )}
 
         </AlertDialogHeader>
 

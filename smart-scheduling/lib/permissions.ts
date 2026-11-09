@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import { jsonError } from "@/lib/api";
-import type { PermissionKey } from "@/lib/constants";
+import { ROLE_ADMIN, type PermissionKey } from "@/lib/constants";
 import type { CurrentOrganizer } from "@/lib/services/identity.service";
 import {
   canManageGroups,
@@ -30,6 +30,24 @@ export async function requireGroupManagement(): Promise<Guarded> {
     return {
       ok: false,
       response: jsonError(403, "You do not have permission to manage groups."),
+    };
+  }
+
+  return { ok: true, organizer };
+}
+
+// Signed in with the Admin role (re-read from the database on every call).
+export async function requireAdmin(): Promise<Guarded> {
+  const organizer = await getCurrentOrganizer();
+
+  if (!organizer) {
+    return { ok: false, response: jsonError(401, "Unauthorized") };
+  }
+
+  if (organizer.role !== ROLE_ADMIN) {
+    return {
+      ok: false,
+      response: jsonError(403, "Only an administrator can do this."),
     };
   }
 

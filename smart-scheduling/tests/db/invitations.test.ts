@@ -16,6 +16,7 @@ import { deliverNotification } from "@/lib/services/notification.service";
 import {
   captureMail,
   dateFromToday,
+  minutesFromNow,
   seedFixtures,
   type Fixtures,
 } from "../helpers/fixtures";
@@ -147,8 +148,8 @@ describe("invitation e-mail", () => {
       assert.ok(m.text.includes("Title: Planning"));
       assert.ok(m.text.includes(`Organizer: ${f.users.bob.name}`));
       assert.ok(m.text.includes(`Room: ${f.rooms.alpha.room_name}`));
-      assert.ok(m.text.includes("Start Time: 10:00:00"));
-      assert.ok(m.text.includes("End Time: 11:00:00"));
+      assert.ok(m.text.includes("Start Time: 10:00 AM"));
+      assert.ok(m.text.includes("End Time: 11:00 AM"));
       assert.match(m.text, /Accept: http\S+\/invite\?/);
       assert.match(m.text, /Decline: http\S+\/invite\?/);
       assert.ok(m.ics.includes("BEGIN:VEVENT"), "calendar invite attached");
@@ -167,8 +168,9 @@ describe("invitation e-mail", () => {
     mail.setFailures(1);
     assert.equal(await deliverNotification(first), "RETRY");
     assert.equal(await deliverNotification(second), "SENT");
-    assert.equal(await deliverNotification(first), "SENT");
-    assert.equal(await deliverNotification(first), "SKIPPED", "never twice");
+    assert.equal(await deliverNotification(first), "SKIPPED", "not before its backoff");
+    assert.equal(await deliverNotification(first, minutesFromNow(2)), "SENT");
+    assert.equal(await deliverNotification(first, minutesFromNow(60)), "SKIPPED", "never twice");
 
     assert.equal(mail.sent.length, 2);
   });

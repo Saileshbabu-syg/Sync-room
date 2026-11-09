@@ -15,6 +15,8 @@ export const AUDIT_ACTION = {
   INVITE_ACCEPTED: "INVITATION_ACCEPTED",
   INVITE_DECLINED: "INVITATION_DECLINED",
   REMINDER_SENT: "REMINDER_SENT",
+  // An administrator put a FAILED notification or reminder back in the queue.
+  EMAIL_REQUEUED: "EMAIL_REQUEUED",
 } as const;
 
 // Pass the caller's transaction as `executor` so the audit row commits (or

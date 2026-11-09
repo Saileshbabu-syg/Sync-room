@@ -11,7 +11,11 @@ import {
   notifications,
   reminder_logs,
 } from "@/db/schema";
-import { MEETING_STATUS, REMINDER_LEAD_MINUTES } from "@/lib/constants";
+import {
+  MAX_DELIVERY_ATTEMPTS,
+  MEETING_STATUS,
+  REMINDER_LEAD_MINUTES,
+} from "@/lib/constants";
 import {
   BookingError,
   createBooking,
@@ -32,6 +36,7 @@ import { nowInAppTimezone } from "@/lib/time";
 import {
   captureMail,
   dateFromToday,
+  minutesFromNow,
   seedFixtures,
   type Fixtures,
 } from "../helpers/fixtures";
@@ -171,8 +176,15 @@ describe("records are created by the booking itself (F-15)", () => {
 
     const end = nowInAppTimezone(new Date(soon.getTime() + 30 * 60_000)).time.slice(0, 5);
 
+    // Booked 15 minutes ago (the clock hook): bookings need 15 minutes of
+    // lead time (B-09), and by now its reminder moment has passed.
     const { meetings } = await createBooking(
-      input({ occurrenceDates: [date], startTime: hhmm, endTime: end })
+      input({
+        occurrenceDates: [date],
+        startTime: hhmm,
+        endTime: end,
+        now: new Date(Date.now() - 15 * 60_000),
+      })
     );
 
     const [r] = await db
@@ -234,7 +246,11 @@ describe("reminder processing", () => {
     let [r] = await db.select().from(reminder_logs);
     assert.deepEqual([first.retried, r.status, r.attempts], [1, "PENDING", 1]);
 
-    const second = await processDueReminders();
+    // Not before its backoff ...
+    assert.equal((await processDueReminders()).sent, 0);
+
+    // ... but once it has passed.
+    const second = await processDueReminders(minutesFromNow(2));
     [r] = await db.select().from(reminder_logs);
     assert.deepEqual([second.sent, r.status, r.attempts], [1, "SENT", 2]);
     assert.equal(mail.sent.length, 1);
@@ -245,15 +261,18 @@ describe("reminder processing", () => {
     await makeDue(meetings[0].meeting_id);
     mail.setFailures(100);
 
-    await processDueReminders();
-    await processDueReminders();
-    const third = await processDueReminders();
+    // Each attempt after the previous one's backoff (1, 2, 4, 8 ... minutes).
+    let last = { failed: 0 };
+    for (let i = 0; i < MAX_DELIVERY_ATTEMPTS; i++) {
+      last = await processDueReminders(minutesFromNow(2 ** (i + 1)));
+    }
 
     const [r] = await db.select().from(reminder_logs);
-    assert.deepEqual([third.failed, r.status, r.attempts], [1, "FAILED", 3]);
+    assert.deepEqual([last.failed, r.status, r.attempts], [1, "FAILED", MAX_DELIVERY_ATTEMPTS]);
+    assert.match(r.last_error ?? "", /simulated SMTP outage/);
 
     mail.setFailures(0);
-    await processDueReminders();
+    await processDueReminders(minutesFromNow(24 * 60));
     assert.equal(mail.sent.length, 0, "FAILED rows are not retried automatically");
   });
 
@@ -319,14 +338,19 @@ describe("booking e-mails (notifications outbox) (F-10)", () => {
     );
 
     assert.ok(meetings[0].meeting_id, "the booking succeeded");
-    await waitFor(async () => (await db.select().from(notifications))[0]?.attempts === 1);
+    // Attempts are counted when the row is claimed (SENDING); wait for the
+    // failed attempt to be recorded (back to PENDING).
+    await waitFor(async () => {
+      const [row] = await db.select().from(notifications);
+      return row?.attempts === 1 && row.status === "PENDING";
+    });
 
     assert.equal((await db.select().from(meeting)).length, 1);
     assert.equal((await db.select().from(notifications))[0].status, "PENDING");
 
-    // Mail server is back: the retry pass delivers it.
+    // Mail server is back: the retry pass delivers it once the backoff passed.
     mail.setFailures(0);
-    const retried = await processPendingNotifications(0);
+    const retried = await processPendingNotifications(0, 50, minutesFromNow(2));
 
     assert.equal(retried.SENT, 1);
     assert.equal(mail.sent.length, 1);
@@ -348,10 +372,12 @@ describe("booking e-mails (notifications outbox) (F-10)", () => {
     await createBooking(input());
     mail.setFailures(100);
 
-    for (let i = 0; i < 4; i++) await processPendingNotifications(0);
+    for (let i = 0; i <= MAX_DELIVERY_ATTEMPTS; i++) {
+      await processPendingNotifications(0, 50, minutesFromNow(2 ** (i + 1)));
+    }
 
     const [n] = await db.select().from(notifications);
-    assert.deepEqual([n.status, n.attempts], ["FAILED", 3]);
+    assert.deepEqual([n.status, n.attempts], ["FAILED", MAX_DELIVERY_ATTEMPTS]);
   });
 
   it("the cron tick runs every step", async () => {

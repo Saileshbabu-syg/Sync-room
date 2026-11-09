@@ -12,13 +12,13 @@ import { Button } from "@/components/ui/button";
 
 export default function BookingSuccessPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-100 px-6">
+    <div className="flex justify-center py-6 sm:py-10">
 
-      <div className="w-full max-w-2xl rounded-2xl bg-white p-10 text-center shadow-xl">
+      <div className="w-full max-w-2xl text-center">
 
-        <CheckCircle2 className="mx-auto h-24 w-24 text-green-600" />
+        <CheckCircle2 className="mx-auto h-20 w-20 text-green-600 sm:h-24 sm:w-24" aria-hidden />
 
-        <h1 className="mt-8 text-4xl font-bold text-green-700">
+        <h1 className="mt-6 text-3xl font-bold text-green-700 sm:mt-8 sm:text-4xl">
           Meeting Scheduled Successfully
         </h1>
 
@@ -26,9 +26,9 @@ export default function BookingSuccessPage() {
           Your meeting has been scheduled successfully.
         </p>
 
-        <div className="mt-10 rounded-xl border bg-slate-50 p-6">
+        <div className="mt-8 rounded-xl border bg-slate-50 p-4 sm:mt-10 sm:p-6">
 
-          <Mail className="mx-auto h-10 w-10 text-blue-600" />
+          <Mail className="mx-auto h-10 w-10 text-blue-600" aria-hidden />
 
           <h2 className="mt-4 text-xl font-semibold">
             Confirmation Email Sent
@@ -40,39 +40,25 @@ export default function BookingSuccessPage() {
 
         </div>
 
-        <div className="mt-10 flex flex-col gap-4 md:flex-row md:justify-center">
+        <div className="mt-8 flex flex-col gap-4 sm:mt-10 md:flex-row md:justify-center">
 
-          <Link href="/bookings">
+          <Button size="lg" className="w-full md:w-auto" asChild>
+            <Link href="/bookings">View My Bookings</Link>
+          </Button>
 
-            <Button
-              size="lg"
-              className="w-full md:w-60"
-            >
-              View My Bookings
-            </Button>
-
-          </Link>
-
-          <Link href="/booking">
-
-            <Button
-              variant="outline"
-              size="lg"
-              className="w-full md:w-60"
-            >
-              <CalendarPlus className="mr-2 h-5 w-5" />
-
+          <Button variant="outline" size="lg" className="w-full md:w-auto" asChild>
+            <Link href="/booking">
+              <CalendarPlus className="mr-2 h-5 w-5" aria-hidden />
               Book Another Meeting
-            </Button>
+            </Link>
+          </Button>
 
-          </Link>
-
-          <Link href="/home">
-  <Button variant="outline">
-    <Home className="mr-2 h-4 w-4" />
-    Home
-  </Button>
-</Link>
+          <Button variant="outline" size="lg" className="w-full md:w-auto" asChild>
+            <Link href="/home">
+              <Home className="mr-2 h-5 w-5" aria-hidden />
+              Home
+            </Link>
+          </Button>
 
         </div>
 

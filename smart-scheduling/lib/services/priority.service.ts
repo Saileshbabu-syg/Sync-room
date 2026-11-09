@@ -1,17 +1,23 @@
-import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
   bookingPriorityHistory,
+  employee,
+  groupPermissions,
   groups,
   meeting,
   reschedule_requests,
+  roles,
   room,
+  userGroups,
 } from "@/db/schema";
 import {
   AVAILABILITY_STATUS,
   BUMP_RESPONSE_CUTOFF_MINUTES,
-  FALLBACK_PRIORITY,
+  PERMISSION,
+  PROTECTED_RANK,
+  TOP_RANK,
   MEETING_STATUS,
 } from "@/lib/constants";
 import type { DbExecutor, Tx } from "@/lib/db-types";
@@ -19,45 +25,66 @@ import { appWallClockToUtc, isSlotStartInPast } from "@/lib/time";
 
 import { AUDIT_ACTION, createAuditLog } from "./audit.service";
 import { holdsSlot, overlapsSlot } from "./conflict-check.service";
-import {
-  getPriorityContext,
-  type PriorityContext,
-} from "./group-context.service";
+import { getAllowedMeetingTypes } from "./meeting-type-access.service";
 import {
   dispatchNotification,
   queueMeetingNotification,
 } from "./notification.service";
 
-// Group-based booking priority.
+// Meeting-type booking priority.
 //
-// Every booking stores a snapshot of its organizer's group and priority at the
-// moment it was made (meeting.group_id_at_booking / priority_at_booking).
-// Priority 1 is the highest. When a booking asks for a slot that is held by
-// confirmed meetings:
+// Every meeting type has a rank (1 = highest ... 5 = lowest). When a booking
+// asks for a slot that is held by confirmed meetings:
 //
 //  * every overlapping meeting (partial overlaps included) is found and locked
 //    before anything is changed;
-//  * the booking may proceed only if its organizer's group may preempt
-//    (booking.priority) AND every holder has a STRICTLY lower priority (a
-//    larger number) AND none has started. Equal priority is
-//    first-confirmed-wins; a lower group never preempts a higher one;
+//  * the booking may proceed only if its meeting type has a STRICTLY higher
+//    rank (a smaller number) than EVERY holder AND none has started. Equal rank
+//    is first-confirmed-wins;
+//  * two group permissions bend that, both Leadership's by default and both
+//    counting required and optional participants alike:
+//      - booking.outranks: a booking that invites a member beats every meeting
+//        type (rank TOP_RANK) and takes the room from anything not protected;
+//      - booking.protected: a held meeting that invites a member can never be
+//        taken over, not even by an outranking booking (rank PROTECTED_RANK);
 //  * each holder is set to PREEMPTED in the same transaction that inserts the
 //    new booking, with an append-only booking_priority_history row, an audit
 //    log entry and an e-mail to the preempted meeting's attendees.
 //
-// Holders are compared on their STORED snapshot, so later group or priority
-// edits never rewrite the past. Meetings that pre-date groups have no snapshot
-// and rank as the default policy (the lowest active group).
-//
 // PREEMPTED is final. Meetings already waiting in PENDING_RESCHEDULE from the
-// earlier meeting-type engine still use the reschedule flow below until they
-// are resolved.
+// earlier engine still use the reschedule flow below until they are resolved.
 
-// SQL: a booked meeting's priority (its snapshot, or the default policy).
-export const bookedPriority = sql<number>`coalesce(
-  ${meeting.priorityAtBooking},
-  (select coalesce(max(${groups.priority}), ${FALLBACK_PRIORITY}::int) from ${groups} where ${groups.isActive})
-)::int`;
+// SQL: a booked meeting's rank - PROTECTED_RANK if any attendee is now in a
+// group with booking.protected, otherwise its meeting type's rank. (An
+// outranking meeting is not protected by that alone: outranking is about
+// taking rooms, protection about keeping them.)
+//
+// Identifiers are written out in full on purpose: inside a `sql` template,
+// drizzle drops the table prefix of a column when the outer query has a single
+// table, which turns `a.employee_id = b.employee_id` into an ambiguous
+// `employee_id = employee_id`. The outer meeting table is always "meeting".
+export const bookedPriority = sql<number>`(case
+  when exists (
+    select 1
+    from "meeting_attendees" as "bp_attendee"
+    inner join "user_groups" as "bp_member"
+      on "bp_member"."employee_id" = "bp_attendee"."employee_id"
+      and "bp_member"."effective_until" is null
+    inner join "groups" as "bp_group"
+      on "bp_group"."id" = "bp_member"."group_id"
+      and "bp_group"."is_active"
+    inner join "group_permissions" as "bp_permission"
+      on "bp_permission"."group_id" = "bp_group"."id"
+      and "bp_permission"."permission_key" = ${PERMISSION.BOOKING_PROTECTED}
+      and "bp_permission"."is_enabled"
+    where "bp_attendee"."meeting_id" = "meeting"."meeting_id"
+  ) then ${PROTECTED_RANK}::int
+  else (
+    select "bp_type"."priority_rank"
+    from "meeting_types" as "bp_type"
+    where "bp_type"."meeting_type_id" = "meeting"."meeting_type_id"
+  )
+end)::int`;
 
 export type SlotHolder = {
   meetingId: number;
@@ -69,7 +96,7 @@ export type SlotHolder = {
   participantCount: number;
   organizerEmployeeId: number;
   groupId: number | null;
-  // Snapshot priority (default policy for legacy meetings).
+  // Rank (meeting type, or TOP_RANK for a priority guest); smaller outranks.
   priority: number;
 };
 
@@ -110,21 +137,49 @@ export async function findSlotHolders(
     .for("update", { of: meeting });
 }
 
-// True when the claimant may take the slot from EVERY holder.
-export function canBumpAll(
-  holders: SlotHolder[],
-  claimant: Pick<PriorityContext, "priority" | "canPreempt">,
-  now?: Date
-) {
-  if (holders.length === 0) return true;
+// Whether any of these employees is in an active group that has the permission.
+export async function hasMemberWithPermission(
+  executor: DbExecutor,
+  employeeIds: number[],
+  permissionKey: string
+): Promise<boolean> {
+  if (employeeIds.length === 0) return false;
 
-  return (
-    claimant.canPreempt &&
-    holders.every(
-      (h) =>
-        h.priority > claimant.priority &&
-        !isSlotStartInPast(h.meetingDate, h.startTime, now)
+  const [row] = await executor
+    .select({ one: sql<number>`1` })
+    .from(userGroups)
+    .innerJoin(groups, eq(groups.id, userGroups.groupId))
+    .innerJoin(
+      groupPermissions,
+      and(
+        eq(groupPermissions.groupId, groups.id),
+        eq(groupPermissions.permissionKey, permissionKey),
+        eq(groupPermissions.isEnabled, true)
+      )
     )
+    .where(
+      and(
+        inArray(userGroups.employeeId, employeeIds),
+        isNull(userGroups.effectiveUntil),
+        eq(groups.isActive, true)
+      )
+    )
+    .limit(1);
+
+  return row !== undefined;
+}
+
+// The rank a booking is judged on: its meeting type's, or TOP_RANK when a
+// priority guest (a member of an outranking group) is invited.
+export function claimantRank(typeRank: number, priorityGuest: boolean) {
+  return priorityGuest ? TOP_RANK : typeRank;
+}
+
+// True when a booking of `rank` may take the slot from EVERY holder.
+export function canBumpAll(holders: SlotHolder[], rank: number, now?: Date) {
+  return holders.every(
+    (h) =>
+      h.priority > rank && !isSlotStartInPast(h.meetingDate, h.startTime, now)
   );
 }
 
@@ -185,7 +240,10 @@ export async function recordBumps(
     // Every released slot belongs to one of the requested dates.
     if (!claimant) continue;
 
-    const reason = `Preempted by ${incoming.groupName ?? "default-policy"} booking #${claimant.meetingId}: priority ${incoming.priority} outranks ${holder.priority}`;
+    const reason =
+      incoming.priority === TOP_RANK
+        ? `Preempted by booking #${claimant.meetingId}: a priority guest is invited, which outranks every meeting type`
+        : `Preempted by ${incoming.groupName ?? "default-policy"} booking #${claimant.meetingId}: meeting type priority ${incoming.priority} outranks ${holder.priority}`;
 
     await tx.insert(bookingPriorityHistory).values({
       incomingBookingId: claimant.meetingId,
@@ -286,9 +344,23 @@ export async function getClaimableRooms(
   participantCount: number,
   now?: Date
 ) {
-  const claimant = await getPriorityContext(employeeId);
+  // The room list comes before a type is picked, so judge by the best meeting
+  // type this person may book.
+  const [person] = await db
+    .select({ roleName: roles.roleName })
+    .from(employee)
+    .innerJoin(roles, eq(roles.roleId, employee.role_id))
+    .where(eq(employee.employee_id, employeeId));
 
-  if (!claimant.canPreempt) return [];
+  if (!person) return [];
+
+  const allowed = await getAllowedMeetingTypes({ employeeId, roleName: person.roleName });
+
+  if (allowed.length === 0) return [];
+
+  const claimant = {
+    priority: Math.min(...allowed.map((t) => t.priorityRank)),
+  };
 
   const holders = await db
     .select({
@@ -330,7 +402,8 @@ export async function getClaimableRooms(
     .where(
       and(
         inArray(room.room_id, claimableIds),
-        eq(room.availabilityStatusId, AVAILABILITY_STATUS.AVAILABLE)
+        eq(room.availabilityStatusId, AVAILABILITY_STATUS.AVAILABLE),
+        isNull(room.archived_at)
       )
     );
 }

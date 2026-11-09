@@ -1,0 +1,2 @@
+ALTER TABLE "meeting" ADD COLUMN "ics_sequence" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "meeting" ADD CONSTRAINT "meeting_ics_sequence_nonneg" CHECK ("meeting"."ics_sequence" >= 0);

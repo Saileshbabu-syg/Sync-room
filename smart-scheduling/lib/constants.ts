@@ -66,17 +66,38 @@ export const PERMISSION = {
   BOOKING_CREATE: "booking.create",
   BOOKING_VIEW: "booking.view",
   BOOKING_CANCEL: "booking.cancel",
-  // Lets the group's priority preempt lower-priority bookings.
+  // Legacy, no effect: priority now comes from the meeting type (and the
+  // outranks / protected permissions below). Still accepted so the rows already
+  // stored for each group stay valid; it is no longer offered in Group Management.
   BOOKING_PRIORITY: "booking.priority",
   // May book recurring series.
   BOOKING_RECURRING: "booking.recurring",
   // May create, edit and delete rooms (the Admin role always may).
   ROOMS_MANAGE: "rooms.manage",
+  // A meeting with any member of this group invited (required or optional)
+  // outranks every meeting type, so it always gets the room. Leadership has it
+  // by default; Group Management can give it to any other group.
+  BOOKING_OUTRANKS: "booking.outranks",
+  // A meeting with any member of this group invited (required or optional)
+  // can never be taken over, by any meeting. Independent of booking.outranks:
+  // Leadership has both by default.
+  BOOKING_PROTECTED: "booking.protected",
 } as const;
 
 export type PermissionKey = (typeof PERMISSION)[keyof typeof PERMISSION];
 
 export const ALL_PERMISSIONS: PermissionKey[] = Object.values(PERMISSION);
+
+// Permissions that reach beyond a person's own bookings. A group granting any
+// of them is "privileged": only someone with the Admin role may edit it, grant
+// these permissions, or move people into or out of it (group.service.ts).
+export const PRIVILEGED_PERMISSIONS: PermissionKey[] = [
+  PERMISSION.GROUP_MANAGE,
+  PERMISSION.ROOMS_MANAGE,
+  PERMISSION.DASHBOARD_VIEW,
+  PERMISSION.BOOKING_OUTRANKS,
+  PERMISSION.BOOKING_PROTECTED,
+];
 
 // Policy for an employee with no active group: they can book, see and cancel
 // their own bookings, rank as the LOWEST active group, may not preempt anyone
@@ -94,6 +115,15 @@ export const FALLBACK_PRIORITY = 1000;
 // Where people with no group are placed by the directory sync, and the role
 // given to people created by it.
 export const DEFAULT_GROUP_NAME = "Employee";
+
+// Booking rank of a meeting that includes a member of a group with the
+// booking.outranks permission: above every meeting type (types are ranked
+// 1 = highest ... 5 = lowest).
+export const TOP_RANK = 0;
+
+// Rank of a HELD meeting that includes a member of a group with
+// booking.protected: below TOP_RANK, so no booking can ever take its room.
+export const PROTECTED_RANK = -1;
 export const DEFAULT_ROLE_NAME = "Employee";
 
 // Meetings are stored as wall-clock date + time; this is the zone those values
@@ -109,8 +139,9 @@ export const REMINDER_LEAD_MINUTES = Number(
 );
 
 // Notification / reminder delivery is attempted this many times before the
-// row is parked as FAILED.
-export const MAX_DELIVERY_ATTEMPTS = 3;
+// row is parked as FAILED (fewer for a permanent failure: see
+// lib/delivery-policy.ts). Retries back off exponentially.
+export const MAX_DELIVERY_ATTEMPTS = 5;
 
 export const NOTIFICATION_TYPE = {
   BOOKED: "MEETING_BOOKED",

@@ -43,9 +43,13 @@ export async function seedGroups(executor: DbExecutor) {
         isEnabled:
           permissionKey === PERMISSION.DASHBOARD_VIEW
             ? group.name === "HR" || group.name === "Admin"
-            : permissionKey === PERMISSION.GROUP_MANAGE
+            : permissionKey === PERMISSION.GROUP_MANAGE ||
+                permissionKey === PERMISSION.ROOMS_MANAGE
               ? group.name === "Admin"
-              : true,
+              : permissionKey === PERMISSION.BOOKING_OUTRANKS ||
+                  permissionKey === PERMISSION.BOOKING_PROTECTED
+                ? group.name === "Leadership"
+                : true,
       }))
     );
   }

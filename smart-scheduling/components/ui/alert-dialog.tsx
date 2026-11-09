@@ -45,22 +45,36 @@ function AlertDialogOverlay({
   )
 }
 
-// Every dialog in the app is the same width (34rem on screens that are wide
-// enough, the screen minus a margin on phones), has the same padding, header
-// and footer, and an X in the corner. The X closes the dialog the same way
-// Escape does (the dialog's own onOpenChange decides), so it never confirms
-// anything. Do not override the width per dialog.
+// Every dialog has the same padding, header and footer, and an X in the
+// corner. The X closes the dialog the same way Escape does (the dialog's own
+// onOpenChange decides), so it never confirms anything. On phones every dialog
+// is the screen minus a margin.
 //
-// The size never changes with the content: a dialog has a fixed height and the
-// body scrolls inside it (the header stays at the top of the scroll, the footer
-// buttons stay pinned at the bottom, the X stays put). Only `compact`
-// dialogs, whose text is short and fixed (a yes/no question), shrink to fit.
+// The size follows the dialog's purpose, never its content - pick one, do not
+// override the width per dialog:
+//  confirm  a short yes/no question with fixed text: 28rem, shrinks to fit
+//           (`compact` is the older name for it)
+//  default  a decision with a list in it: 34rem, fixed height, the body
+//           scrolls (header at the top of the scroll, footer buttons pinned at
+//           the bottom, the X stays put)
+//  wide     a table to compare (e.g. every date of a series): up to 64rem,
+//           fixed height, the body scrolls
+type DialogSize = "confirm" | "default" | "wide"
+
+const DIALOG_SIZE: Record<DialogSize, string> = {
+  confirm: "sm:w-[28rem] max-h-[90dvh]",
+  default: "sm:w-[34rem] h-[min(32rem,90dvh)]",
+  wide: "sm:w-[min(64rem,calc(100vw-4rem))] h-[min(40rem,90dvh)]",
+}
+
 function AlertDialogContent({
   className,
   children,
+  size,
   compact = false,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
+  size?: DialogSize
   compact?: boolean
 }) {
   return (
@@ -68,9 +82,10 @@ function AlertDialogContent({
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
+        data-size={size ?? (compact ? "confirm" : "default")}
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white text-popover-foreground shadow-2xl ring-1 ring-black/10 duration-100 outline-none sm:w-[34rem] data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          compact ? "max-h-[90dvh]" : "h-[min(32rem,90dvh)]",
+          "fixed top-1/2 left-1/2 z-50 flex w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white text-popover-foreground shadow-2xl ring-1 ring-black/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          DIALOG_SIZE[size ?? (compact ? "confirm" : "default")],
           className
         )}
         {...props}

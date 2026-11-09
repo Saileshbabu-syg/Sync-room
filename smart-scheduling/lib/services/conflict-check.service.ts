@@ -52,7 +52,9 @@ export async function findConflictingDates(
   roomId: number,
   meetingDates: string[],
   startTime: string,
-  endTime: string
+  endTime: string,
+  // Meetings being moved: they never conflict with their own current slot.
+  excludeMeetingIds: number[] = []
 ): Promise<string[]> {
   if (meetingDates.length === 0) return [];
 
@@ -64,7 +66,10 @@ export async function findConflictingDates(
         eq(meeting.room_id, roomId),
         inArray(meeting.meeting_date, meetingDates),
         holdsSlot,
-        overlapsSlot(startTime, endTime)
+        overlapsSlot(startTime, endTime),
+        excludeMeetingIds.length > 0
+          ? notInArray(meeting.meeting_id, excludeMeetingIds)
+          : undefined
       )
     );
 

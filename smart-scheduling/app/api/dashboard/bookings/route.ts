@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { jsonError, rateLimit } from "@/lib/api";
 import { PERMISSION } from "@/lib/constants";
-import { parseDashboardFilters } from "@/lib/dashboard-params";
+import { parseDashboardFilters, parsePaging } from "@/lib/dashboard-params";
 import { requirePermission } from "@/lib/permissions";
 import {
   getDashboardMetrics,
@@ -26,11 +26,11 @@ export async function GET(request: Request) {
 
     if (!parsed.ok) return jsonError(400, parsed.message);
 
-    const page = Math.max(1, Number(searchParams.get("page")) || 1);
-    const pageSize = Math.min(
-      100,
-      Math.max(1, Number(searchParams.get("pageSize")) || 25)
-    );
+    const paging = parsePaging(searchParams);
+
+    if (!paging.ok) return jsonError(400, paging.message);
+
+    const { page, pageSize } = paging;
 
     const [metrics, list] = await Promise.all([
       getDashboardMetrics(parsed.filters),

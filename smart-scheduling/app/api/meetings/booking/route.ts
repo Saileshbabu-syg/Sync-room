@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     // whatever the client sends — otherwise any caller could book meetings as
     // any employee. Conflicts, room availability, capacity, role→meeting-type
     // rules and all inserts happen inside createBooking's single transaction.
-    const { meetings } = await createBooking({
+    const { meetings, online } = await createBooking({
       title: validatedData.title,
       roomId: validatedData.room_id,
       occurrenceDates: [validatedData.meeting_date],
@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
       participantEmployeeIds: validatedData.participantEmployeeIds,
       optionalParticipantEmployeeIds:
         validatedData.optionalParticipantEmployeeIds,
+      online: validatedData.onlineMeeting === true,
     });
 
     return NextResponse.json(
@@ -65,6 +66,9 @@ export async function POST(req: NextRequest) {
         message: "Validation successful",
         meetingId: meetings[0].meeting_id,
         data: validatedData,
+        // Only present for an Online Teams Meeting booking: how many
+        // occurrences have their Teams meeting being created in the background.
+        ...(online ? { online } : {}),
       },
       { status: 201 }
     );

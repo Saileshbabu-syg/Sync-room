@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { db } from "@/db";
-
-import { meeting, room } from "@/db/schema";
-import { availabilityMaster } from "@/db/schema";
-
 import { editRoomSchema } from "@/lib/validations/editRoom.validator";
 import { getCurrentOrganizer } from "@/lib/auth-helpers";
 import {
@@ -13,11 +8,8 @@ import {
   parseIdParam,
   readJson,
 } from "@/lib/api";
-import { MEETING_STATUS } from "@/lib/constants";
 import { canManageRooms } from "@/lib/services/group-context.service";
-import { nowInAppTimezone } from "@/lib/time";
-
-import { and, eq, gt, or, sql } from "drizzle-orm";
+import { RoomError, updateRoom } from "@/lib/services/room.service";
 
 export async function PATCH(
   req: NextRequest,
@@ -95,122 +87,16 @@ export async function PATCH(
     const validatedData =
       result.data;
 
-    // Check room exists
-
-    const existingRoom =
-      await db.query.room.findFirst({
-        where: eq(
-          room.room_id,
-          roomId
-        ),
-      });
-
-    if (!existingRoom) {
-
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "Room not found.",
-        },
-        {
-          status: 404,
-        }
-      );
-
-    }
-
-    // Check availability status
-
-    const status =
-      await db.query.availabilityMaster.findFirst(
-        {
-          where: eq(
-            availabilityMaster.availabilityStatusId,
-            validatedData.availabilityStatusId
-          ),
-        }
-      );
-
-    if (!status) {
-
-      return NextResponse.json(
-        {
-          success: false,
-          message:
-            "Invalid availability status.",
-        },
-        {
-          status: 404,
-        }
-      );
-
-    }
-
-    // Capacity may not drop below an upcoming meeting that is already booked
-    // in this room.
-    const now = nowInAppTimezone();
-
-    const [largest] = await db
-      .select({
-        participants: sql<number>`coalesce(max(${meeting.participantCount}), 0)`,
-      })
-      .from(meeting)
-      .where(
-        and(
-          eq(meeting.room_id, roomId),
-          eq(meeting.meetingStatusId, MEETING_STATUS.SCHEDULED),
-          or(
-            gt(meeting.meeting_date, now.date),
-            and(
-              eq(meeting.meeting_date, now.date),
-              sql`${meeting.end_time} > ${now.time}::time`
-            )
-          )
-        )
-      );
-
-    if (validatedData.room_capacity < Number(largest.participants)) {
-      return jsonError(
-        409,
-        `Capacity cannot be lower than ${largest.participants}: an upcoming meeting in this room has that many participants.`
-      );
-    }
-
-    // Update room
-
-    await db
-      .update(room)
-      .set({
-
-        room_name:
-          validatedData.room_name,
-
-        room_capacity:
-          validatedData.room_capacity,
-
-        roomLocation:
-          validatedData.roomLocation,
-
-        facilities:
-          validatedData.facilities,
-
-        roomDescription:
-          validatedData.roomDescription,
-
-        availabilityStatusId:
-          validatedData.availabilityStatusId,
-
-        updated_at:
-          new Date(),
-
-      })
-      .where(
-        eq(
-          room.room_id,
-          roomId
-        )
-      );
+    // One update path for every room route (room.service): status check,
+    // capacity guard and the maintenance guard (upcoming meetings).
+    await updateRoom(roomId, {
+      roomName: validatedData.room_name,
+      roomCapacity: validatedData.room_capacity,
+      roomLocation: validatedData.roomLocation,
+      facilities: validatedData.facilities?.trim(),
+      roomDescription: validatedData.roomDescription?.trim(),
+      availabilityStatusId: validatedData.availabilityStatusId,
+    });
 
     return NextResponse.json(
       {
@@ -224,6 +110,16 @@ export async function PATCH(
     );
 
   } catch (error) {
+    if (error instanceof RoomError) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: error.message,
+          ...(error.conflicts ? { conflicts: error.conflicts } : {}),
+        },
+        { status: error.status }
+      );
+    }
 
     console.error(error);
 

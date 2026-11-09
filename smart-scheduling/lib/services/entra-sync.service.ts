@@ -4,14 +4,15 @@ import { db } from "@/db";
 import {
   employee,
   employeeSyncRuns,
-  entraGroupMappings,
   entraSyncSettings,
   groupAuditLogs,
   groups,
   roles,
 } from "@/db/schema";
 import { dbErrorCode, PG_UNIQUE_VIOLATION } from "@/lib/api";
-import { DEFAULT_GROUP_NAME, DEFAULT_ROLE_NAME } from "@/lib/constants";
+import { DEFAULT_ROLE_NAME } from "@/lib/constants";
+
+import { resolveDefaultGroupId } from "./entra-settings.service";
 
 // Synchronises the Employee table with Microsoft Entra ID.
 //
@@ -23,8 +24,14 @@ import { DEFAULT_GROUP_NAME, DEFAULT_ROLE_NAME } from "@/lib/constants";
 //  * Existing group assignments and roles are never touched. Anyone left with no
 //    active group at the end (new people included) is placed in the default
 //    "Employee" group.
-//  * People missing from Entra are not deleted: bookings and history refer to
-//    them. They are only counted.
+//  * People missing from Entra (or disabled there) are never deleted: bookings
+//    and history refer to them. After a COMPLETE, successful read of the
+//    directory, those linked to a directory account are DEACTIVATED (they can no
+//    longer sign in or organize), unless that would exceed the safety threshold
+//    (ENTRA_SYNC_MAX_DEACTIVATIONS / ENTRA_SYNC_MAX_DEACTIVATION_PERCENT), in
+//    which case nobody is deactivated and the run says why. People added by hand
+//    and never matched to the directory are left alone. Someone who comes back
+//    to the directory is reactivated.
 //  * One sync runs at a time (a partial unique index on the run table); every
 //    attempt leaves a row so the screen can show progress and the last result.
 //
@@ -56,6 +63,11 @@ const CHUNK = 200;
 const STALE_RUN_MINUTES = 15;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_PAGES = 200;
+// Defaults of the deactivation safety threshold: a run that would deactivate
+// more than this many people, or more than this share of the active people
+// linked to the directory, deactivates nobody.
+const DEFAULT_MAX_DEACTIVATIONS = 25;
+const DEFAULT_MAX_DEACTIVATION_PERCENT = 10;
 
 type Env = Record<string, string | undefined>;
 type Fetch = typeof fetch;
@@ -213,47 +225,6 @@ export function fetchEntraUsers(
   );
 }
 
-export type EntraGroup = { id: string; name: string };
-
-// Security groups of the directory, for the group mapping picker.
-export async function fetchEntraGroups(
-  env: Env = process.env,
-  doFetch: Fetch = fetch
-): Promise<EntraGroup[]> {
-  const raw = await graphList<{ id?: unknown; displayName?: unknown }>(
-    `https://${GRAPH_HOST}/v1.0/groups?$select=id,displayName&$filter=securityEnabled eq true&$top=999`,
-    env,
-    doFetch,
-    "Reading the directory groups failed. The app needs the Group.Read.All application permission"
-  );
-
-  return raw
-    .filter((g) => typeof g.id === "string" && UUID.test(g.id))
-    .map((g) => ({
-      id: (g.id as string).toLowerCase(),
-      name: typeof g.displayName === "string" ? g.displayName : "",
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-// Object ids of the users directly in one Entra group.
-async function fetchEntraGroupMembers(
-  groupId: string,
-  env: Env,
-  doFetch: Fetch
-): Promise<string[]> {
-  const raw = await graphList<{ id?: unknown }>(
-    `https://${GRAPH_HOST}/v1.0/groups/${encodeURIComponent(groupId)}/members?$select=id&$top=999`,
-    env,
-    doFetch,
-    "Reading the group members failed. The app needs the GroupMember.Read.All application permission"
-  );
-
-  return raw
-    .map((m) => (typeof m.id === "string" ? m.id.toLowerCase() : ""))
-    .filter((id) => UUID.test(id));
-}
-
 export type SyncSummary = {
   runId: number;
   fetched: number;
@@ -261,11 +232,110 @@ export type SyncSummary = {
   updated: number;
   linked: number;
   skipped: number;
-  // People placed in an app group from their Entra security group (first sync only).
-  mappedToGroup: number;
   assignedToDefault: number;
   notInDirectory: number;
+  deactivated: number;
+  // Set when people missing from the directory were deliberately not
+  // deactivated (empty directory, over the safety threshold).
+  deactivationNote: string | null;
 };
+
+function readThreshold(value: string | undefined, fallback: number) {
+  if (value === undefined || value.trim() === "") return fallback;
+
+  const n = Number(value);
+
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+export function deactivationThreshold(env: Env = process.env) {
+  return {
+    maxCount: readThreshold(
+      env.ENTRA_SYNC_MAX_DEACTIVATIONS,
+      DEFAULT_MAX_DEACTIVATIONS
+    ),
+    maxPercent: readThreshold(
+      env.ENTRA_SYNC_MAX_DEACTIVATION_PERCENT,
+      DEFAULT_MAX_DEACTIVATION_PERCENT
+    ),
+  };
+}
+
+// Object ids of every ENABLED account the directory returned, including ones
+// skipped for an unusable e-mail: those people still exist and must not be
+// deactivated. Disabled accounts are left out, so their employees are.
+function presentObjectIds(raw: GraphUser[]) {
+  const ids = new Set<string>();
+
+  for (const entry of raw) {
+    const id = typeof entry.id === "string" ? entry.id.toLowerCase() : "";
+
+    if (UUID.test(id) && entry.accountEnabled !== false) ids.add(id);
+  }
+
+  return ids;
+}
+
+// Deactivates active employees linked to a directory account that the (complete)
+// directory read no longer contains, unless that is suspiciously many. Only
+// called after every other step of the run succeeded.
+async function deactivateMissing(
+  present: Set<string>,
+  env: Env,
+  actorEmployeeId: number | null
+): Promise<{ deactivated: number; note: string | null }> {
+  if (present.size === 0) {
+    return {
+      deactivated: 0,
+      note: "The directory returned no active accounts, so nobody was deactivated.",
+    };
+  }
+
+  const linked = await db
+    .select({ id: employee.employee_id, entraId: employee.entra_object_id })
+    .from(employee)
+    .where(
+      and(eq(employee.is_active, true), sql`${employee.entra_object_id} is not null`)
+    );
+
+  const missing = linked.filter((e) => !present.has(e.entraId!.toLowerCase()));
+
+  if (missing.length === 0) return { deactivated: 0, note: null };
+
+  const { maxCount, maxPercent } = deactivationThreshold(env);
+  const percent = (missing.length * 100) / linked.length;
+
+  if (missing.length > maxCount || percent > maxPercent) {
+    return {
+      deactivated: 0,
+      note:
+        `${missing.length} employee(s) missing from the directory (${percent.toFixed(1)}% of linked active employees) ` +
+        `exceeds the safety threshold (${maxCount} / ${maxPercent}%), so nobody was deactivated. ` +
+        "Check the directory, or raise ENTRA_SYNC_MAX_DEACTIVATIONS / ENTRA_SYNC_MAX_DEACTIVATION_PERCENT.",
+    };
+  }
+
+  const ids = missing.map((m) => m.id);
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(employee)
+      .set({ is_active: false, deactivated_at: new Date(), updated_at: new Date() })
+      .where(and(inArray(employee.employee_id, ids), eq(employee.is_active, true)));
+
+    await tx.insert(groupAuditLogs).values({
+      actorEmployeeId,
+      action: "EMPLOYEES_DEACTIVATED",
+      details: {
+        source: "entra-sync",
+        count: ids.length,
+        employeeIds: ids.slice(0, 500),
+      },
+    });
+  });
+
+  return { deactivated: ids.length, note: null };
+}
 
 async function closeStaleRuns() {
   await db
@@ -294,7 +364,6 @@ async function applyChunk(users: DirectoryUser[], roleId: number) {
     linked: 0,
     skipped: 0,
     // Object ids of people met for the first time (created or linked).
-    firstTime: [] as string[],
   };
 
   await db.transaction(async (tx) => {
@@ -307,6 +376,7 @@ async function applyChunk(users: DirectoryUser[], roleId: number) {
         email: employee.email,
         entraId: employee.entra_object_id,
         name: employee.employee_name,
+        isActive: employee.is_active,
       })
       .from(employee)
       .where(
@@ -332,7 +402,6 @@ async function applyChunk(users: DirectoryUser[], roleId: number) {
           entra_object_id: user.objectId,
         });
         counts.created += 1;
-        counts.firstTime.push(user.objectId);
         continue;
       }
 
@@ -347,8 +416,11 @@ async function applyChunk(users: DirectoryUser[], roleId: number) {
       }
 
       const linking = !existing.entraId;
+      // Back in the directory (enabled): a deactivated person is active again.
+      const reactivating = !existing.isActive;
       const changed =
         linking ||
+        reactivating ||
         existing.name !== user.name ||
         (emailFree && existing.email.toLowerCase() !== user.email);
 
@@ -360,13 +432,13 @@ async function applyChunk(users: DirectoryUser[], roleId: number) {
           entra_object_id: user.objectId,
           employee_name: user.name,
           ...(emailFree ? { email: user.email } : {}),
+          ...(reactivating ? { is_active: true, deactivated_at: null } : {}),
           updated_at: new Date(),
         })
         .where(eq(employee.employee_id, existing.id));
 
       if (linking) {
         counts.linked += 1;
-        counts.firstTime.push(user.objectId);
       } else counts.updated += 1;
     }
   });
@@ -374,15 +446,15 @@ async function applyChunk(users: DirectoryUser[], roleId: number) {
   return counts;
 }
 
-// Puts everyone who has no active group into the default group. Existing
+// Puts everyone who has no active group into the default group chosen in the
+// sync settings (the Employee group unless an admin picked another). Existing
 // assignments are never changed. Returns how many people were placed.
 async function assignDefaultGroup(actorEmployeeId: number | null) {
-  const [group] = await db
-    .select({ id: groups.id })
-    .from(groups)
-    .where(and(eq(groups.name, DEFAULT_GROUP_NAME), eq(groups.isActive, true)));
+  const groupId = await resolveDefaultGroupId();
 
-  if (!group) return 0;
+  if (groupId === null) return 0;
+
+  const group = { id: groupId };
 
   return db.transaction(async (tx) => {
     // The partial unique index (one open row per employee) makes this safe
@@ -418,107 +490,15 @@ async function assignDefaultGroup(actorEmployeeId: number | null) {
   });
 }
 
-// Puts people met for the first time into the app group mapped from their Entra
-// security group. Only people with NO active group are touched, so existing
-// assignments are never changed. If someone is in several mapped Entra groups
-// they get the app group with the highest priority (lowest number).
-async function applyGroupMappings(
-  firstTime: string[],
-  actorEmployeeId: number | null,
-  env: Env,
-  doFetch: Fetch,
-  provided?: Record<string, string[]>
-) {
-  if (firstTime.length === 0) return 0;
-
-  const mappings = await db
-    .select({
-      entraGroupId: entraGroupMappings.entraGroupId,
-      groupId: entraGroupMappings.groupId,
-      priority: groups.priority,
-    })
-    .from(entraGroupMappings)
-    .innerJoin(groups, eq(groups.id, entraGroupMappings.groupId))
-    .where(eq(groups.isActive, true));
-
-  if (mappings.length === 0) return 0;
-
-  const wanted = new Map<string, { groupId: number; priority: number }>();
-
-  for (const mapping of mappings) {
-    const members =
-      provided?.[mapping.entraGroupId.toLowerCase()] ??
-      (await fetchEntraGroupMembers(mapping.entraGroupId, env, doFetch));
-
-    for (const id of members) {
-      const objectId = id.toLowerCase();
-      const best = wanted.get(objectId);
-
-      if (
-        !best ||
-        mapping.priority < best.priority ||
-        (mapping.priority === best.priority && mapping.groupId < best.groupId)
-      ) {
-        wanted.set(objectId, { groupId: mapping.groupId, priority: mapping.priority });
-      }
-    }
-  }
-
-  const people = await db
-    .select({ id: employee.employee_id, entraId: employee.entra_object_id })
-    .from(employee)
-    .where(inArray(employee.entra_object_id, firstTime));
-
-  let placed = 0;
-
-  for (const person of people) {
-    const target = person.entraId ? wanted.get(person.entraId.toLowerCase()) : undefined;
-
-    if (!target) continue;
-
-    const result = await db.transaction(async (tx) => {
-      const inserted = await tx.execute(sql`
-        INSERT INTO user_groups (employee_id, group_id, assigned_by)
-        SELECT ${person.id}::int, ${target.groupId}::int, ${actorEmployeeId}::int
-        WHERE NOT EXISTS (
-          SELECT 1 FROM user_groups u
-          WHERE u.employee_id = ${person.id}::int AND u.effective_until IS NULL
-        )
-        ON CONFLICT DO NOTHING
-        RETURNING id
-      `);
-
-      if (inserted.rows.length === 0) return false;
-
-      await tx.insert(groupAuditLogs).values({
-        actorEmployeeId,
-        action: "EMPLOYEE_ASSIGNED",
-        groupId: target.groupId,
-        targetEmployeeId: person.id,
-        details: { source: "entra-group-mapping", toGroupId: target.groupId },
-      });
-
-      return true;
-    });
-
-    if (result) placed += 1;
-  }
-
-  return placed;
-}
-
 export async function syncEmployees({
   actorEmployeeId,
   users: provided,
-  groupMembers,
   env = process.env,
   doFetch = fetch,
 }: {
   actorEmployeeId: number | null;
   // Test hook: skip the directory call.
   users?: GraphUser[];
-  // Test hook: Entra group id -> member object ids, instead of asking Graph.
-  groupMembers?: Record<string, string[]>;
   env?: Env;
   doFetch?: Fetch;
 }): Promise<SyncSummary> {
@@ -548,7 +528,6 @@ export async function syncEmployees({
   }
 
   const totals = { created: 0, updated: 0, linked: 0, skipped: 0 };
-  const firstTime: string[] = [];
 
   try {
     const [role] = await db
@@ -577,7 +556,6 @@ export async function syncEmployees({
       totals.updated += counts.updated;
       totals.linked += counts.linked;
       totals.skipped += counts.skipped;
-      firstTime.push(...counts.firstTime);
 
       // Visible to the screen while the sync is still running.
       await db
@@ -585,15 +563,6 @@ export async function syncEmployees({
         .set({ ...totals })
         .where(eq(employeeSyncRuns.id, runId));
     }
-
-    // Before the default group, so a mapped person is not already "taken".
-    const mappedToGroup = await applyGroupMappings(
-      firstTime,
-      actorEmployeeId,
-      env,
-      doFetch,
-      groupMembers
-    );
 
     const assignedToDefault = await assignDefaultGroup(actorEmployeeId);
 
@@ -606,24 +575,46 @@ export async function syncEmployees({
           : sql`${employee.entra_object_id} is not null and ${employee.entra_object_id} <> all(${`{${users.map((u) => u.objectId).join(",")}}`}::uuid[])`
       );
 
+    // Last, and only now that the whole directory was read and applied: a
+    // failure anywhere above skips this entirely (the catch below).
+    const deactivation = await deactivateMissing(
+      presentObjectIds(raw),
+      env,
+      actorEmployeeId
+    );
+
     await db
       .update(employeeSyncRuns)
-      .set({ status: "SUCCESS", finishedAt: new Date(), ...totals })
+      .set({
+        status: "SUCCESS",
+        finishedAt: new Date(),
+        ...totals,
+        deactivated: deactivation.deactivated,
+        deactivation_note: deactivation.note,
+      })
       .where(eq(employeeSyncRuns.id, runId));
+
+    console.info(
+      `Entra sync ${runId}: fetched ${raw.length}, created ${totals.created}, ` +
+        `updated ${totals.updated}, linked ${totals.linked}, ` +
+        `deactivated ${deactivation.deactivated}, skipped ${totals.skipped}` +
+        (deactivation.note ? `. ${deactivation.note}` : "")
+    );
 
     return {
       runId,
       fetched: raw.length,
       ...totals,
-      mappedToGroup,
       assignedToDefault,
       notInDirectory: users.length === 0 ? 0 : missing,
+      deactivated: deactivation.deactivated,
+      deactivationNote: deactivation.note,
     };
   } catch (error) {
     const message =
       error instanceof SyncError
         ? error.message
-        : "The sync failed. Nothing was removed; run it again.";
+        : "The sync failed. Nobody was removed or deactivated; run it again.";
 
     if (!(error instanceof SyncError)) console.error("Entra sync failed:", error);
 
@@ -650,6 +641,8 @@ export type SyncStatus = {
     updated: number;
     linked: number;
     skipped: number;
+    deactivated: number;
+    deactivationNote: string | null;
     error: string | null;
   } | null;
   lastSuccessAt: string | null;
@@ -688,6 +681,8 @@ export async function getSyncStatus(env: Env = process.env): Promise<SyncStatus>
           updated: last.updated,
           linked: last.linked,
           skipped: last.skipped,
+          deactivated: last.deactivated,
+          deactivationNote: last.deactivation_note,
           error: last.error,
         }
       : null,

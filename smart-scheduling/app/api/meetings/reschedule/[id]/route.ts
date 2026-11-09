@@ -15,6 +15,12 @@ import {
   timeFields,
 } from "@/lib/validations/meeting.validator";
 import {
+  LEAD_TIME_MESSAGE,
+  MIN_DURATION_MESSAGE,
+  hasMinimumLead,
+  isLongEnough,
+} from "@/lib/validations/date-time";
+import {
   RescheduleError,
   rescheduleMeeting,
 } from "@/lib/services/reschedule.service";
@@ -28,10 +34,19 @@ const rescheduleSchema = z
   .refine((data) => data.start_time < data.end_time, {
     message: "End time must be after start time",
     path: ["end_time"],
+  })
+  .refine((data) => isLongEnough(data.start_time, data.end_time), {
+    message: MIN_DURATION_MESSAGE,
+    path: ["end_time"],
+  })
+  .refine((data) => hasMinimumLead(data.meeting_date, data.start_time), {
+    message: LEAD_TIME_MESSAGE,
+    path: ["start_time"],
   });
 
-// Moves a meeting that was bumped by a higher-priority one (status Pending
-// reschedule) to another room, date or time.
+// Moves a meeting to another room, date or time: a scheduled meeting (B-04),
+// or one bumped by a higher-priority booking (status Pending reschedule). Only
+// the organizer or an Admin (checked in the service, under the locks).
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

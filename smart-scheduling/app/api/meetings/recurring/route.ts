@@ -43,8 +43,11 @@ export async function POST(req: NextRequest) {
     // The organizer and their role are always the signed-in user, never
     // whatever the client sends — otherwise any caller could book meetings as
     // any employee.
-    const { meetings, recurringMeetingId } = await createRecurringMeeting({
-      ...result.data,
+    const { onlineMeeting, ...series } = result.data;
+
+    const { meetings, recurringMeetingId, online } = await createRecurringMeeting({
+      ...series,
+      online: onlineMeeting === true,
       organizerEmployeeId: organizer.employeeId,
       organizerRole: organizer.role,
     });
@@ -54,6 +57,7 @@ export async function POST(req: NextRequest) {
         success: true,
         data: meetings,
         recurringMeetingId,
+        ...(online ? { online } : {}),
       },
       { status: 201 }
     );

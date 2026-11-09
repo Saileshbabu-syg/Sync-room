@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { formatTime } from "@/lib/format";
 
 const INTERVAL_MINUTES = 30;
 
@@ -28,7 +29,9 @@ type Props = {
   after?: string;
 };
 
-// Picks a time on a 30-minute grid. A restored value that is off the grid
+// Picks a time on a 30-minute grid, shown as 12-hour "02:30 PM" labels. The
+// value it holds and reports is still the 24-hour "HH:mm" the API expects, so
+// ordering and validation are unchanged. A restored value that is off the grid
 // (e.g. "09:15" from a saved draft) is kept as an extra option so it still shows.
 export default function TimeSelect({
   value,
@@ -54,7 +57,7 @@ export default function TimeSelect({
       <SelectContent position="popper" className="max-h-64">
         {options.map((t) => (
           <SelectItem key={t} value={t}>
-            {t}
+            {formatTime(t)}
           </SelectItem>
         ))}
       </SelectContent>

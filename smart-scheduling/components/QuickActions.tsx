@@ -1,6 +1,4 @@
-"use client";
-
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import {
   CalendarPlus,
@@ -35,15 +33,15 @@ const actions = [
   },
 ];
 
+// Each card is a real link: reachable with Tab, opened with Enter, can be
+// opened in a new tab, and announced as a link by screen readers.
 export default function QuickActions() {
-  const router = useRouter();
-
   return (
-    <section className="mx-auto mt-12 max-w-7xl px-6">
+    <section className="mx-auto mt-12 max-w-7xl px-4 sm:px-6">
 
       <div className="mb-8">
 
-        <h2 className="text-3xl font-bold text-slate-800">
+        <h2 className="text-2xl font-bold text-slate-800 sm:text-3xl">
           Quick Actions
         </h2>
 
@@ -53,7 +51,7 @@ export default function QuickActions() {
 
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3">
+      <ul className="grid gap-6 md:grid-cols-3">
 
         {actions.map((action) => {
 
@@ -61,48 +59,55 @@ export default function QuickActions() {
 
           return (
 
-            <Card
-              key={action.title}
-              onClick={() => router.push(action.route)}
-              className="cursor-pointer rounded-3xl border-0 shadow-md transition-all duration-300 hover:-translate-y-2 hover:shadow-xl"
-            >
+            <li key={action.title}>
 
-              <CardContent className="p-8">
+              <Link
+                href={action.route}
+                className="group block h-full rounded-3xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/50"
+              >
 
-                <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-100">
+                <Card className="h-full rounded-3xl border-0 shadow-md transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-xl group-focus-visible:-translate-y-2 group-focus-visible:shadow-xl">
 
-                  <Icon className="h-7 w-7 text-blue-700" />
+                  <CardContent className="p-6 sm:p-8">
 
-                </div>
+                    <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-100">
 
-                <h3 className="text-xl font-semibold">
+                      <Icon className="h-7 w-7 text-blue-700" aria-hidden />
 
-                  {action.title}
+                    </div>
 
-                </h3>
+                    <h3 className="text-xl font-semibold">
 
-                <p className="mt-3 text-sm leading-6 text-gray-500">
+                      {action.title}
 
-                  {action.description}
+                    </h3>
 
-                </p>
+                    <p className="mt-3 text-sm leading-6 text-gray-500">
 
-                <div className="mt-6 flex items-center gap-2 font-medium text-blue-700">
+                      {action.description}
 
-                  Open
+                    </p>
 
-                  <ArrowRight className="h-4 w-4" />
+                    <div className="mt-6 flex items-center gap-2 font-medium text-blue-700" aria-hidden>
 
-                </div>
+                      Open
 
-              </CardContent>
+                      <ArrowRight className="h-4 w-4" />
 
-            </Card>
+                    </div>
+
+                  </CardContent>
+
+                </Card>
+
+              </Link>
+
+            </li>
 
           );
         })}
 
-      </div>
+      </ul>
 
     </section>
   );

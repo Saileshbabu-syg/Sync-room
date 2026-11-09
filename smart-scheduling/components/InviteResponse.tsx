@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CalendarDays, Check, Clock, DoorOpen, User, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { formatTimeRange } from "@/lib/format";
 
 type Props = {
   info: {
@@ -57,7 +58,7 @@ export default function InviteResponse({
     { icon: User, label: "Organizer", value: info.organizer },
     { icon: DoorOpen, label: "Room", value: info.room },
     { icon: CalendarDays, label: "Date", value: info.date },
-    { icon: Clock, label: "Time", value: `${info.start} - ${info.end}` },
+    { icon: Clock, label: "Time", value: formatTimeRange(info.start, info.end) },
   ];
 
   return (

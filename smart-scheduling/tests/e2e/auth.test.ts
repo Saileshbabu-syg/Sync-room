@@ -29,6 +29,7 @@ const API: [string, string, unknown?][] = [
   ["PATCH", "/api/rooms/1", { roomName: "x", roomCapacity: 3, availabilityStatusId: 1 }],
   ["DELETE", "/api/rooms/1"],
   ["PATCH", "/api/rooms/1/edit", { room_name: "x", room_capacity: 3, roomLocation: "l", availabilityStatusId: 1 }],
+  ["PATCH", "/api/rooms/1/archive", { archived: true }],
   ["GET", `/api/rooms/1/schedule?date=${"2030-01-01"}`],
   ["GET", "/api/meeting-types"],
   ["GET", "/api/recurrence-frequencies"],

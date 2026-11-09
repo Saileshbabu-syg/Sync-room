@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -8,7 +9,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
+import { formatDate, formatTimeRange } from "@/lib/format";
+
+// Upcoming meetings that stop a room from being taken out of service.
+type RoomConflict = {
+  meetingId: number;
+  title: string;
+  meetingDate: string;
+  startTime: string;
+  endTime: string;
+};
+
 type Props = {
+  // "create": a new room (POST /api/rooms); default "edit".
+  mode?: "edit" | "create";
   room: {
     room_id: number;
     room_name: string;
@@ -26,9 +40,14 @@ type Props = {
 };
 
 export default function EditRoomForm({
+  mode = "edit",
   room,
   availabilityStatuses,
 }: Props) {
+
+  const creating = mode === "create";
+
+  const [conflicts, setConflicts] = useState<RoomConflict[]>([]);
 
   const router = useRouter();
 
@@ -111,11 +130,24 @@ export default function EditRoomForm({
       }
 
       setLoading(true);
+      setConflicts([]);
 
       try {
 
-        const response =
-          await fetch(
+        const response = creating
+          ? await fetch("/api/rooms", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                roomName: formData.room_name,
+                roomCapacity: formData.room_capacity,
+                roomLocation: formData.roomLocation,
+                facilities: formData.facilities,
+                roomDescription: formData.roomDescription,
+                availabilityStatusId: formData.availabilityStatusId,
+              }),
+            })
+          : await fetch(
             `/api/rooms/${room.room_id}/edit`,
             {
               method: "PATCH",
@@ -136,13 +168,16 @@ export default function EditRoomForm({
 
         if (!response.ok) {
           toast.error(
-            result.message
+            result.message ?? "The room could not be saved."
           );
+          // Meetings still booked in the room: listed below so they can be
+          // moved or cancelled first (nothing was changed).
+          setConflicts(Array.isArray(result.conflicts) ? result.conflicts : []);
           return;
         }
 
         toast.success(
-          "Room updated successfully."
+          creating ? "Room created." : "Room updated successfully."
         );
 
         router.push("/rooms");
@@ -166,8 +201,31 @@ export default function EditRoomForm({
     <div className="rounded-2xl border bg-white p-8 shadow">
 
       <h1 className="mb-8 text-3xl font-bold">
-        Edit Room
+        {creating ? "Add Room" : "Edit Room"}
       </h1>
+
+      {conflicts.length > 0 && (
+        <div
+          className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          role="alert"
+          data-testid="room-conflicts"
+        >
+          <p className="font-medium">
+            These meetings are still booked in this room. Move or cancel them
+            first (as their organizer or an Admin), then try again:
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {conflicts.map((c) => (
+              <li key={c.meetingId}>
+                <Link className="underline" href={`/bookings/${c.meetingId}`}>
+                  {c.title}
+                </Link>{" "}
+                - {formatDate(c.meetingDate)}, {formatTimeRange(c.startTime, c.endTime)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="space-y-6">
 
@@ -286,8 +344,8 @@ export default function EditRoomForm({
           >
 
             {loading
-              ? "Updating..."
-              : "Update Room"}
+              ? "Saving..."
+              : creating ? "Create Room" : "Update Room"}
 
           </Button>
 

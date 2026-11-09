@@ -1,0 +1,3586 @@
+{
+  "id": "2599a011-af9b-46c7-923d-f25f52726761",
+  "prevId": "34ca774e-f58a-43a0-b5c7-6305ed8b17a6",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.Account": {
+      "name": "Account",
+      "schema": "",
+      "columns": {
+        "account_id": {
+          "name": "account_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organizer_id": {
+          "name": "organizer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_account_id": {
+          "name": "provider_account_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "access_token": {
+          "name": "access_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_token": {
+          "name": "refresh_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "account_organizer_id_idx": {
+          "name": "account_organizer_id_idx",
+          "columns": [
+            {
+              "expression": "organizer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "Account_organizer_id_Organizer_organizer_id_fk": {
+          "name": "Account_organizer_id_Organizer_organizer_id_fk",
+          "tableFrom": "Account",
+          "tableTo": "Organizer",
+          "columnsFrom": [
+            "organizer_id"
+          ],
+          "columnsTo": [
+            "organizer_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "Account_provider_account_id_unique": {
+          "name": "Account_provider_account_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "provider_account_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.availability_master": {
+      "name": "availability_master",
+      "schema": "",
+      "columns": {
+        "availability_status_id": {
+          "name": "availability_status_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "availability_status_code": {
+          "name": "availability_status_code",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "availability_master_availability_status_code_unique": {
+          "name": "availability_master_availability_status_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "availability_status_code"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.booking_priority_history": {
+      "name": "booking_priority_history",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "incoming_booking_id": {
+          "name": "incoming_booking_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "affected_booking_id": {
+          "name": "affected_booking_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_group_id": {
+          "name": "previous_group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "previous_priority": {
+          "name": "previous_priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "incoming_group_id": {
+          "name": "incoming_group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "incoming_priority": {
+          "name": "incoming_priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_employee_id": {
+          "name": "actor_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "booking_priority_history_affected_idx": {
+          "name": "booking_priority_history_affected_idx",
+          "columns": [
+            {
+              "expression": "affected_booking_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "booking_priority_history_incoming_idx": {
+          "name": "booking_priority_history_incoming_idx",
+          "columns": [
+            {
+              "expression": "incoming_booking_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "booking_priority_history_incoming_booking_id_meeting_meeting_id_fk": {
+          "name": "booking_priority_history_incoming_booking_id_meeting_meeting_id_fk",
+          "tableFrom": "booking_priority_history",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "incoming_booking_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "booking_priority_history_affected_booking_id_meeting_meeting_id_fk": {
+          "name": "booking_priority_history_affected_booking_id_meeting_meeting_id_fk",
+          "tableFrom": "booking_priority_history",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "affected_booking_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "booking_priority_history_previous_group_id_groups_id_fk": {
+          "name": "booking_priority_history_previous_group_id_groups_id_fk",
+          "tableFrom": "booking_priority_history",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "previous_group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "booking_priority_history_incoming_group_id_groups_id_fk": {
+          "name": "booking_priority_history_incoming_group_id_groups_id_fk",
+          "tableFrom": "booking_priority_history",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "incoming_group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "booking_priority_history_actor_employee_id_Employee_employee_id_fk": {
+          "name": "booking_priority_history_actor_employee_id_Employee_employee_id_fk",
+          "tableFrom": "booking_priority_history",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "actor_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.Employee": {
+      "name": "Employee",
+      "schema": "",
+      "columns": {
+        "employee_id": {
+          "name": "employee_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role_id": {
+          "name": "role_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employee_name": {
+          "name": "employee_name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(150)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entra_object_id": {
+          "name": "entra_object_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "employee_role_id_idx": {
+          "name": "employee_role_id_idx",
+          "columns": [
+            {
+              "expression": "role_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "Employee_role_id_roles_role_id_fk": {
+          "name": "Employee_role_id_roles_role_id_fk",
+          "tableFrom": "Employee",
+          "tableTo": "roles",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "role_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "Employee_email_unique": {
+          "name": "Employee_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        },
+        "Employee_entra_object_id_unique": {
+          "name": "Employee_entra_object_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "entra_object_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.employee_sync_runs": {
+      "name": "employee_sync_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'RUNNING'"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "triggered_by": {
+          "name": "triggered_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fetched": {
+          "name": "fetched",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created": {
+          "name": "created",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated": {
+          "name": "updated",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "linked": {
+          "name": "linked",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "skipped": {
+          "name": "skipped",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "employee_sync_runs_started_idx": {
+          "name": "employee_sync_runs_started_idx",
+          "columns": [
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "employee_sync_runs_one_running_idx": {
+          "name": "employee_sync_runs_one_running_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"employee_sync_runs\".\"status\" = 'RUNNING'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "employee_sync_runs_triggered_by_Employee_employee_id_fk": {
+          "name": "employee_sync_runs_triggered_by_Employee_employee_id_fk",
+          "tableFrom": "employee_sync_runs",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "triggered_by"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "employee_sync_runs_status_valid": {
+          "name": "employee_sync_runs_status_valid",
+          "value": "\"employee_sync_runs\".\"status\" IN ('RUNNING', 'SUCCESS', 'FAILED')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.entra_group_mappings": {
+      "name": "entra_group_mappings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "entra_group_id": {
+          "name": "entra_group_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entra_group_name": {
+          "name": "entra_group_name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "entra_group_mappings_group_idx": {
+          "name": "entra_group_mappings_group_idx",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "entra_group_mappings_group_id_groups_id_fk": {
+          "name": "entra_group_mappings_group_id_groups_id_fk",
+          "tableFrom": "entra_group_mappings",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "entra_group_mappings_entra_group_id_unique": {
+          "name": "entra_group_mappings_entra_group_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "entra_group_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.entra_sync_settings": {
+      "name": "entra_sync_settings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "default": 1
+        },
+        "auto_sync_enabled": {
+          "name": "auto_sync_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "interval_hours": {
+          "name": "interval_hours",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 24
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "entra_sync_settings_updated_by_Employee_employee_id_fk": {
+          "name": "entra_sync_settings_updated_by_Employee_employee_id_fk",
+          "tableFrom": "entra_sync_settings",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "entra_sync_settings_single_row": {
+          "name": "entra_sync_settings_single_row",
+          "value": "\"entra_sync_settings\".\"id\" = 1"
+        },
+        "entra_sync_settings_interval_range": {
+          "name": "entra_sync_settings_interval_range",
+          "value": "\"entra_sync_settings\".\"interval_hours\" BETWEEN 1 AND 168"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.group_audit_logs": {
+      "name": "group_audit_logs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "actor_employee_id": {
+          "name": "actor_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_employee_id": {
+          "name": "target_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "details": {
+          "name": "details",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "group_audit_logs_created_idx": {
+          "name": "group_audit_logs_created_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "group_audit_logs_actor_employee_id_Employee_employee_id_fk": {
+          "name": "group_audit_logs_actor_employee_id_Employee_employee_id_fk",
+          "tableFrom": "group_audit_logs",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "actor_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "group_audit_logs_target_employee_id_Employee_employee_id_fk": {
+          "name": "group_audit_logs_target_employee_id_Employee_employee_id_fk",
+          "tableFrom": "group_audit_logs",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "target_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.group_meeting_types": {
+      "name": "group_meeting_types",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_type_id": {
+          "name": "meeting_type_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "group_meeting_types_type_idx": {
+          "name": "group_meeting_types_type_idx",
+          "columns": [
+            {
+              "expression": "meeting_type_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "group_meeting_types_group_id_groups_id_fk": {
+          "name": "group_meeting_types_group_id_groups_id_fk",
+          "tableFrom": "group_meeting_types",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "group_meeting_types_meeting_type_id_meeting_types_meeting_type_id_fk": {
+          "name": "group_meeting_types_meeting_type_id_meeting_types_meeting_type_id_fk",
+          "tableFrom": "group_meeting_types",
+          "tableTo": "meeting_types",
+          "columnsFrom": [
+            "meeting_type_id"
+          ],
+          "columnsTo": [
+            "meeting_type_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "group_meeting_types_group_type_uq": {
+          "name": "group_meeting_types_group_type_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "group_id",
+            "meeting_type_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.group_permissions": {
+      "name": "group_permissions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "permission_key": {
+          "name": "permission_key",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_enabled": {
+          "name": "is_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "group_permissions_group_id_groups_id_fk": {
+          "name": "group_permissions_group_id_groups_id_fk",
+          "tableFrom": "group_permissions",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "group_permissions_group_key_uq": {
+          "name": "group_permissions_group_key_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "group_id",
+            "permission_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.group_rooms": {
+      "name": "group_rooms",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "group_rooms_room_idx": {
+          "name": "group_rooms_room_idx",
+          "columns": [
+            {
+              "expression": "room_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "group_rooms_group_id_groups_id_fk": {
+          "name": "group_rooms_group_id_groups_id_fk",
+          "tableFrom": "group_rooms",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "group_rooms_room_id_rooms_room_id_fk": {
+          "name": "group_rooms_room_id_rooms_room_id_fk",
+          "tableFrom": "group_rooms",
+          "tableTo": "rooms",
+          "columnsFrom": [
+            "room_id"
+          ],
+          "columnsTo": [
+            "room_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "group_rooms_group_room_uq": {
+          "name": "group_rooms_group_room_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "group_id",
+            "room_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.group_settings": {
+      "name": "group_settings",
+      "schema": "",
+      "columns": {
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "max_duration_minutes": {
+          "name": "max_duration_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_advance_days": {
+          "name": "max_advance_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_occurrences": {
+          "name": "max_occurrences",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "group_settings_group_id_groups_id_fk": {
+          "name": "group_settings_group_id_groups_id_fk",
+          "tableFrom": "group_settings",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "group_settings_duration_range": {
+          "name": "group_settings_duration_range",
+          "value": "\"group_settings\".\"max_duration_minutes\" IS NULL OR \"group_settings\".\"max_duration_minutes\" BETWEEN 15 AND 1440"
+        },
+        "group_settings_advance_range": {
+          "name": "group_settings_advance_range",
+          "value": "\"group_settings\".\"max_advance_days\" IS NULL OR \"group_settings\".\"max_advance_days\" BETWEEN 1 AND 92"
+        },
+        "group_settings_occurrences_range": {
+          "name": "group_settings_occurrences_range",
+          "value": "\"group_settings\".\"max_occurrences\" IS NULL OR \"group_settings\".\"max_occurrences\" BETWEEN 1 AND 12"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.groups": {
+      "name": "groups",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "groups_name_lower_uq": {
+          "name": "groups_name_lower_uq",
+          "columns": [
+            {
+              "expression": "lower(\"name\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "groups_priority_range": {
+          "name": "groups_priority_range",
+          "value": "\"groups\".\"priority\" BETWEEN 1 AND 1000"
+        },
+        "groups_name_not_blank": {
+          "name": "groups_name_not_blank",
+          "value": "length(btrim(\"groups\".\"name\")) > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.meeting": {
+      "name": "meeting",
+      "schema": "",
+      "columns": {
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_date": {
+          "name": "meeting_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organizer_employee_id": {
+          "name": "organizer_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "participant_count": {
+          "name": "participant_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_type_id": {
+          "name": "meeting_type_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_status_id": {
+          "name": "meeting_status_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recurring_meeting_id": {
+          "name": "recurring_meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "group_id_at_booking": {
+          "name": "group_id_at_booking",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "priority_at_booking": {
+          "name": "priority_at_booking",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "online_requested": {
+          "name": "online_requested",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "is_online": {
+          "name": "is_online",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "online_provider": {
+          "name": "online_provider",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "online_join_url": {
+          "name": "online_join_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "online_event_id": {
+          "name": "online_event_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "meeting_online_event_id_uq": {
+          "name": "meeting_online_event_id_uq",
+          "columns": [
+            {
+              "expression": "online_event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"meeting\".\"online_event_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "meeting_room_date_idx": {
+          "name": "meeting_room_date_idx",
+          "columns": [
+            {
+              "expression": "room_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "meeting_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "meeting_organizer_employee_id_idx": {
+          "name": "meeting_organizer_employee_id_idx",
+          "columns": [
+            {
+              "expression": "organizer_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "meeting_status_id_idx": {
+          "name": "meeting_status_id_idx",
+          "columns": [
+            {
+              "expression": "meeting_status_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "meeting_type_id_idx": {
+          "name": "meeting_type_id_idx",
+          "columns": [
+            {
+              "expression": "meeting_type_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "meeting_recurring_meeting_id_idx": {
+          "name": "meeting_recurring_meeting_id_idx",
+          "columns": [
+            {
+              "expression": "recurring_meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "meeting_room_id_rooms_room_id_fk": {
+          "name": "meeting_room_id_rooms_room_id_fk",
+          "tableFrom": "meeting",
+          "tableTo": "rooms",
+          "columnsFrom": [
+            "room_id"
+          ],
+          "columnsTo": [
+            "room_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meeting_organizer_employee_id_Employee_employee_id_fk": {
+          "name": "meeting_organizer_employee_id_Employee_employee_id_fk",
+          "tableFrom": "meeting",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "organizer_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meeting_meeting_type_id_meeting_types_meeting_type_id_fk": {
+          "name": "meeting_meeting_type_id_meeting_types_meeting_type_id_fk",
+          "tableFrom": "meeting",
+          "tableTo": "meeting_types",
+          "columnsFrom": [
+            "meeting_type_id"
+          ],
+          "columnsTo": [
+            "meeting_type_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meeting_meeting_status_id_meeting_statuses_meeting_status_id_fk": {
+          "name": "meeting_meeting_status_id_meeting_statuses_meeting_status_id_fk",
+          "tableFrom": "meeting",
+          "tableTo": "meeting_statuses",
+          "columnsFrom": [
+            "meeting_status_id"
+          ],
+          "columnsTo": [
+            "meeting_status_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meeting_recurring_meeting_id_recurring_meetings_recurring_meeting_id_fk": {
+          "name": "meeting_recurring_meeting_id_recurring_meetings_recurring_meeting_id_fk",
+          "tableFrom": "meeting",
+          "tableTo": "recurring_meetings",
+          "columnsFrom": [
+            "recurring_meeting_id"
+          ],
+          "columnsTo": [
+            "recurring_meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meeting_group_id_at_booking_groups_id_fk": {
+          "name": "meeting_group_id_at_booking_groups_id_fk",
+          "tableFrom": "meeting",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id_at_booking"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "meeting_online_consistent": {
+          "name": "meeting_online_consistent",
+          "value": "NOT \"meeting\".\"is_online\" OR (\"meeting\".\"online_join_url\" IS NOT NULL AND \"meeting\".\"online_event_id\" IS NOT NULL AND \"meeting\".\"online_provider\" IS NOT NULL)"
+        },
+        "meeting_participant_count_positive": {
+          "name": "meeting_participant_count_positive",
+          "value": "\"meeting\".\"participant_count\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.meeting_statuses": {
+      "name": "meeting_statuses",
+      "schema": "",
+      "columns": {
+        "meeting_status_id": {
+          "name": "meeting_status_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "meeting_status_name": {
+          "name": "meeting_status_name",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "meeting_statuses_meeting_status_name_unique": {
+          "name": "meeting_statuses_meeting_status_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "meeting_status_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.meeting_types": {
+      "name": "meeting_types",
+      "schema": "",
+      "columns": {
+        "meeting_type_id": {
+          "name": "meeting_type_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "meeting_type_name": {
+          "name": "meeting_type_name",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priority_rank": {
+          "name": "priority_rank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 5
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "meeting_types_meeting_type_name_unique": {
+          "name": "meeting_types_meeting_type_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "meeting_type_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "meeting_types_priority_rank_range": {
+          "name": "meeting_types_priority_rank_range",
+          "value": "\"meeting_types\".\"priority_rank\" BETWEEN 1 AND 5"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.meeting_attendees": {
+      "name": "meeting_attendees",
+      "schema": "",
+      "columns": {
+        "meeting_attendee_id": {
+          "name": "meeting_attendee_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response_status": {
+          "name": "response_status",
+          "type": "varchar(15)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'NO_RESPONSE'"
+        },
+        "responded_at": {
+          "name": "responded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_optional": {
+          "name": "is_optional",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "meeting_attendees_employee_id_idx": {
+          "name": "meeting_attendees_employee_id_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "meeting_attendees_meeting_id_meeting_meeting_id_fk": {
+          "name": "meeting_attendees_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "meeting_attendees",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meeting_attendees_employee_id_Employee_employee_id_fk": {
+          "name": "meeting_attendees_employee_id_Employee_employee_id_fk",
+          "tableFrom": "meeting_attendees",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "meeting_attendees_meeting_id_employee_id_unique": {
+          "name": "meeting_attendees_meeting_id_employee_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "meeting_id",
+            "employee_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "meeting_attendees_response_valid": {
+          "name": "meeting_attendees_response_valid",
+          "value": "\"meeting_attendees\".\"response_status\" IN ('NO_RESPONSE', 'ACCEPTED', 'DECLINED')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.meeting_audit_logs": {
+      "name": "meeting_audit_logs",
+      "schema": "",
+      "columns": {
+        "audit_log_id": {
+          "name": "audit_log_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "remarks": {
+          "name": "remarks",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "actor_employee_id": {
+          "name": "actor_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "meeting_audit_logs_meeting_id_idx": {
+          "name": "meeting_audit_logs_meeting_id_idx",
+          "columns": [
+            {
+              "expression": "meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "meeting_audit_logs_meeting_id_meeting_meeting_id_fk": {
+          "name": "meeting_audit_logs_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "meeting_audit_logs",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "meeting_audit_logs_actor_employee_id_Employee_employee_id_fk": {
+          "name": "meeting_audit_logs_actor_employee_id_Employee_employee_id_fk",
+          "tableFrom": "meeting_audit_logs",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "actor_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.notification_type_master": {
+      "name": "notification_type_master",
+      "schema": "",
+      "columns": {
+        "notification_type_id": {
+          "name": "notification_type_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "notification_type_name": {
+          "name": "notification_type_name",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "notification_type_master_notification_type_name_unique": {
+          "name": "notification_type_master_notification_type_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "notification_type_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.notifications": {
+      "name": "notifications",
+      "schema": "",
+      "columns": {
+        "notification_id": {
+          "name": "notification_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "notification_type_id": {
+          "name": "notification_type_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'PENDING'"
+        },
+        "recipient_employee_id": {
+          "name": "recipient_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "sent_at": {
+          "name": "sent_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "notifications_meeting_id_idx": {
+          "name": "notifications_meeting_id_idx",
+          "columns": [
+            {
+              "expression": "meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "notifications_type_id_idx": {
+          "name": "notifications_type_id_idx",
+          "columns": [
+            {
+              "expression": "notification_type_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "notifications_meeting_id_meeting_meeting_id_fk": {
+          "name": "notifications_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "notifications",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "notifications_notification_type_id_notification_type_master_notification_type_id_fk": {
+          "name": "notifications_notification_type_id_notification_type_master_notification_type_id_fk",
+          "tableFrom": "notifications",
+          "tableTo": "notification_type_master",
+          "columnsFrom": [
+            "notification_type_id"
+          ],
+          "columnsTo": [
+            "notification_type_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "notifications_recipient_employee_id_Employee_employee_id_fk": {
+          "name": "notifications_recipient_employee_id_Employee_employee_id_fk",
+          "tableFrom": "notifications",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "recipient_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "notifications_status_valid": {
+          "name": "notifications_status_valid",
+          "value": "\"notifications\".\"status\" IN ('PENDING', 'SENT', 'FAILED', 'SKIPPED')"
+        },
+        "notifications_attempts_nonneg": {
+          "name": "notifications_attempts_nonneg",
+          "value": "\"notifications\".\"attempts\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.Organizer": {
+      "name": "Organizer",
+      "schema": "",
+      "columns": {
+        "organizer_id": {
+          "name": "organizer_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(150)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "image_url": {
+          "name": "image_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "role": {
+          "name": "role",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password": {
+          "name": "password",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'google'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "organizer_employee_id_idx": {
+          "name": "organizer_employee_id_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "Organizer_employee_id_Employee_employee_id_fk": {
+          "name": "Organizer_employee_id_Employee_employee_id_fk",
+          "tableFrom": "Organizer",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "Organizer_email_unique": {
+          "name": "Organizer_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.recurrence_frequency_master": {
+      "name": "recurrence_frequency_master",
+      "schema": "",
+      "columns": {
+        "frequency_id": {
+          "name": "frequency_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "frequency_name": {
+          "name": "frequency_name",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "recurrence_frequency_master_frequency_name_unique": {
+          "name": "recurrence_frequency_master_frequency_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "frequency_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.recurring_meetings": {
+      "name": "recurring_meetings",
+      "schema": "",
+      "columns": {
+        "recurring_meeting_id": {
+          "name": "recurring_meeting_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "frequency_id": {
+          "name": "frequency_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurrence_count": {
+          "name": "occurrence_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recurrence_end_date": {
+          "name": "recurrence_end_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "recurring_meetings_frequency_id_idx": {
+          "name": "recurring_meetings_frequency_id_idx",
+          "columns": [
+            {
+              "expression": "frequency_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "recurring_meetings_frequency_id_recurrence_frequency_master_frequency_id_fk": {
+          "name": "recurring_meetings_frequency_id_recurrence_frequency_master_frequency_id_fk",
+          "tableFrom": "recurring_meetings",
+          "tableTo": "recurrence_frequency_master",
+          "columnsFrom": [
+            "frequency_id"
+          ],
+          "columnsTo": [
+            "frequency_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "recurring_meetings_occurrence_count_positive": {
+          "name": "recurring_meetings_occurrence_count_positive",
+          "value": "\"recurring_meetings\".\"occurrence_count\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.reminder_logs": {
+      "name": "reminder_logs",
+      "schema": "",
+      "columns": {
+        "reminder_log_id": {
+          "name": "reminder_log_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "meeting_id": {
+          "name": "meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reminder_time": {
+          "name": "reminder_time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'PENDING'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "reminder_logs_meeting_id_idx": {
+          "name": "reminder_logs_meeting_id_idx",
+          "columns": [
+            {
+              "expression": "meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "reminder_logs_meeting_id_uq": {
+          "name": "reminder_logs_meeting_id_uq",
+          "columns": [
+            {
+              "expression": "meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "reminder_logs_status_time_idx": {
+          "name": "reminder_logs_status_time_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "reminder_time",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "reminder_logs_meeting_id_meeting_meeting_id_fk": {
+          "name": "reminder_logs_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "reminder_logs",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "reminder_logs_status_valid": {
+          "name": "reminder_logs_status_valid",
+          "value": "\"reminder_logs\".\"status\" IN ('PENDING', 'SENT', 'SKIPPED', 'FAILED')"
+        },
+        "reminder_logs_attempts_nonneg": {
+          "name": "reminder_logs_attempts_nonneg",
+          "value": "\"reminder_logs\".\"attempts\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.reschedule_requests": {
+      "name": "reschedule_requests",
+      "schema": "",
+      "columns": {
+        "reschedule_request_id": {
+          "name": "reschedule_request_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "bumped_meeting_id": {
+          "name": "bumped_meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimant_meeting_id": {
+          "name": "claimant_meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PENDING'"
+        },
+        "deadline": {
+          "name": "deadline",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "reschedule_requests_one_pending_per_bumped_idx": {
+          "name": "reschedule_requests_one_pending_per_bumped_idx",
+          "columns": [
+            {
+              "expression": "bumped_meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"reschedule_requests\".\"status\" = 'PENDING'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "reschedule_requests_claimant_idx": {
+          "name": "reschedule_requests_claimant_idx",
+          "columns": [
+            {
+              "expression": "claimant_meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "reschedule_requests_status_deadline_idx": {
+          "name": "reschedule_requests_status_deadline_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "deadline",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "reschedule_requests_bumped_meeting_id_meeting_meeting_id_fk": {
+          "name": "reschedule_requests_bumped_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "reschedule_requests",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "bumped_meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "reschedule_requests_claimant_meeting_id_meeting_meeting_id_fk": {
+          "name": "reschedule_requests_claimant_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "reschedule_requests",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "claimant_meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "reschedule_requests_status_valid": {
+          "name": "reschedule_requests_status_valid",
+          "value": "\"reschedule_requests\".\"status\" IN ('PENDING', 'RESCHEDULED', 'CANCELLED', 'AUTO_REALLOCATED', 'AUTO_CANCELLED', 'WITHDRAWN')"
+        },
+        "reschedule_requests_distinct_meetings": {
+          "name": "reschedule_requests_distinct_meetings",
+          "value": "\"reschedule_requests\".\"bumped_meeting_id\" <> \"reschedule_requests\".\"claimant_meeting_id\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.role_meeting_types": {
+      "name": "role_meeting_types",
+      "schema": "",
+      "columns": {
+        "role_meeting_type_id": {
+          "name": "role_meeting_type_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role_id": {
+          "name": "role_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_type_id": {
+          "name": "meeting_type_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "role_meeting_types_meeting_type_id_idx": {
+          "name": "role_meeting_types_meeting_type_id_idx",
+          "columns": [
+            {
+              "expression": "meeting_type_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "role_meeting_types_role_id_roles_role_id_fk": {
+          "name": "role_meeting_types_role_id_roles_role_id_fk",
+          "tableFrom": "role_meeting_types",
+          "tableTo": "roles",
+          "columnsFrom": [
+            "role_id"
+          ],
+          "columnsTo": [
+            "role_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "role_meeting_types_meeting_type_id_meeting_types_meeting_type_id_fk": {
+          "name": "role_meeting_types_meeting_type_id_meeting_types_meeting_type_id_fk",
+          "tableFrom": "role_meeting_types",
+          "tableTo": "meeting_types",
+          "columnsFrom": [
+            "meeting_type_id"
+          ],
+          "columnsTo": [
+            "meeting_type_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "role_meeting_types_role_id_meeting_type_id_unique": {
+          "name": "role_meeting_types_role_id_meeting_type_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "role_id",
+            "meeting_type_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.roles": {
+      "name": "roles",
+      "schema": "",
+      "columns": {
+        "role_id": {
+          "name": "role_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "role_name": {
+          "name": "role_name",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priority_boost": {
+          "name": "priority_boost",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "roles_role_name_unique": {
+          "name": "roles_role_name_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "role_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "roles_priority_boost_range": {
+          "name": "roles_priority_boost_range",
+          "value": "\"roles\".\"priority_boost\" BETWEEN 0 AND 4"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.rooms": {
+      "name": "rooms",
+      "schema": "",
+      "columns": {
+        "room_id": {
+          "name": "room_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "room_name": {
+          "name": "room_name",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_capacity": {
+          "name": "room_capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_location": {
+          "name": "room_location",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "facilities": {
+          "name": "facilities",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "availability_status_id": {
+          "name": "availability_status_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "room_description": {
+          "name": "room_description",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "image_url": {
+          "name": "image_url",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "rooms_availability_status_id_idx": {
+          "name": "rooms_availability_status_id_idx",
+          "columns": [
+            {
+              "expression": "availability_status_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "rooms_availability_status_id_availability_master_availability_status_id_fk": {
+          "name": "rooms_availability_status_id_availability_master_availability_status_id_fk",
+          "tableFrom": "rooms",
+          "tableTo": "availability_master",
+          "columnsFrom": [
+            "availability_status_id"
+          ],
+          "columnsTo": [
+            "availability_status_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "rooms_capacity_positive": {
+          "name": "rooms_capacity_positive",
+          "value": "\"rooms\".\"room_capacity\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.room_request_emails": {
+      "name": "room_request_emails",
+      "schema": "",
+      "columns": {
+        "room_request_email_id": {
+          "name": "room_request_email_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "room_request_id": {
+          "name": "room_request_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipient_employee_id": {
+          "name": "recipient_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PENDING'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sent_at": {
+          "name": "sent_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "room_request_emails_status_idx": {
+          "name": "room_request_emails_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "room_request_emails_room_request_id_room_requests_room_request_id_fk": {
+          "name": "room_request_emails_room_request_id_room_requests_room_request_id_fk",
+          "tableFrom": "room_request_emails",
+          "tableTo": "room_requests",
+          "columnsFrom": [
+            "room_request_id"
+          ],
+          "columnsTo": [
+            "room_request_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "room_request_emails_recipient_employee_id_Employee_employee_id_fk": {
+          "name": "room_request_emails_recipient_employee_id_Employee_employee_id_fk",
+          "tableFrom": "room_request_emails",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "recipient_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "room_request_emails_request_kind_recipient_uq": {
+          "name": "room_request_emails_request_kind_recipient_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "room_request_id",
+            "kind",
+            "recipient_employee_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "room_request_emails_status_valid": {
+          "name": "room_request_emails_status_valid",
+          "value": "\"room_request_emails\".\"status\" IN ('PENDING', 'SENT', 'FAILED')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.room_request_holders": {
+      "name": "room_request_holders",
+      "schema": "",
+      "columns": {
+        "room_request_holder_id": {
+          "name": "room_request_holder_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "room_request_id": {
+          "name": "room_request_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "holder_meeting_id": {
+          "name": "holder_meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "organizer_employee_id": {
+          "name": "organizer_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PENDING'"
+        },
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "room_request_holders_organizer_idx": {
+          "name": "room_request_holders_organizer_idx",
+          "columns": [
+            {
+              "expression": "organizer_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "room_request_holders_meeting_idx": {
+          "name": "room_request_holders_meeting_idx",
+          "columns": [
+            {
+              "expression": "holder_meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "room_request_holders_room_request_id_room_requests_room_request_id_fk": {
+          "name": "room_request_holders_room_request_id_room_requests_room_request_id_fk",
+          "tableFrom": "room_request_holders",
+          "tableTo": "room_requests",
+          "columnsFrom": [
+            "room_request_id"
+          ],
+          "columnsTo": [
+            "room_request_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "room_request_holders_holder_meeting_id_meeting_meeting_id_fk": {
+          "name": "room_request_holders_holder_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "room_request_holders",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "holder_meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_request_holders_organizer_employee_id_Employee_employee_id_fk": {
+          "name": "room_request_holders_organizer_employee_id_Employee_employee_id_fk",
+          "tableFrom": "room_request_holders",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "organizer_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "room_request_holders_request_meeting_uq": {
+          "name": "room_request_holders_request_meeting_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "room_request_id",
+            "holder_meeting_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "room_request_holders_status_valid": {
+          "name": "room_request_holders_status_valid",
+          "value": "\"room_request_holders\".\"status\" IN ('PENDING', 'APPROVED', 'REJECTED')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.room_requests": {
+      "name": "room_requests",
+      "schema": "",
+      "columns": {
+        "room_request_id": {
+          "name": "room_request_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "holder_meeting_id": {
+          "name": "holder_meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "holder_organizer_employee_id": {
+          "name": "holder_organizer_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requester_employee_id": {
+          "name": "requester_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_date": {
+          "name": "meeting_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "participant_count": {
+          "name": "participant_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "meeting_type_id": {
+          "name": "meeting_type_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "participant_employee_ids": {
+          "name": "participant_employee_ids",
+          "type": "integer[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::integer[]"
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PENDING'"
+        },
+        "rejection_reason": {
+          "name": "rejection_reason",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "organizer_approved_at": {
+          "name": "organizer_approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "decided_by_employee_id": {
+          "name": "decided_by_employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "responded_at": {
+          "name": "responded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resulting_meeting_id": {
+          "name": "resulting_meeting_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "client_request_id": {
+          "name": "client_request_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "room_requests_one_open_per_requester_idx": {
+          "name": "room_requests_one_open_per_requester_idx",
+          "columns": [
+            {
+              "expression": "holder_meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "requester_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"room_requests\".\"status\" IN ('PENDING', 'AWAITING_SLOT')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "room_requests_client_request_id_uq": {
+          "name": "room_requests_client_request_id_uq",
+          "columns": [
+            {
+              "expression": "requester_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "client_request_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"room_requests\".\"client_request_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "room_requests_holder_idx": {
+          "name": "room_requests_holder_idx",
+          "columns": [
+            {
+              "expression": "holder_meeting_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "room_requests_holder_organizer_idx": {
+          "name": "room_requests_holder_organizer_idx",
+          "columns": [
+            {
+              "expression": "holder_organizer_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "room_requests_requester_idx": {
+          "name": "room_requests_requester_idx",
+          "columns": [
+            {
+              "expression": "requester_employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "room_requests_status_date_idx": {
+          "name": "room_requests_status_date_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "meeting_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "room_requests_holder_meeting_id_meeting_meeting_id_fk": {
+          "name": "room_requests_holder_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "room_requests",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "holder_meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_requests_holder_organizer_employee_id_Employee_employee_id_fk": {
+          "name": "room_requests_holder_organizer_employee_id_Employee_employee_id_fk",
+          "tableFrom": "room_requests",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "holder_organizer_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_requests_requester_employee_id_Employee_employee_id_fk": {
+          "name": "room_requests_requester_employee_id_Employee_employee_id_fk",
+          "tableFrom": "room_requests",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "requester_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_requests_room_id_rooms_room_id_fk": {
+          "name": "room_requests_room_id_rooms_room_id_fk",
+          "tableFrom": "room_requests",
+          "tableTo": "rooms",
+          "columnsFrom": [
+            "room_id"
+          ],
+          "columnsTo": [
+            "room_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_requests_meeting_type_id_meeting_types_meeting_type_id_fk": {
+          "name": "room_requests_meeting_type_id_meeting_types_meeting_type_id_fk",
+          "tableFrom": "room_requests",
+          "tableTo": "meeting_types",
+          "columnsFrom": [
+            "meeting_type_id"
+          ],
+          "columnsTo": [
+            "meeting_type_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_requests_decided_by_employee_id_Employee_employee_id_fk": {
+          "name": "room_requests_decided_by_employee_id_Employee_employee_id_fk",
+          "tableFrom": "room_requests",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "decided_by_employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_requests_resulting_meeting_id_meeting_meeting_id_fk": {
+          "name": "room_requests_resulting_meeting_id_meeting_meeting_id_fk",
+          "tableFrom": "room_requests",
+          "tableTo": "meeting",
+          "columnsFrom": [
+            "resulting_meeting_id"
+          ],
+          "columnsTo": [
+            "meeting_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "room_requests_status_valid": {
+          "name": "room_requests_status_valid",
+          "value": "\"room_requests\".\"status\" IN ('PENDING', 'AWAITING_SLOT', 'APPROVED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'FAILED')"
+        },
+        "room_requests_end_after_start": {
+          "name": "room_requests_end_after_start",
+          "value": "\"room_requests\".\"end_time\" > \"room_requests\".\"start_time\""
+        },
+        "room_requests_participant_count_positive": {
+          "name": "room_requests_participant_count_positive",
+          "value": "\"room_requests\".\"participant_count\" >= 1"
+        },
+        "room_requests_message_length": {
+          "name": "room_requests_message_length",
+          "value": "char_length(btrim(\"room_requests\".\"message\")) BETWEEN 1 AND 1000"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.Session": {
+      "name": "Session",
+      "schema": "",
+      "columns": {
+        "session_id": {
+          "name": "session_id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "organizer_id": {
+          "name": "organizer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_token": {
+          "name": "session_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "session_organizer_id_idx": {
+          "name": "session_organizer_id_idx",
+          "columns": [
+            {
+              "expression": "organizer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "Session_organizer_id_Organizer_organizer_id_fk": {
+          "name": "Session_organizer_id_Organizer_organizer_id_fk",
+          "tableFrom": "Session",
+          "tableTo": "Organizer",
+          "columnsFrom": [
+            "organizer_id"
+          ],
+          "columnsTo": [
+            "organizer_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "Session_session_token_unique": {
+          "name": "Session_session_token_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "session_token"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.user_groups": {
+      "name": "user_groups",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "employee_id": {
+          "name": "employee_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "assigned_by": {
+          "name": "assigned_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "assigned_at": {
+          "name": "assigned_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "effective_until": {
+          "name": "effective_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "user_groups_one_active_per_employee_idx": {
+          "name": "user_groups_one_active_per_employee_idx",
+          "columns": [
+            {
+              "expression": "employee_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"user_groups\".\"effective_until\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "user_groups_group_id_idx": {
+          "name": "user_groups_group_id_idx",
+          "columns": [
+            {
+              "expression": "group_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "user_groups_employee_id_Employee_employee_id_fk": {
+          "name": "user_groups_employee_id_Employee_employee_id_fk",
+          "tableFrom": "user_groups",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "employee_id"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "user_groups_group_id_groups_id_fk": {
+          "name": "user_groups_group_id_groups_id_fk",
+          "tableFrom": "user_groups",
+          "tableTo": "groups",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "user_groups_assigned_by_Employee_employee_id_fk": {
+          "name": "user_groups_assigned_by_Employee_employee_id_fk",
+          "tableFrom": "user_groups",
+          "tableTo": "Employee",
+          "columnsFrom": [
+            "assigned_by"
+          ],
+          "columnsTo": [
+            "employee_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "user_groups_until_after_assigned": {
+          "name": "user_groups_until_after_assigned",
+          "value": "\"user_groups\".\"effective_until\" IS NULL OR \"user_groups\".\"effective_until\" >= \"user_groups\".\"assigned_at\""
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

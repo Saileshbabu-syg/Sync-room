@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/permissions";
 import {
   createReportStream,
   REPORT_CONTENT_TYPES,
+  ReportError,
   reportFilename,
   type ReportFormat,
 } from "@/lib/services/report.service";
@@ -12,7 +13,9 @@ import {
 const FORMATS: ReportFormat[] = ["csv", "xlsx", "pdf"];
 
 // Report download for the currently selected dashboard filters. Same
-// permission as the dashboard, checked here again for every download.
+// permission as the dashboard, checked here again for every download. A
+// selection over the row limit is refused (422) before anything is generated;
+// every export is recorded in the audit log.
 export async function GET(request: Request) {
   try {
     const guard = await requirePermission(PERMISSION.DASHBOARD_VIEW);
@@ -37,7 +40,8 @@ export async function GET(request: Request) {
     const stream = await createReportStream(
       format,
       parsed.filters,
-      `${guard.organizer.name} <${guard.organizer.email}>`
+      `${guard.organizer.name} <${guard.organizer.email}>`,
+      { actorEmployeeId: guard.organizer.employeeId }
     );
 
     return new Response(stream, {
@@ -49,6 +53,8 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof ReportError) return jsonError(error.status, error.message);
+
     console.error(error);
 
     return jsonError(500, "Something went wrong.");

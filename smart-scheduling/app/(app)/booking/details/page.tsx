@@ -1,7 +1,7 @@
 import { auth } from "@/auth";
 import { parseIdParam } from "@/lib/api";
 import { getCurrentUserProfile } from "@/lib/auth-helpers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { db } from "@/db";
 import { eq } from "drizzle-orm";
@@ -50,7 +50,18 @@ export default async function BookingDetailsPage({
     .where(eq(room.room_id, parseIdParam(params.roomId) ?? -1));
 
   if (roomData.length === 0) {
-    return <h1>Room Not Found</h1>;
+    notFound();
+  }
+
+  if (roomData[0].archived_at !== null) {
+    return (
+      <div className="rounded-xl border bg-white p-10 text-center shadow">
+        <h1 className="text-xl font-semibold">Room archived</h1>
+        <p className="mt-2 text-gray-500">
+          {roomData[0].room_name} has been archived and can no longer be booked. Please choose another room.
+        </p>
+      </div>
+    );
   }
 
   if (!canUseRoom(await getBookingPolicy(userProfile[0].employeeId), roomData[0].room_id)) {

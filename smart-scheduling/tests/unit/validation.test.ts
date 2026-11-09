@@ -187,7 +187,7 @@ describe("booking window and recurrence dates", () => {
   });
 
   it("monthly recurrence clamps to the end of shorter months", () => {
-    assert.deepEqual(computeOccurrenceDates("2026-11-30", 3, 4), [
+    assert.deepEqual(computeOccurrenceDates("2026-11-30", "MONTHLY", 4), [
       "2026-11-30",
       "2026-12-30",
       "2027-01-30",
@@ -197,14 +197,14 @@ describe("booking window and recurrence dates", () => {
 
   it("daily skips Saturdays and Sundays", () => {
     // Fri 6 Nov -> Mon 9 Nov, not Sat 7 Nov.
-    assert.deepEqual(computeOccurrenceDates("2026-11-06", 1, 3), [
+    assert.deepEqual(computeOccurrenceDates("2026-11-06", "DAILY", 3), [
       "2026-11-06",
       "2026-11-09",
       "2026-11-10",
     ]);
 
     // Ten occurrences from a Monday cover exactly two Monday-Friday weeks.
-    assert.deepEqual(computeOccurrenceDates("2026-11-02", 1, 10), [
+    assert.deepEqual(computeOccurrenceDates("2026-11-02", "DAILY", 10), [
       "2026-11-02",
       "2026-11-03",
       "2026-11-04",
@@ -219,12 +219,12 @@ describe("booking window and recurrence dates", () => {
   });
 
   it("weekly adds 7 days and daily adds 1 on a working day", () => {
-    assert.deepEqual(computeOccurrenceDates("2026-11-02", 2, 3), [
+    assert.deepEqual(computeOccurrenceDates("2026-11-02", "WEEKLY", 3), [
       "2026-11-02",
       "2026-11-09",
       "2026-11-16",
     ]);
-    assert.deepEqual(computeOccurrenceDates("2026-11-30", 1, 3), [
+    assert.deepEqual(computeOccurrenceDates("2026-11-30", "DAILY", 3), [
       "2026-11-30",
       "2026-12-01",
       "2026-12-02",

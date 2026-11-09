@@ -16,9 +16,9 @@ import {
 } from "@/lib/services/meeting-series.service";
 import { captureMail } from "../helpers/fixtures";
 
-const DAILY = 1;
-const WEEKLY = 2;
-const MONTHLY = 3;
+const DAILY = "DAILY";
+const WEEKLY = "WEEKLY";
+const MONTHLY = "MONTHLY";
 
 const rowsFor = (
   dates: string[],
@@ -50,8 +50,8 @@ describe("one-time meeting e-mail keeps the single-date format", () => {
     const [m] = mail.sent;
     assert.equal(m.subject, "Meeting Scheduled - Planning");
     assert.ok(m.html.includes("<strong>Date:</strong> 2026-12-01"));
-    assert.ok(m.html.includes("<strong>Start Time:</strong> 10:00:00"));
-    assert.ok(m.html.includes("<strong>End Time:</strong> 11:00:00"));
+    assert.ok(m.html.includes("<strong>Start Time:</strong> 10:00 AM"));
+    assert.ok(m.html.includes("<strong>End Time:</strong> 11:00 AM"));
     assert.ok(!m.html.includes("<ol>"));
     assert.equal((m.ics.match(/BEGIN:VEVENT/g) ?? []).length, 1);
     assert.match(m.ics, /DTSTART:20261201T043000Z/);
@@ -62,7 +62,7 @@ describe("one-time meeting e-mail keeps the single-date format", () => {
 describe("buildSeriesEmail", () => {
   it("weekly: lists every confirmed occurrence in order with first and last dates", () => {
     const dates = computeOccurrenceDates("2026-12-02", WEEKLY, 5);
-    const series = buildSeriesEmail(WEEKLY, "WEEKLY", rowsFor([...dates].reverse()))!;
+    const series = buildSeriesEmail("WEEKLY", rowsFor([...dates].reverse()))!;
 
     assert.deepEqual(
       series.occurrences.map((o) => o.date),
@@ -79,7 +79,7 @@ describe("buildSeriesEmail", () => {
   it("daily: runs Monday to Friday and skips the weekend", () => {
     // Fri 4 Dec 2026 + 3 working days -> Mon 7, Tue 8, Wed 9
     const dates = computeOccurrenceDates("2026-12-04", DAILY, 4);
-    const series = buildSeriesEmail(DAILY, "DAILY", rowsFor(dates))!;
+    const series = buildSeriesEmail("DAILY", rowsFor(dates))!;
 
     assert.deepEqual(series.occurrences.map((o) => o.date), [
       "2026-12-04",
@@ -95,7 +95,7 @@ describe("buildSeriesEmail", () => {
     const dates = computeOccurrenceDates("2027-01-31", MONTHLY, 3);
     assert.deepEqual(dates, ["2027-01-31", "2027-02-28", "2027-03-31"]);
 
-    const series = buildSeriesEmail(MONTHLY, "MONTHLY", rowsFor(dates))!;
+    const series = buildSeriesEmail("MONTHLY", rowsFor(dates))!;
 
     assert.deepEqual(series.occurrences.map((o) => o.date), dates);
     assert.equal(series.frequency, "Monthly");
@@ -106,7 +106,7 @@ describe("buildSeriesEmail", () => {
     const all = computeOccurrenceDates("2026-12-02", WEEKLY, 4);
     const booked = all.filter((d) => d !== "2026-12-09");
 
-    const series = buildSeriesEmail(WEEKLY, "WEEKLY", rowsFor(booked))!;
+    const series = buildSeriesEmail("WEEKLY", rowsFor(booked))!;
 
     assert.deepEqual(series.skippedDates, ["2026-12-09"]);
     assert.deepEqual(series.occurrences.map((o) => o.date), [
@@ -121,7 +121,6 @@ describe("buildSeriesEmail", () => {
     // Monthly series whose first date (Jan 31) was skipped: the pattern cannot
     // be rebuilt from Feb 28, so nothing is reported rather than a wrong date.
     const series = buildSeriesEmail(
-      MONTHLY,
       "MONTHLY",
       rowsFor(["2027-02-28", "2027-03-31"])
     )!;
@@ -137,7 +136,7 @@ describe("buildSeriesEmail", () => {
       ...rowsFor([dates[1]], MEETING_STATUS.CANCELLED),
     ];
 
-    const series = buildSeriesEmail(WEEKLY, "WEEKLY", rows)!;
+    const series = buildSeriesEmail("WEEKLY", rows)!;
 
     assert.deepEqual(series.occurrences.map((o) => o.date), [dates[0], dates[2]]);
     assert.deepEqual(series.cancelledDates, [dates[1]]);
@@ -151,13 +150,12 @@ describe("buildSeriesEmail", () => {
       ...rowsFor([dates[2]], MEETING_STATUS.CANCELLED),
     ];
 
-    assert.equal(buildSeriesEmail(WEEKLY, "WEEKLY", rows)!.endDate, dates[1]);
+    assert.equal(buildSeriesEmail("WEEKLY", rows)!.endDate, dates[1]);
   });
 
   it("returns null when nothing is confirmed any more", () => {
     assert.equal(
       buildSeriesEmail(
-        WEEKLY,
         "WEEKLY",
         rowsFor(["2026-12-02"], MEETING_STATUS.CANCELLED)
       ),
@@ -169,7 +167,6 @@ describe("buildSeriesEmail", () => {
     // 00:30 and 23:30 are where a UTC conversion of an IST wall-clock value
     // would move the date.
     const series = buildSeriesEmail(
-      WEEKLY,
       "WEEKLY",
       rowsFor(["2026-12-02", "2026-12-09"], MEETING_STATUS.SCHEDULED, "00:30:00", "23:30:00")
     )!;
@@ -222,9 +219,9 @@ describe("recurring meeting e-mail", () => {
       "Series end: 2026-12-23 (Wed)",
       "Time zone: Asia/Kolkata",
       "Confirmed occurrences: 3",
-      "1. 2026-12-02 (Wed), 00:30:00 - 23:30:00",
-      "2. 2026-12-16 (Wed), 00:30:00 - 23:30:00",
-      "3. 2026-12-23 (Wed), 00:30:00 - 23:30:00",
+      "1. 2026-12-02 (Wed), 12:30 AM - 11:30 PM",
+      "2. 2026-12-16 (Wed), 12:30 AM - 11:30 PM",
+      "3. 2026-12-23 (Wed), 12:30 AM - 11:30 PM",
       "- 2026-12-09 (Wed)",
       "Cancelled occurrences:",
       "- 2026-12-30 (Wed)",
@@ -395,7 +392,7 @@ describe("reminder for an occurrence of a series", () => {
 
     const [m] = mail.sent;
     assert.equal(m.subject, "Recurring Meeting Reminder - Standup");
-    assert.ok(m.text.includes("This meeting: 2026-12-16 (Wed), 10:00:00 - 10:30:00"));
+    assert.ok(m.text.includes("This meeting: 2026-12-16 (Wed), 10:00 AM - 10:30 AM"));
     assert.ok(m.text.includes("3. 2026-12-23 (Wed)"));
     assert.equal((m.ics.match(/BEGIN:VEVENT/g) ?? []).length, 1);
   });

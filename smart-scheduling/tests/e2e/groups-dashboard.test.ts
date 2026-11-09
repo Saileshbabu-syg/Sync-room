@@ -6,8 +6,10 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
   employee,
+  groupAuditLogs,
   groups,
   meeting,
+  meetingTypes,
   organizers,
   roles,
   userGroups,
@@ -104,6 +106,36 @@ describe("group administration is Admin-only", () => {
     assert.equal(bob.groupId, f.groupIds.employee, "Bob did not promote himself");
   });
 
+  it("meeting type priority: an administrator may change it, nobody else, and bad values are refused", async () => {
+    const path = `/api/admin/meeting-types/${f.types.others}`;
+    const patch = (user: { email: string } | undefined, body: unknown, headers: Record<string, string> = {}) =>
+      app.call("PATCH", path, { as: user, body, headers });
+    const rankOf = async () =>
+      (await db.select().from(meetingTypes).where(eq(meetingTypes.meetingTypeId, f.types.others)))[0].priorityRank;
+
+    assert.equal(await rankOf(), 5);
+
+    for (const user of [f.users.bob, f.users.manager, viewer]) {
+      assert.equal((await patch(user, { priorityRank: 1 })).status, 403);
+    }
+    assert.equal((await patch(undefined, { priorityRank: 1 })).status, 401);
+    assert.equal(await rankOf(), 5, "refused requests changed nothing");
+
+    for (const bad of [0, 6, 2.5, "3", null]) {
+      assert.equal((await patch(f.users.admin, { priorityRank: bad })).status, 400, String(bad));
+    }
+    assert.equal((await patch(f.users.admin, { priorityRank: 2 }, { origin: "https://evil.example" })).status, 403);
+    assert.equal((await app.call("PATCH", "/api/admin/meeting-types/abc", { as: f.users.admin, body: { priorityRank: 2 } })).status, 400);
+    assert.equal((await app.call("PATCH", "/api/admin/meeting-types/999999", { as: f.users.admin, body: { priorityRank: 2 } })).status, 404);
+
+    const ok = await patch(f.users.admin, { priorityRank: 2 });
+    assert.equal(ok.status, 200);
+    assert.equal(await rankOf(), 2);
+
+    await patch(f.users.admin, { priorityRank: 5 });
+    assert.equal(await rankOf(), 5);
+  });
+
   it("anonymous requests get 401", async () => {
     assert.equal((await app.call("GET", "/api/admin/groups")).status, 401);
     assert.equal((await app.call("GET", "/api/admin/employees")).status, 401);
@@ -190,6 +222,33 @@ describe("dashboard access follows the group permission", () => {
     assert.equal((await get(`${week}&groupId=abc`)).status, 400);
   });
 
+  it("rejects malformed paging, sorting and search instead of guessing (D-05)", async () => {
+    const get = (qs: string) => app.call("GET", `/api/dashboard/bookings?${week}&${qs}`, { as: viewer });
+
+    for (const qs of [
+      "page=0", "page=-1", "page=1.5", "page=abc", "page=1e3", "page=9999999",
+      "pageSize=0", "pageSize=101", "pageSize=2.5", "pageSize=x",
+      "sort=sideways", `q=${"x".repeat(101)}`,
+    ]) {
+      const res = await get(qs);
+      assert.equal(res.status, 400, `${qs.slice(0, 20)} -> ${res.status}`);
+      assert.ok(!/\n\s+at |\bselect\b|Error:/i.test(String(res.json?.message)), "no internals in the message");
+    }
+
+    const ok = await get("page=2&pageSize=100&sort=asc");
+    assert.equal(ok.status, 200);
+    assert.equal(ok.json!.page, 2);
+    assert.equal(ok.json!.pageSize, 100);
+
+    // Absent values keep their defaults.
+    const defaults = await get("");
+    assert.equal(defaults.json!.page, 1);
+    assert.equal(defaults.json!.pageSize, 25);
+
+    // The report applies the same filter rules.
+    assert.equal((await app.call("GET", `/api/dashboard/report?${week}&sort=up&format=csv`, { as: viewer })).status, 400);
+  });
+
   it("an Admin can grant the dashboard to another group, and withdraw it", async () => {
     const setPermissions = (permissions: string[]) =>
       app.call("PATCH", `/api/admin/groups/${f.groupIds.manager}`, { as: f.users.admin, body: { permissions } });
@@ -265,8 +324,8 @@ describe("new group controls are enforced on the server", () => {
     assert.notEqual((await patch(f.users.admin)).status, 403, "the Admin role is not affected");
   });
 
-  it("Entra settings and the directory group list are behind Group Management", async () => {
-    for (const path of ["/api/admin/entra/settings", "/api/admin/entra/groups"]) {
+  it("Entra sync settings are behind Group Management", async () => {
+    for (const path of ["/api/admin/entra/settings"]) {
       assert.equal((await app.call("GET", path)).status, 401);
       assert.equal((await app.call("GET", path, { as: f.users.bob })).status, 403);
     }
@@ -276,14 +335,14 @@ describe("new group controls are enforced on the server", () => {
     const save = (as: typeof f.users.admin | typeof f.users.bob, body: unknown) =>
       app.call("PUT", "/api/admin/entra/settings", { as, body });
 
-    assert.equal((await save(f.users.bob, { autoSyncEnabled: true, intervalHours: 6, mappings: [] })).status, 403);
-    assert.equal((await save(f.users.admin, { autoSyncEnabled: true, intervalHours: 0, mappings: [] })).status, 400);
-    assert.equal((await save(f.users.admin, { autoSyncEnabled: true, intervalHours: 6, mappings: [] })).status, 200);
+    assert.equal((await save(f.users.bob, { autoSyncEnabled: true, intervalHours: 24, defaultGroupId: f.groupIds.employee })).status, 403);
+    assert.equal((await save(f.users.admin, { autoSyncEnabled: true, intervalHours: 6, defaultGroupId: f.groupIds.employee })).status, 400);
+    assert.equal((await save(f.users.admin, { autoSyncEnabled: true, intervalHours: 168, defaultGroupId: f.groupIds.employee })).status, 200);
     assert.equal(
       (await app.call("GET", "/api/admin/entra/settings", { as: f.users.admin })).json!.settings
         ? ((await app.call("GET", "/api/admin/entra/settings", { as: f.users.admin })).json!.settings as { intervalHours: number }).intervalHours
         : 0,
-      6
+      168
     );
   });
 
@@ -326,7 +385,21 @@ describe("report downloads", () => {
   const download = (format: string, qs = week) =>
     app.call("GET", `/api/dashboard/report?${qs}&format=${format}`, { as: viewer });
 
+  // REPORT_EXPORTED audit entries recorded for the viewer (D-20).
+  const exportsBy = async (employeeId: number) =>
+    (
+      await db
+        .select()
+        .from(groupAuditLogs)
+        .where(eq(groupAuditLogs.actorEmployeeId, employeeId))
+        .orderBy(groupAuditLogs.id)
+    ).filter(
+      (r) => r.action === "REPORT_EXPORTED"
+    );
+
   it("serves CSV, Excel and PDF as attachments named after the period", async () => {
+    const logged = (await exportsBy(viewer.employeeId)).length;
+
     const csv = await download("csv");
     assert.equal(csv.status, 200);
     assert.match(csv.headers.get("content-type") ?? "", /^text\/csv/);
@@ -342,11 +415,17 @@ describe("report downloads", () => {
     assert.equal(pdf.status, 200);
     assert.equal(pdf.headers.get("content-type"), "application/pdf");
     assert.ok(pdf.text.startsWith("%PDF-"));
+
+    const entries = (await exportsBy(viewer.employeeId)).slice(logged);
+    assert.deepEqual(entries.map((e) => (e.details as { format: string }).format), ["csv", "xlsx", "pdf"]);
   });
 
-  it("rejects an unknown format and an invalid period", async () => {
+  it("rejects an unknown format and an invalid period, logging no export", async () => {
+    const logged = (await exportsBy(viewer.employeeId)).length;
+
     assert.equal((await download("docx")).status, 400);
     assert.equal((await download("csv", "mode=range&start=bad&end=bad")).status, 400);
+    assert.equal((await exportsBy(viewer.employeeId)).length, logged);
   });
 
   it("contains the same records the dashboard filters select", async () => {
