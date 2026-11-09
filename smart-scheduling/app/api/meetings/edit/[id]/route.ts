@@ -94,7 +94,7 @@ export async function PATCH(
   } catch (error) {
     const known = lifecycleError(error);
 
-    if (known) return jsonError(known.status, known.message);
+    if (known) return jsonError(known.status, known.message, known.details);
 
     console.error(error);
 

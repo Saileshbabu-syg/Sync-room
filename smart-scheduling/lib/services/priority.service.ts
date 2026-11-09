@@ -174,12 +174,107 @@ export function claimantRank(typeRank: number, priorityGuest: boolean) {
   return priorityGuest ? TOP_RANK : typeRank;
 }
 
+// Why one held meeting stops a booking from taking its slot.
+//  * PROTECTED_MEETING - it includes a member whose group protects its meetings;
+//  * EQUAL_PRIORITY    - same rank: first confirmed wins;
+//  * LOWER_PRIORITY    - the held meeting outranks the booking;
+//  * MEETING_STARTED   - the booking does outrank it, but it is already running.
+export const PRIORITY_BLOCK = {
+  PROTECTED_MEETING: "PROTECTED_MEETING",
+  EQUAL_PRIORITY: "EQUAL_PRIORITY",
+  LOWER_PRIORITY: "LOWER_PRIORITY",
+  MEETING_STARTED: "MEETING_STARTED",
+} as const;
+
+export type PriorityBlockCode = (typeof PRIORITY_BLOCK)[keyof typeof PRIORITY_BLOCK];
+
+export type PriorityConflict = {
+  code: PriorityBlockCode;
+  meetingId: number;
+  title: string;
+  meetingDate: string;
+  startTime: string;
+  endTime: string;
+  // Rank of the booking and of the meeting in the way (smaller outranks).
+  claimantPriority: number;
+  holderPriority: number;
+  // Human-readable explanation, safe to show to the user.
+  reason: string;
+};
+
+const clock = (time: string) => time.slice(0, 5);
+
+function describeRank(rank: number) {
+  return rank === TOP_RANK
+    ? "top priority (a priority guest is invited)"
+    : `priority ${rank}`;
+}
+
+// The held meetings that STOP a booking of `rank` from taking their slot, each
+// with the priority condition that decides it. Empty = the booking may take
+// every holder's slot. This is the one place the rule lives: single bookings,
+// series, extensions and the explanations shown to the user all use it.
+export function describePriorityConflicts(
+  holders: SlotHolder[],
+  rank: number,
+  now?: Date
+): PriorityConflict[] {
+  const conflicts: PriorityConflict[] = [];
+
+  for (const h of holders) {
+    const outranked = h.priority > rank;
+    const started = isSlotStartInPast(h.meetingDate, h.startTime, now);
+
+    if (outranked && !started) continue;
+
+    const where = `${h.meetingDate} ${clock(h.startTime)}-${clock(h.endTime)}`;
+    let code: PriorityBlockCode;
+    let why: string;
+
+    if (h.priority === PROTECTED_RANK) {
+      code = PRIORITY_BLOCK.PROTECTED_MEETING;
+      why = `is a protected meeting (it includes a member whose group protects its meetings) and cannot be taken over`;
+    } else if (!outranked && h.priority === rank) {
+      code = PRIORITY_BLOCK.EQUAL_PRIORITY;
+      why = `has the same ${describeRank(h.priority)} as this booking; equal priority does not replace an existing booking`;
+    } else if (!outranked) {
+      code = PRIORITY_BLOCK.LOWER_PRIORITY;
+      why = `has a higher ${describeRank(h.priority)} than this booking (${describeRank(rank)})`;
+    } else {
+      code = PRIORITY_BLOCK.MEETING_STARTED;
+      why = `has already started and cannot be replaced`;
+    }
+
+    conflicts.push({
+      code,
+      meetingId: h.meetingId,
+      title: h.title,
+      meetingDate: h.meetingDate,
+      startTime: h.startTime,
+      endTime: h.endTime,
+      claimantPriority: rank,
+      holderPriority: h.priority,
+      reason: `${where}: "${h.title}" ${why}.`,
+    });
+  }
+
+  return conflicts;
+}
+
+// One short text for a list of conflicts (the first few, then a count).
+export function summarizePriorityConflicts(conflicts: PriorityConflict[]) {
+  const shown = conflicts.slice(0, 3).map((c) => c.reason);
+
+  if (conflicts.length > shown.length) {
+    shown.push(`and ${conflicts.length - shown.length} more.`);
+  }
+
+  return shown.join(" ");
+}
+
 // True when a booking of `rank` may take the slot from EVERY holder.
 export function canBumpAll(holders: SlotHolder[], rank: number, now?: Date) {
-  return holders.every(
-    (h) =>
-      h.priority > rank && !isSlotStartInPast(h.meetingDate, h.startTime, now)
-  );
+  return describePriorityConflicts(holders, rank, now).length === 0;
 }
 
 export type ReleasedSlot = {

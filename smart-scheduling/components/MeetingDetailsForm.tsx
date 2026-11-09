@@ -51,6 +51,8 @@ import { formatDuration, formatTimeRange } from "@/lib/format";
 type SeriesConflict = {
   dates: string[];
   conflicts: string[];
+  // Which priority condition stopped it (from the server), when priority is why.
+  reason?: string;
   // The request that was rejected, re-sent with `skip_dates` to book only the
   // free dates.
   payload: Record<string, unknown>;
@@ -589,6 +591,7 @@ const handleSubmit = async (takeoverConfirmed = false) => {
       setSeriesConflict({
         dates: result.occurrenceDates,
         conflicts: result.conflicts,
+        reason: result.reason,
         payload: recurringPayload,
       });
     } else {
@@ -597,7 +600,9 @@ const handleSubmit = async (takeoverConfirmed = false) => {
       );
     }
   } else {
-    toast.error(result.message);
+    toast.error(
+      result.reason ? `${result.message}. ${result.reason}` : result.message
+    );
   }
   return;
 }
@@ -1212,6 +1217,15 @@ finishBooking();
                   {seriesConflict.dates.length} dates free,{" "}
                   {seriesConflict.conflicts.length} booked. Nothing is booked yet. Book the free dates, or change the room, date or time.
                 </AlertDialogDescription>
+
+                {seriesConflict.reason && (
+                  <p
+                    data-testid="series-conflict-reason"
+                    className="text-sm text-muted-foreground"
+                  >
+                    {seriesConflict.reason}
+                  </p>
+                )}
               </AlertDialogHeader>
 
               <ul className="space-y-2 text-sm">

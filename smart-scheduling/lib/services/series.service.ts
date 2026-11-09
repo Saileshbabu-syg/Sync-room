@@ -68,11 +68,14 @@ export type SeriesScope = (typeof SERIES_SCOPES)[number];
 
 export class SeriesError extends Error {
   status: number;
+  // Why, when the refusal is a priority or room conflict (see BookingError).
+  details: Record<string, unknown>;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, details: Record<string, unknown> = {}) {
     super(message);
     this.name = "SeriesError";
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -85,7 +88,11 @@ export function lifecycleError(error: unknown) {
     error instanceof MeetingEditError ||
     error instanceof BookingError
   ) {
-    return { status: error.status, message: error.message };
+    return {
+      status: error.status,
+      message: error.message,
+      details: error instanceof MeetingEditError ? {} : error.details,
+    };
   }
 
   return null;
@@ -733,7 +740,9 @@ export async function changeSeriesEnd(input: {
 
       added = result.meetings.map((m) => m.meeting_id);
     } catch (error) {
-      if (error instanceof BookingError) throw new SeriesError(error.message, error.status);
+      if (error instanceof BookingError) {
+        throw new SeriesError(error.message, error.status, error.details);
+      }
 
       throw error;
     }

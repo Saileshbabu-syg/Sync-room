@@ -16,7 +16,6 @@ import {
   AVAILABILITY_STATUS,
   MEETING_STATUS,
   PERMISSION,
-  PROTECTED_RANK,
 } from "@/lib/constants";
 import { dbErrorCode, PG_EXCLUSION_VIOLATION } from "@/lib/api";
 import type { DbExecutor, Tx } from "@/lib/db-types";
@@ -44,12 +43,15 @@ import { getPriorityContext } from "./group-context.service";
 import { checkBookingLimits, lockGroupBookings } from "./booking-limits.service";
 import { checkBookingPolicy, getBookingPolicy } from "./booking-policy.service";
 import {
-  canBumpAll,
+  PRIORITY_BLOCK,
   claimantRank,
+  describePriorityConflicts,
   findSlotHolders,
   hasMemberWithPermission,
   recordBumps,
   releaseSlots,
+  summarizePriorityConflicts,
+  type PriorityConflict,
   type ReleasedSlot,
 } from "./priority.service";
 import { createRemindersForMeetings } from "./reminder.service";
@@ -94,18 +96,44 @@ export class BookingError extends Error {
   // Every date the series would have used, so the caller can show which
   // occurrences are free and which are taken.
   occurrenceDates?: string[];
+  // Present when priority is why the room could not be taken: one entry per
+  // meeting in the way (every occurrence of a series is checked), each with
+  // the priority condition that decided it.
+  priorityConflicts?: PriorityConflict[];
 
   constructor(
     message: string,
     status: number,
     conflicts?: string[],
-    occurrenceDates?: string[]
+    occurrenceDates?: string[],
+    priorityConflicts?: PriorityConflict[]
   ) {
     super(message);
     this.name = "BookingError";
     this.status = status;
     this.conflicts = conflicts;
     this.occurrenceDates = occurrenceDates;
+    this.priorityConflicts = priorityConflicts;
+  }
+
+  // Why, in words (the message itself stays the same short sentence).
+  get reason(): string | undefined {
+    return this.priorityConflicts && this.priorityConflicts.length > 0
+      ? summarizePriorityConflicts(this.priorityConflicts)
+      : undefined;
+  }
+
+  // The extra fields every booking API sends with a refusal.
+  get details() {
+    return {
+      ...(this.conflicts ? { conflicts: this.conflicts } : {}),
+      ...(this.conflicts && this.occurrenceDates
+        ? { occurrenceDates: this.occurrenceDates }
+        : {}),
+      ...(this.priorityConflicts && this.priorityConflicts.length > 0
+        ? { reason: this.reason, priorityConflicts: this.priorityConflicts }
+        : {}),
+    };
   }
 }
 
@@ -407,11 +435,18 @@ export async function createBooking(input: BookingInput) {
           endTime
         );
 
-        // Only a booking that outranks EVERY other meeting in the way may
-        // proceed.
-        if (!canBumpAll(holders, rank, input.now)) {
-          const blockedByProtected = holders.some(
-            (h) => h.priority === PROTECTED_RANK
+        // Only a booking that outranks EVERY other meeting in the way, on
+        // EVERY occurrence, may proceed. The same evaluation serves a single
+        // date and a series, and says which condition stopped it.
+        const priorityConflicts = describePriorityConflicts(
+          holders,
+          rank,
+          input.now
+        );
+
+        if (priorityConflicts.length > 0) {
+          const blockedByProtected = priorityConflicts.some(
+            (c) => c.code === PRIORITY_BLOCK.PROTECTED_MEETING
           );
 
           throw new BookingError(
@@ -422,7 +457,8 @@ export async function createBooking(input: BookingInput) {
                 : SLOT_TAKEN_MESSAGE,
             409,
             isSeries ? conflictingDates : undefined,
-            isSeries ? input.occurrenceDates : undefined
+            isSeries ? input.occurrenceDates : undefined,
+            priorityConflicts
           );
         }
 

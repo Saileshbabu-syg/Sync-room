@@ -42,6 +42,7 @@ import {
 import { checkBookingPolicy, getBookingPolicy } from "./booking-policy.service";
 import { findConflictingDates } from "./conflict-check.service";
 import { getPriorityContext } from "./group-context.service";
+import { findSlotHolders } from "./priority.service";
 import { isMeetingTypeAllowed } from "./meeting-type-access.service";
 import {
   dispatchNotification,
@@ -69,11 +70,14 @@ export const ROOM_LOCK_NAMESPACE = 7001;
 
 export class RescheduleError extends Error {
   status: number;
+  // Why, when the slot is taken: which meeting holds it and which rule applies.
+  details: Record<string, unknown>;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, details: Record<string, unknown> = {}) {
     super(message);
     this.name = "RescheduleError";
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -304,9 +308,33 @@ export async function moveLockedMeeting(
   );
 
   if (conflicts.length > 0) {
+    // Say which meeting is in the way. A move is never allowed to replace
+    // anyone, whatever the priorities (the same for one meeting and for every
+    // occurrence of a series), so the reason is that rule plus the holder.
+    const holders = await findSlotHolders(
+      tx,
+      roomId,
+      [meetingDate],
+      startTime,
+      endTime
+    );
+    const inTheWay = holders.filter((h) => h.meetingId !== existing.meeting_id);
+    const reason =
+      `${meetingDate} ${startTime.slice(0, 5)}-${endTime.slice(0, 5)}: moving a meeting never replaces another booking, ` +
+      `and the slot is held by ` +
+      (inTheWay.length > 0
+        ? inTheWay.map((h) => `"${h.title}"`).join(", ")
+        : "another meeting") +
+      ".";
+
     throw new RescheduleError(
       "Room is already booked for the selected time slot",
-      409
+      409,
+      {
+        reason,
+        conflicts: [meetingDate],
+        heldBy: inTheWay.map((h) => h.meetingId),
+      }
     );
   }
 

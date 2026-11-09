@@ -78,6 +78,9 @@ export async function POST(req: NextRequest) {
         {
           message: error.message,
           ...(error.conflicts ? { conflicts: error.conflicts } : {}),
+          ...(error.reason
+            ? { reason: error.reason, priorityConflicts: error.priorityConflicts }
+            : {}),
         },
         { status: error.status }
       );

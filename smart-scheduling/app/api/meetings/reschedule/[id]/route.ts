@@ -98,7 +98,7 @@ export async function PATCH(
     );
   } catch (error) {
     if (error instanceof RescheduleError) {
-      return jsonError(error.status, error.message);
+      return jsonError(error.status, error.message, error.details);
     }
 
     console.error(error);
